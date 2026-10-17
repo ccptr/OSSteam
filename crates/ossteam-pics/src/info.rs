@@ -83,6 +83,20 @@ fn str_at<'a>(o: &'a Object, path: &[&str]) -> &'a str {
     o.get_path(path).and_then(Value::as_str).unwrap_or_default()
 }
 
+/// Whether `p` is safe to append to a URL and a cache directory: `/`
+/// separated names of letters, digits, `.`, `_` and `-`, none of them
+/// empty, `.` or `..`.
+fn is_plain_relative_path(p: &str) -> bool {
+    p.len() <= 255
+        && p.split('/').all(|c| {
+            !c.is_empty()
+                && c != "."
+                && c != ".."
+                && c.bytes()
+                    .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'_' | b'-'))
+        })
+}
+
 fn split_list(s: &str) -> Vec<String> {
     s.split(',')
         .map(str::trim)
@@ -151,6 +165,43 @@ pub struct Branch {
     pub time_updated: Option<u64>,
 }
 
+/// An image an app's info names (`pics.md` §9).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AssetKind {
+    /// The store header, `common/header_image`.
+    Header,
+    /// The portrait library capsule.
+    Capsule,
+    /// The wide image behind the app page's title.
+    Hero,
+    HeroBlur,
+    Logo,
+}
+
+impl AssetKind {
+    /// For messages.
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Header => "header",
+            Self::Capsule => "capsule",
+            Self::Hero => "hero",
+            Self::HeroBlur => "blurred hero",
+            Self::Logo => "logo",
+        }
+    }
+
+    /// The key under `common/library_assets_full`; `None` for the header.
+    fn library_key(self) -> Option<&'static str> {
+        match self {
+            Self::Header => None,
+            Self::Capsule => Some("library_capsule"),
+            Self::Hero => Some("library_hero"),
+            Self::HeroBlur => Some("library_hero_blur"),
+            Self::Logo => Some("library_logo"),
+        }
+    }
+}
+
 impl AppInfo<'_> {
     pub fn name(&self) -> &str {
         str_at(self.0, &["common", "name"])
@@ -183,6 +234,45 @@ impl AppInfo<'_> {
 
     pub fn oslist(&self) -> Vec<String> {
         split_list(str_at(self.0, &["common", "oslist"]))
+    }
+
+    /// The path of an image under the app's directory on the asset CDN
+    /// (`pics.md` §9), in `language` if the info has it and in English
+    /// otherwise. `high_dpi` prefers the double-size image where there is
+    /// one. `None` when the info names no such image, or names one whose
+    /// path is not a plain relative path.
+    pub fn asset_path(&self, kind: AssetKind, high_dpi: bool, language: &str) -> Option<&str> {
+        let common = self.0.get_object("common")?;
+        let sources: Vec<Option<&Object>> = match kind.library_key() {
+            None => vec![common.get_object("header_image")],
+            Some(key) => {
+                let asset = common
+                    .get_path(&["library_assets_full", key])
+                    .and_then(Value::as_object);
+                let image = asset.and_then(|a| a.get_object("image"));
+                let image2x = asset.and_then(|a| a.get_object("image2x"));
+                if high_dpi {
+                    vec![image2x, image]
+                } else {
+                    vec![image]
+                }
+            }
+        };
+        sources.into_iter().flatten().find_map(|by_language| {
+            [language, "english"]
+                .into_iter()
+                .find_map(|l| by_language.get(l).and_then(Value::as_str))
+                .filter(|p| is_plain_relative_path(p))
+        })
+    }
+
+    /// `common/store_asset_mtime`, which versions the app's images; 0 when
+    /// not given.
+    pub fn store_asset_mtime(&self) -> u64 {
+        self.0
+            .get_path(&["common", "store_asset_mtime"])
+            .and_then(number)
+            .unwrap_or(0)
     }
 
     /// The DLC the app lists in `extended/listofdlc`.
@@ -423,5 +513,98 @@ mod tests {
             parse_package_buffer(&[1, 0, 0, 0]),
             Err(InfoError::Empty)
         ));
+    }
+
+    const ASSETS: &str = r#""appinfo"
+{
+	"common"
+	{
+		"store_asset_mtime"		"1700000000"
+		"header_image"
+		{
+			"english"		"0123abcd/header.jpg"
+			"german"		"header_german.jpg"
+		}
+		"library_assets_full"
+		{
+			"library_capsule"
+			{
+				"image"
+				{
+					"english"		"library_600x900.jpg"
+				}
+				"image2x"
+				{
+					"english"		"library_600x900_2x.jpg"
+				}
+			}
+			"library_hero"
+			{
+				"image"
+				{
+					"english"		"../../etc/passwd"
+				}
+			}
+			"library_logo"
+			{
+				"image2x"
+				{
+					"english"		"logo_2x.png"
+				}
+			}
+		}
+	}
+}
+"#;
+
+    #[test]
+    fn reads_asset_paths() {
+        let mut buf = ASSETS.as_bytes().to_vec();
+        buf.push(0);
+        let o = parse_app_buffer(&buf).unwrap();
+        let a = AppInfo(&o);
+        assert_eq!(a.store_asset_mtime(), 1_700_000_000);
+        let path = |kind, hidpi, lang| a.asset_path(kind, hidpi, lang);
+        assert_eq!(
+            path(AssetKind::Header, false, "english"),
+            Some("0123abcd/header.jpg")
+        );
+        assert_eq!(
+            path(AssetKind::Header, true, "german"),
+            Some("header_german.jpg")
+        );
+        // A language the info lacks falls back to English.
+        assert_eq!(
+            path(AssetKind::Capsule, false, "french"),
+            Some("library_600x900.jpg")
+        );
+        assert_eq!(
+            path(AssetKind::Capsule, true, "english"),
+            Some("library_600x900_2x.jpg")
+        );
+        // Only a double-size logo: none at normal size.
+        assert_eq!(path(AssetKind::Logo, false, "english"), None);
+        assert_eq!(path(AssetKind::Logo, true, "english"), Some("logo_2x.png"));
+        // A path that would leave the app's directory is refused.
+        assert_eq!(path(AssetKind::Hero, false, "english"), None);
+        assert_eq!(path(AssetKind::HeroBlur, false, "english"), None);
+        let spacewar = parse_app_buffer(&app_buffer()).unwrap();
+        assert_eq!(AppInfo(&spacewar).store_asset_mtime(), 0);
+        assert_eq!(
+            AppInfo(&spacewar).asset_path(AssetKind::Header, false, "english"),
+            None
+        );
+    }
+
+    #[test]
+    fn plain_relative_paths() {
+        for ok in ["header.jpg", "0123abcd/library_hero_2x.jpg", "a-b_c.d"] {
+            assert!(is_plain_relative_path(ok), "{ok}");
+        }
+        for bad in [
+            "", "/abs.jpg", "a//b", "a/", "..", "a/../b", "./a", "a\\b", "a b", "a?t=1", "é.jpg",
+        ] {
+            assert!(!is_plain_relative_path(bad), "{bad}");
+        }
     }
 }

@@ -377,3 +377,22 @@ fn settings_layers_and_overrides() {
     // Resetting again is not an error.
     assert_eq!(c.set_setting(KEY, None).unwrap(), s);
 }
+
+/// The Library methods need an active account (`docs/spec/ipc.md` §5.3);
+/// a malformed asset kind is refused before that.
+#[test]
+fn library_methods_without_an_account() {
+    let _guard = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let _daemon = start();
+    let c = client();
+    assert_eq!(remote_code(c.list_apps("", false)), ErrorCode::NotLoggedIn);
+    assert_eq!(remote_code(c.get_app(480)), ErrorCode::NotLoggedIn);
+    assert_eq!(
+        remote_code(c.get_asset(480, v1::AssetKind::Capsule, true)),
+        ErrorCode::NotLoggedIn
+    );
+    assert_eq!(
+        remote_code(c.get_asset(480, v1::AssetKind::Unspecified, false)),
+        ErrorCode::InvalidArgument
+    );
+}

@@ -94,6 +94,7 @@ message Request {
     GetAppRequest get_app = 15;
     GetSettingsRequest get_settings = 16;
     SetSettingRequest set_setting = 17;
+    GetAssetRequest get_asset = 18;
   }
 }
 
@@ -116,6 +117,7 @@ message Response {
     GetAppResponse get_app = 15;
     GetSettingsResponse get_settings = 16;
     SetSettingResponse set_setting = 17;
+    GetAssetResponse get_asset = 18;
   }
 }
 
@@ -349,6 +351,37 @@ message GetAppResponse {
   repeated Depot depots = 6;
   repeated Branch branches = 7;
   repeated LaunchOption launch_options = 8;
+}
+
+// An image of an app, as Steam's library and store show it.
+enum AssetKind {
+  ASSET_KIND_UNSPECIFIED = 0;
+  // The wide store header.
+  ASSET_KIND_HEADER = 1;
+  // The portrait library capsule.
+  ASSET_KIND_CAPSULE = 2;
+  // The wide image behind an app page's title, and its blurred version.
+  ASSET_KIND_HERO = 3;
+  ASSET_KIND_HERO_BLUR = 4;
+  // The title logo drawn over the hero.
+  ASSET_KIND_LOGO = 5;
+}
+
+// Fetches one of an app's images into the daemon's cache, unless it is
+// there already, and answers with the file's path. Several requests for
+// the same image share one download.
+message GetAssetRequest {
+  uint32 app_id = 1;
+  AssetKind kind = 2;
+  // Prefer the double-size image, where the app has one.
+  bool high_dpi = 3;
+}
+
+message GetAssetResponse {
+  // An absolute path to the image file. The daemon never changes the file
+  // in place: a new version of the image goes to a new path, and the old
+  // file may be deleted after that.
+  string path = 1;
 }
 
 // --- Settings (docs/spec/ipc.md §5.4) -------------------------------------

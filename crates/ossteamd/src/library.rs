@@ -1,16 +1,22 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 //! The Library methods (`ipc.md` §5.3): `ListApps` and `GetApp`, answered
-//! from the PICS worker's last snapshot and the PICS cache.
+//! from the PICS worker's last snapshot and the PICS cache, and the lookup
+//! behind `GetAsset`.
 
 use std::collections::{BTreeSet, HashMap};
+use std::path::Path;
 
 use ossteam_ipc::RemoteError;
 use ossteam_ipc::v1::{self, ErrorCode};
 use ossteam_pics::cache::Kind;
-use ossteam_pics::{AppInfo, Cache, LibraryApp};
+use ossteam_pics::{AppInfo, AssetKind, Cache, LibraryApp};
 use ossteam_types::AppId;
 
+use crate::assets::Asset;
 use crate::pics::Snapshot;
+
+/// The language images are chosen in, until there is a language setting.
+const ASSET_LANGUAGE: &str = "english";
 
 pub fn list_apps(snapshot: &Snapshot, req: &v1::ListAppsRequest) -> v1::ListAppsResponse {
     let filter = req.filter.trim().to_lowercase();
@@ -54,6 +60,37 @@ pub fn list_apps(snapshot: &Snapshot, req: &v1::ListAppsRequest) -> v1::ListApps
             .map(|p| p.0)
             .collect(),
     }
+}
+
+/// Where one of a library app's images comes from and is cached
+/// (`pics.md` §9).
+pub fn asset(
+    snapshot: &Snapshot,
+    cache: &Cache,
+    assets_dir: &Path,
+    app_id: u32,
+    kind: AssetKind,
+    high_dpi: bool,
+) -> Result<Asset, RemoteError> {
+    let not_found = |m: String| RemoteError::new(ErrorCode::NotFound, m);
+    let Some(app) = snapshot.library.find(AppId(app_id)) else {
+        return Err(not_found(format!("app {app_id} is not in the library")));
+    };
+    let info = app
+        .has_info
+        .then(|| cache.load(Kind::App, app_id))
+        .flatten()
+        .ok_or_else(|| not_found(format!("the info of app {app_id} is not available")))?;
+    let a = AppInfo(&info.data);
+    let rel = a
+        .asset_path(kind, high_dpi, ASSET_LANGUAGE)
+        .ok_or_else(|| not_found(format!("app {app_id} has no {} image", kind.name())))?;
+    Ok(Asset::new(
+        assets_dir,
+        AppId(app_id),
+        a.store_asset_mtime(),
+        rel,
+    ))
 }
 
 pub fn get_app(

@@ -172,13 +172,14 @@ that account off first (`auth.md` §6).
 
 The library is the set of apps the active account's licenses grant
 (`pics.md` §7). The daemon answers from the last library the PICS worker
-built (§7), so these calls never wait on Steam. Both fail with
+built (§7), so these calls never wait on Steam's servers. All fail with
 `NOT_LOGGED_IN` without an active account.
 
 | Method | Behaviour |
 |---|---|
 | `ListApps{filter, installed_only}` | Top-level apps sorted by name, each with its DLC. `filter` keeps apps whose name contains it, ignoring case, or whose id it is; a matching DLC is listed under its parent even if the parent does not match. `complete` is false until the license list has arrived and every needed info has been fetched or refused, and again after a fetch fails, until the retry succeeds. `packages_without_info` names granted packages whose apps cannot be listed. Until the install engine exists (M1b) nothing is installed, so `installed_only` returns no apps. |
 | `GetApp{app_id}` | The app's summary and its cached info: platforms, install directory, depots, branches and launch options. `NOT_FOUND` when the app is not in the library. An app whose info is not available has only its summary. |
+| `GetAsset{app_id, kind, high_dpi}` | The absolute path of one of the app's images (`HEADER`, `CAPSULE`, `HERO`, `HERO_BLUR`, `LOGO`), downloaded into the cache first if it is not there (`pics.md` §9). This is the one Library method that may wait on the network; clients should allow 90 s. Requests for the same image share one download. `NOT_FOUND` when the app is not in the library, its info is not available, the info names no such image, or the CDN has none (remembered until the daemon restarts); `NETWORK` when the download fails; `INVALID_ARGUMENT` for an unknown kind. |
 
 `AppChanged` lists the apps that were added to or removed from the
 library, or whose info was fetched again, and whether the library is now
@@ -285,6 +286,11 @@ product info, polls for changes, writes the PICS cache, and reports each
 new library to the core, which answers Library methods from it. `GetApp`
 reads the cache file itself, which is safe because the worker replaces
 files by renaming.
+
+Image downloads for `GetAsset` run on four threads of their own
+(`crates/ossteamd/src/assets.rs`). The core answers a request for an image
+already in the cache itself, and otherwise queues one download per image
+and answers every waiting request when it finishes.
 
 The client library runs one reader thread per connection. That thread
 routes each reply to the waiting call by id and queues events. Calls can

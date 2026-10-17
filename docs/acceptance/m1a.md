@@ -23,7 +23,8 @@ the date and the build.
 | Persona state (PLAY-2) | built 2026-10-17; live run ⏳ (needs an account and a friend) |
 | IPC: Daemon methods | ✅ M0 |
 | IPC: Session methods | built 2026-10-17 |
-| IPC: Library methods `ListApps`, `GetApp`; `AppChanged` | built 2026-10-17; `GetAsset` ⏳ |
+| IPC: Library methods `ListApps`, `GetApp`; `AppChanged` | built 2026-10-17 |
+| IPC: `GetAsset` and the image cache (`pics.md` §9) | built 2026-10-17; unit tests; live CDN fetch 2026-10-17; through a logged-in library ⏳ (needs an account) |
 | CLI: `login`, `logout`, `account`, `status`, `events`, `daemon`, `completions` | built 2026-10-17 |
 | CLI: `persona`, `library`, `info` | built 2026-10-17 |
 | IPC: Settings methods `GetSettings`, `SetSetting`; `SettingChanged`; overrides in the state database | built 2026-10-17; unit and integration tests |

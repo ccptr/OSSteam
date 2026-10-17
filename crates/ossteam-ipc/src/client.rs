@@ -423,6 +423,25 @@ impl Client {
             other => Err(unexpected(other)),
         }
     }
+
+    /// The path of one of an app's images, downloaded into the daemon's
+    /// cache first if needed.
+    pub fn get_asset(
+        &self,
+        app_id: u32,
+        kind: v1::AssetKind,
+        high_dpi: bool,
+    ) -> Result<String, ClientError> {
+        let req = v1::GetAssetRequest {
+            app_id,
+            kind: kind as i32,
+            high_dpi,
+        };
+        match self.call(request::Method::GetAsset(req), STEAM_TIMEOUT)? {
+            response::Result::GetAsset(r) => Ok(r.path),
+            other => Err(unexpected(other)),
+        }
+    }
 }
 
 /// Settings calls (`docs/spec/ipc.md` §5.4).

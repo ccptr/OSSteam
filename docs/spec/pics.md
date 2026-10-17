@@ -228,7 +228,55 @@ that ossteam waits for; the server reflects the change in
 official client sets, and whether it sends this before or after other
 post-logon requests.*
 
-## 9. Verification status
+## 9. App images
+
+An app's info names its library and store images under `common`, each as
+a path per language:
+
+| Image | Where in the info |
+|---|---|
+| Header | `header_image/<language>` |
+| Capsule (portrait) | `library_assets_full/library_capsule/image/<language>`, and `image2x` for double size |
+| Hero, blurred hero | `library_assets_full/library_hero/...`, `library_hero_blur/...`, same shape |
+| Logo | `library_assets_full/library_logo/...`, same shape, plus a `logo_position` the GUI places it by |
+
+A path is either a file name (`library_600x900.jpg`) or a content hash
+directory and a file name (`<40 hex digits>/library_capsule.jpg`).
+`common/store_asset_mtime` versions the images. The URL of an image is
+
+    https://shared.steamstatic.com/store_item_assets/steam/apps/<appid>/<path>?t=<store_asset_mtime>
+
+with `t=0` when the info has no `store_asset_mtime`. The CDN answers 404
+for an image that does not exist. Many apps, mostly DLC and tools, name
+no library images at all; some name only a header.
+
+The daemon picks the path in the client language, falling back to
+`english`. Until a language setting exists it always uses `english`. With
+`high_dpi` it prefers `image2x` and falls back to `image`; the header has
+no double size. It accepts only plain relative paths: `/`-separated names
+of ASCII letters, digits, `.`, `_` and `-`, none of them empty, `.` or
+`..`, so a path from the network can neither leave the app's directory on
+the CDN nor in the cache. An image the info does not name, or names with
+any other path, is reported as not found.
+
+Images are cached in `<cache>/assets/<appid>/<store_asset_mtime>/<path>`,
+written under a temporary name and renamed into place. After an image of a
+new version is stored, the app's directories for other versions are
+removed. A cached file never changes, so a client may keep a path it was
+given until it asks again.
+
+*How this was found:* the official client's own library cache
+(`appcache/librarycache/<appid>/<path>`) mirrors the info's paths
+exactly. Its UI builds library image URLs as
+`<store app images base>/<appid>/<path>?t=<store asset mtime>`, and the
+native client's default for that base is the URL above. A capsule and a
+logo fetched from it on 2026-10-17 matched the official client's cached
+files byte for byte. The official client's logs show it using
+`shared.fastly.steamstatic.com` instead; how it picks a CDN host is not
+known. It also falls back to a DLC's parent app for a missing hero,
+which ossteam leaves to the GUI.
+
+## 10. Verification status
 
 | Statement | Status |
 |---|---|
@@ -242,3 +290,5 @@ post-logon requests.*
 | `meta_data_only` entries carry change numbers (§3) | unverified |
 | Changes-since request and the force-full flags (§4) | unverified |
 | Persona state numbers and `ClientChangeStatus` (§8) | unverified |
+| Image paths in the info, the URL scheme and `t` (§9) | verified 2026-10-17 against the official client's cache and CDN |
+| How the official client picks a CDN host (§9) | unknown |

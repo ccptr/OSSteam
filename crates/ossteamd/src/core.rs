@@ -2,7 +2,9 @@
 //! The core thread: the single owner of the daemon's mutable state
 //! (SPEC CONC-1). Everything else talks to it through [`Command`]s.
 
-use std::collections::{BTreeSet, HashMap};
+use std::collections::hash_map::Entry;
+use std::collections::{BTreeSet, HashMap, HashSet};
+use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Instant;
 
@@ -12,13 +14,13 @@ use ossteam_ipc::v1::{
     self, Envelope, ErrorCode, Event, Hello, LoginPromptKind, Topic, envelope::Body, event,
     request, response,
 };
-use ossteam_pics::Cache;
+use ossteam_pics::{AssetKind, Cache};
 use ossteam_types::{Secret, SteamId};
 
 use crate::config::{self, Config};
 use crate::db::{Db, PersonaState};
 use crate::session::{self, Cmd, ReplyTo, Report};
-use crate::{library, pics};
+use crate::{assets, library, pics};
 
 pub type ClientId = u64;
 
@@ -52,6 +54,8 @@ pub enum Command {
     Session(Report),
     /// From the PICS worker.
     Pics(pics::Update),
+    /// From the image downloader.
+    Asset(assets::Done),
 }
 
 /// Why the core loop ended.
@@ -86,27 +90,43 @@ pub struct Core {
     pics_cache: Cache,
     /// The library as the PICS worker last reported it.
     library: Option<Arc<pics::Snapshot>>,
+    assets: assets::Handle,
+    /// `<cache>/assets`.
+    assets_dir: PathBuf,
+    /// Images being downloaded, and the requests waiting for each.
+    fetching: HashMap<PathBuf, Vec<ReplyTo>>,
+    /// URLs the CDN answered 404 for since the daemon started.
+    missing_assets: HashSet<String>,
+}
+
+/// What a `Core` is made of.
+pub struct Parts {
+    pub db: Db,
+    pub config: Config,
+    pub session: session::Handle,
+    pub pics: pics::Handle,
+    pub pics_cache: Cache,
+    pub assets: assets::Handle,
+    pub assets_dir: PathBuf,
 }
 
 impl Core {
-    pub fn new(
-        db: Db,
-        config: Config,
-        session: session::Handle,
-        pics: pics::Handle,
-        pics_cache: Cache,
-    ) -> Self {
+    pub fn new(p: Parts) -> Self {
         Self {
             started: Instant::now(),
             clients: HashMap::new(),
-            db,
-            config,
-            session,
+            db: p.db,
+            config: p.config,
+            session: p.session,
             session_state: session::State::default(),
             login_owner: None,
-            pics,
-            pics_cache,
+            pics: p.pics,
+            pics_cache: p.pics_cache,
             library: None,
+            assets: p.assets,
+            assets_dir: p.assets_dir,
+            fetching: HashMap::new(),
+            missing_assets: HashSet::new(),
         }
     }
 
@@ -163,6 +183,7 @@ impl Core {
                 Command::Terminate => break Exit::Signal,
                 Command::Session(report) => self.on_session(report),
                 Command::Pics(update) => self.on_library(update),
+                Command::Asset(done) => self.on_asset(done),
             }
         };
         // Log off before telling clients the daemon is going (SPEC D-5).
@@ -170,6 +191,7 @@ impl Core {
         // connection closed, PICS requests in flight fail at once.
         self.session.shutdown();
         self.pics.shutdown();
+        self.assets.shutdown();
         self.broadcast(
             Topic::Daemon,
             event::Kind::DaemonStopping(v1::DaemonStopping {}),
@@ -298,6 +320,7 @@ impl Core {
                 })))
             }
             request::Method::SetSetting(req) => Some(self.set_setting(&req)),
+            request::Method::GetAsset(req) => self.get_asset(to, &req),
         };
         if let Some(result) = outcome {
             self.reply(to, result);
@@ -377,6 +400,63 @@ impl Core {
                     complete,
                 }),
             );
+        }
+    }
+
+    fn get_asset(&mut self, to: ReplyTo, req: &v1::GetAssetRequest) -> Outcome {
+        let kind = match v1::AssetKind::try_from(req.kind) {
+            Ok(v1::AssetKind::Header) => AssetKind::Header,
+            Ok(v1::AssetKind::Capsule) => AssetKind::Capsule,
+            Ok(v1::AssetKind::Hero) => AssetKind::Hero,
+            Ok(v1::AssetKind::HeroBlur) => AssetKind::HeroBlur,
+            Ok(v1::AssetKind::Logo) => AssetKind::Logo,
+            _ => return Some(Err(invalid(format!("unknown asset kind {}", req.kind)))),
+        };
+        let asset = match self.snapshot().and_then(|s| {
+            library::asset(
+                &s,
+                &self.pics_cache,
+                &self.assets_dir,
+                req.app_id,
+                kind,
+                req.high_dpi,
+            )
+        }) {
+            Ok(a) => a,
+            Err(e) => return Some(Err(e)),
+        };
+        if asset.path.is_file() {
+            return Some(asset_response(&asset.path));
+        }
+        if self.missing_assets.contains(&asset.url) {
+            return Some(Err(asset_missing(&asset)));
+        }
+        match self.fetching.entry(asset.path.clone()) {
+            Entry::Occupied(mut e) => e.get_mut().push(to),
+            Entry::Vacant(e) => {
+                e.insert(vec![to]);
+                self.assets.fetch(asset);
+            }
+        }
+        None
+    }
+
+    fn on_asset(&mut self, done: assets::Done) {
+        let waiting = self.fetching.remove(&done.asset.path).unwrap_or_default();
+        let result = match done.outcome {
+            assets::Outcome::Fetched => asset_response(&done.asset.path),
+            assets::Outcome::Missing => {
+                let e = asset_missing(&done.asset);
+                self.missing_assets.insert(done.asset.url);
+                Err(e)
+            }
+            assets::Outcome::Failed(m) => Err(RemoteError::new(
+                ErrorCode::Network,
+                format!("downloading the image failed: {m}"),
+            )),
+        };
+        for to in waiting {
+            self.reply(to, result.clone());
         }
     }
 
@@ -587,6 +667,25 @@ impl Core {
             );
         }
     }
+}
+
+fn asset_response(path: &std::path::Path) -> Result<response::Result, RemoteError> {
+    let path = path.to_str().ok_or_else(|| {
+        RemoteError::new(
+            ErrorCode::Internal,
+            format!("the cache path {} is not UTF-8", path.display()),
+        )
+    })?;
+    Ok(response::Result::GetAsset(v1::GetAssetResponse {
+        path: path.into(),
+    }))
+}
+
+fn asset_missing(asset: &assets::Asset) -> RemoteError {
+    RemoteError::new(
+        ErrorCode::NotFound,
+        format!("Steam has no image at {}", asset.url),
+    )
 }
 
 fn invalid(message: impl Into<String>) -> RemoteError {

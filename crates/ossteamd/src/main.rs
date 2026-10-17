@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 //! `ossteamd`, the per-user daemon (SPEC §7).
 
+mod assets;
 mod config;
 mod core;
 mod db;
@@ -139,6 +140,8 @@ fn run(args: &Args) -> anyhow::Result<ExitCode> {
     )
     .context("starting the session worker")?;
 
+    let assets = assets::Handle::spawn(cmd_tx.clone()).context("starting the image downloader")?;
+
     let signal_tx = cmd_tx.clone();
     ctrlc::set_handler(move || {
         let _ = signal_tx.send(core::Command::Terminate);
@@ -146,7 +149,16 @@ fn run(args: &Args) -> anyhow::Result<ExitCode> {
     .context("installing the signal handler")?;
     drop(cmd_tx);
 
-    let exit = core::Core::new(db, config, session, pics, Cache::new(pics_dir)).run(cmd_rx);
+    let exit = core::Core::new(core::Parts {
+        db,
+        config,
+        session,
+        pics,
+        pics_cache: Cache::new(pics_dir),
+        assets,
+        assets_dir: paths.cache.join("assets"),
+    })
+    .run(cmd_rx);
     tracing::info!(?exit, "shutting down");
 
     // Shutdown (SPEC D-5): stop accepting (dropping the listener removes the

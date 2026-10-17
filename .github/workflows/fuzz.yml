@@ -15,7 +15,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        target: [vdf_text, vdf_binary]
+        target: [vdf_text, vdf_binary, cm_packet, cm_multi]
     steps:
       - uses: actions/checkout@v4
       - run: rustup toolchain install nightly --profile minimal

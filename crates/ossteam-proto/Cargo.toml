@@ -1,0 +1,17 @@
+[package]
+name = "ossteam-proto"
+description = "Vendored community Steam protobuf definitions and their generated Rust types"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+prost.workspace = true
+
+[build-dependencies]
+prost-build.workspace = true
+protox.workspace = true
+
+[lints]
+workspace = true

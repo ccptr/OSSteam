@@ -11,6 +11,8 @@ cargo-fuzz = true
 [dependencies]
 libfuzzer-sys = "0.4.10"
 ossteam-vdf = { path = "../crates/ossteam-vdf" }
+ossteam-net = { path = "../crates/ossteam-net" }
+ossteam-proto = { path = "../crates/ossteam-proto" }
 
 # Kept out of the main workspace: cargo-fuzz needs a nightly toolchain.
 [workspace]
@@ -25,6 +27,20 @@ bench = false
 [[bin]]
 name = "vdf_binary"
 path = "fuzz_targets/vdf_binary.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "cm_packet"
+path = "fuzz_targets/cm_packet.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "cm_multi"
+path = "fuzz_targets/cm_multi.rs"
 test = false
 doc = false
 bench = false

@@ -2,9 +2,9 @@
 
 | | |
 |---|---|
-| Status | Draft for M1a; nothing implemented yet |
+| Status | Draft for M1a; §1, §2.1, §3 and §4 steps 1 and 2 implemented |
 | Requirements | SPEC §9.1 (NET-1 to NET-4), §19.3 |
-| Code (planned) | `crates/ossteam-net` |
+| Code | `crates/ossteam-net` (ADR 0001 for the I/O model) |
 
 The CM is the long-lived connection between a Steam client and Valve's
 servers. Logon, licenses, PICS, depot keys, persona state and play-session
@@ -17,7 +17,10 @@ fields.
 the protocol. Before M1a code depends on a statement, that statement must
 be confirmed against a capture of the official client on our own test
 account (§19.3), and its row in §9 must be updated. Rows marked
-*unverified* must not be treated as fact.
+*unverified* must not be treated as fact. Some rows are also marked
+*live*: Valve's servers accepted or produced the format when
+`crates/ossteam-net/examples/cm_probe.rs` ran without an account. That
+confirms the format, but it is not a capture of the official client.
 
 ## 1. Finding servers (NET-1)
 
@@ -233,11 +236,12 @@ tracked as open items.
 
 | Statement | Status |
 |---|---|
-| Directory method, parameters and response shape (§1) | unverified |
-| WebSocket URL path and one message per frame (§2.1) | unverified |
-| TCP framing, magic and channel-encryption scheme (§2.2) | unverified |
-| Header layouts and the protobuf flag (§3.2) | unverified |
-| `Multi` format (§3.4) | unverified |
-| Service-method EMsgs and `target_job_name` format (§3.5) | unverified |
-| `ClientHello` before non-authed calls, and its protocol version (§4) | unverified |
+| Directory method, parameters and response shape (§1) | live 2026-10-17 (46 servers: `websockets` and `netfilter` entries, `endpoint`, `type`, `dc`); capture pending |
+| WebSocket URL path and one message per frame (§2.1) | live 2026-10-17; capture pending |
+| TCP framing, magic and channel-encryption scheme (§2.2) | unverified (not built) |
+| Header layouts and the protobuf flag (§3.2) | protobuf header: live 2026-10-17. Extended and basic headers: unverified |
+| Job ids (§3.3) | live 2026-10-17 (the reply's target job was our source job); capture pending |
+| `Multi` format (§3.4) | unverified (no `Multi` seen before logon) |
+| Service-method EMsgs and `target_job_name` format (§3.5) | non-authed call to `Authentication.GetPasswordRSAPublicKey#1`: live 2026-10-17. Authed: unverified |
+| `ClientHello` before non-authed calls, and its protocol version (§4) | sent with 65580 and the call succeeded; whether it is *required* is unverified |
 | `ClientLogon` field values (§7) | not captured |

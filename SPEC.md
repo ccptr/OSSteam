@@ -261,10 +261,11 @@ docs/acceptance/           per-milestone acceptance corpora and checklists
 | GUI | `gpui` + `gpui_platform`, git dependency pinned to a zed revision | Widgets are written by us on plain gpui. `gpui-component` is not used. |
 | CLI | `clap` v4 (derive), `clap_complete` | |
 | Protobuf | `prost`, `prost-build` | Used for both Steam messages and our IPC |
-| WebSocket | `tungstenite` (blocking) + `rustls` | |
-| HTTP | `ureq` + `rustls` | |
+| WebSocket | `tungstenite` (non-blocking, ADR 0001) + `rustls` | rustls uses the `ring` provider and `rustls-platform-verifier` (SEC-3) |
+| HTTP | `ureq` + `rustls` | Same TLS configuration as WebSocket |
 | Crypto | RustCrypto (`aes`, `rsa`, `sha1`, `sha2`, `hmac`, `crc32fast`) | |
 | Compression | `lzma-rs` or `xz2`, `zstd`, `flate2` | Covers every chunk and multi-message format |
+| CM I/O | `polling`, `socket2` | Synchronous readiness polling and non-blocking connect (ADR 0001) |
 | Local IPC | `interprocess` (local sockets, sync) | Unix sockets / Windows named pipes |
 | Storage | `rusqlite` (bundled) | Daemon state database |
 | Secrets | `keyring` | Secret Service, Keychain, Credential Manager |
@@ -284,9 +285,10 @@ Adding an async runtime (tokio, async-std, smol) to the daemon requires an ADR
   - **core**: one thread that owns all mutable state. It receives `Command`s
     on a `crossbeam-channel` and publishes `Event`s to subscribers. Subsystems
     never share mutable state directly.
-  - **cm**: one reader thread and one writer thread per CM connection, using
-    blocking sockets. Responses are matched to requests by job id. A caller
-    waits on a one-shot channel that has a timeout.
+  - **cm**: one I/O thread per CM connection, which waits on a readiness
+    poller over a non-blocking socket (ADR 0001). Responses are matched to
+    requests by job id. A caller waits on a one-shot channel that has a
+    timeout.
   - **ipc**: one acceptor thread per endpoint and one thread per connected
     client. Few clients connect, so a thread each is cheap.
   - **content**: one scheduler thread and a bounded pool of worker threads

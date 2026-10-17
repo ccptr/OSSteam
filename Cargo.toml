@@ -3,6 +3,8 @@ resolver = "3"
 members = [
     "crates/ossteam-types",
     "crates/ossteam-vdf",
+    "crates/ossteam-proto",
+    "crates/ossteam-net",
     "crates/ossteam-ipc",
     "crates/ossteamd",
     "crates/ossteam-cli",
@@ -12,6 +14,8 @@ members = [
 default-members = [
     "crates/ossteam-types",
     "crates/ossteam-vdf",
+    "crates/ossteam-proto",
+    "crates/ossteam-net",
     "crates/ossteam-ipc",
     "crates/ossteamd",
     "crates/ossteam-cli",
@@ -27,6 +31,8 @@ publish = false
 [workspace.dependencies]
 ossteam-types = { path = "crates/ossteam-types" }
 ossteam-vdf = { path = "crates/ossteam-vdf" }
+ossteam-proto = { path = "crates/ossteam-proto" }
+ossteam-net = { path = "crates/ossteam-net" }
 ossteam-ipc = { path = "crates/ossteam-ipc" }
 
 anyhow = "1.0.104"
@@ -34,18 +40,27 @@ clap = { version = "4.6.7", features = ["derive", "wrap_help"] }
 clap_complete = "4.6.11"
 crossbeam-channel = "0.5.17"
 directories = "6.0.0"
+flate2 = "1.1.10"
 interprocess = "2.4.6"
+polling = "3.11.0"
 prost = "0.14.4"
 prost-build = "0.14.4"
 protox = "0.10.0"
 rustix = "1.1.5"
+# TLS is rustls with the ring provider and the platform verifier (SEC-3).
+# aws-lc-rs is avoided: it needs cmake and nasm on Windows.
+rustls = { version = "0.23.46", default-features = false, features = ["ring", "std", "tls12"] }
+rustls-platform-verifier = "0.7.1"
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.154"
+socket2 = "0.6.5"
 thiserror = "2.0.21"
 toml = "1.1.8"
 tracing = "0.1.44"
 tracing-appender = "0.2.5"
 tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
+tungstenite = { version = "0.30.0", default-features = false, features = ["handshake"] }
+ureq = { version = "3.4.2", default-features = false, features = ["rustls-no-provider", "platform-verifier", "gzip"] }
 windows-sys = "0.61.2"
 
 # gpui is pinned to one zed revision; bump deliberately (SPEC §23). The

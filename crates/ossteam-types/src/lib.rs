@@ -6,6 +6,11 @@
 use std::fmt;
 use std::num::ParseIntError;
 use std::str::FromStr;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
+
+mod eresult;
+pub use eresult::EResult;
 
 macro_rules! id_type {
     ($(#[$meta:meta])* $name:ident($inner:ty)) => {
@@ -224,6 +229,26 @@ impl FromStr for SteamId {
     type Err = ParseIntError;
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         s.parse().map(Self)
+    }
+}
+
+/// Cooperative cancellation (SPEC CONC-2).
+///
+/// Clones share one flag. Blocking loops check it at least once a second.
+#[derive(Clone, Debug, Default)]
+pub struct CancelToken(Arc<AtomicBool>);
+
+impl CancelToken {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn cancel(&self) {
+        self.0.store(true, Ordering::Release);
+    }
+
+    pub fn is_cancelled(&self) -> bool {
+        self.0.load(Ordering::Acquire)
     }
 }
 

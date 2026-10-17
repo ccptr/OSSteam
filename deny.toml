@@ -2,6 +2,18 @@
 
 [graph]
 all-features = false
+# Licenses are checked for what we ship: the PLAT-1 targets and the
+# 32-bit shim targets (WS-2).
+targets = [
+    "x86_64-unknown-linux-gnu",
+    "aarch64-unknown-linux-gnu",
+    "i686-unknown-linux-gnu",
+    "x86_64-pc-windows-msvc",
+    "i686-pc-windows-msvc",
+    "x86_64-pc-windows-gnu",
+    "aarch64-apple-darwin",
+    "x86_64-apple-darwin",
+]
 
 [licenses]
 # SPEC LIC-3. GPL-2.0-only is deliberately absent: it cannot be combined

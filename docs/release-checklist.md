@@ -10,5 +10,9 @@ release. Each is marked `RELEASE-BLOCKER` at the place it was switched off;
   Windows is only cross-checked (`cargo check --target
   x86_64-pc-windows-gnu`), so PLAT-1 is not verified for them until
   these return.
+- [ ] **Release builds and artifacts in CI** (`.github/workflows/ci.yml`,
+  build job steps): during development the remaining macOS jobs run only
+  `cargo check`, `cargo clippy` and `cargo test`. The release builds, the
+  spike example build and the artifact upload are commented out.
 - [ ] **Nightly fuzzing** (`.github/workflows/fuzz.yml`): the schedule is
   commented out because it builds on Linux. SEC-5 requires it.

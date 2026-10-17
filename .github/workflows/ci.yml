@@ -49,21 +49,26 @@ jobs:
             libx11-xcb-dev libxkbcommon-x11-dev libzstd-dev
       - run: rustup show active-toolchain || rustup toolchain install
       - uses: Swatinem/rust-cache@v2
+      # During development CI runs only check, clippy and test.
+      # RELEASE-BLOCKER: reinstate the commented steps below (release
+      # builds, artifact upload) before any release; see
+      # docs/release-checklist.md.
+      - run: cargo check --workspace --all-targets
       - run: cargo clippy --workspace --all-targets
       - run: cargo test --workspace
-      - run: cargo build --release --workspace
-      - run: cargo build --release -p ossteam-gui --example spike
-      - name: Upload binaries
-        uses: actions/upload-artifact@v4
-        with:
-          name: ossteam-${{ matrix.name }}
-          path: |
-            target/release/ossteamd
-            target/release/ossteam
-            target/release/ossteam-gui
-            target/release/ossteamd.exe
-            target/release/ossteam.exe
-            target/release/ossteam-gui.exe
-            target/release/examples/spike
-            target/release/examples/spike.exe
-          if-no-files-found: error
+      # - run: cargo build --release --workspace
+      # - run: cargo build --release -p ossteam-gui --example spike
+      # - name: Upload binaries
+      #   uses: actions/upload-artifact@v4
+      #   with:
+      #     name: ossteam-${{ matrix.name }}
+      #     path: |
+      #       target/release/ossteamd
+      #       target/release/ossteam
+      #       target/release/ossteam-gui
+      #       target/release/ossteamd.exe
+      #       target/release/ossteam.exe
+      #       target/release/ossteam-gui.exe
+      #       target/release/examples/spike
+      #       target/release/examples/spike.exe
+      #     if-no-files-found: error

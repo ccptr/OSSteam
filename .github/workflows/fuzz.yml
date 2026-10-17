@@ -2,8 +2,11 @@
 name: Fuzz
 
 on:
-  schedule:
-    - cron: "17 3 * * *"
+  # RELEASE-BLOCKER: the nightly schedule builds on Linux, so it is off
+  # during development. Reinstate it before any release; see
+  # docs/release-checklist.md. Manual runs still work.
+  # schedule:
+  #   - cron: "17 3 * * *"
   workflow_dispatch:
 
 jobs:

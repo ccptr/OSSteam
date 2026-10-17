@@ -10,7 +10,9 @@ publish.workspace = true
 ossteam-types.workspace = true
 ossteam-proto.workspace = true
 ossteam-net.workspace = true
+ossteam-vdf.workspace = true
 aes.workspace = true
+crossbeam-channel.workspace = true
 base64.workspace = true
 cbc.workspace = true
 crc32fast.workspace = true
@@ -26,6 +28,9 @@ zstd.workspace = true
 
 # Encoders for test fixtures and the daemon's fake CDN (FAITH-4). Only
 # dev-dependencies turn this on, so release builds never contain them.
+[dev-dependencies]
+ossteam-content = { path = ".", features = ["testing"] }
+
 [features]
 testing = []
 

@@ -278,7 +278,8 @@ hold:
    unsupported (exit code 7).
 7. **Shared depots.** A depot with `depotfromapp` and no `manifests` takes
    its manifests from that app's `depots/<id>`, looked up the same way
-   (one level only; a loop is an error). With `sharedinstall` set, its
+   (one level only: if that entry is shared from yet another app, the
+   install fails). With `sharedinstall` set, its
    files go to the other app's install directory, not this app's (§8).
 8. **Entitlement.** The depot key request succeeds (§2). Depots whose key
    is refused are dropped, and the job reports them.
@@ -332,8 +333,8 @@ removed only when no installed app uses it any more.
 
 **Disk space** is checked before a job writes anything: the free space on
 the folder's file system must exceed the sum of the sizes of the files
-the job will write (new and changed files in full; staged chunks count),
-plus 1 % of that.
+the job will write (new and changed files in full, less the chunks of
+them already in staging), plus 1 % of that.
 
 **Staging.** A file the job writes is assembled in
 `.ossteam/staging/<appid>/<depot>/<hex SHA-1 of its path>`, then renamed
@@ -344,6 +345,15 @@ group and other execute bits on Unix; read-only sets the file read-only.
 Directories are created as the manifest lists them and as files need
 them. Symbolic links are created on Unix; on Windows, creating one needs a
 privilege the user may not have, and the job then fails and says so.
+Links are made after every file is in place.
+
+**No writes through links.** A depot can contain a symbolic link to a
+place outside its install directory. ossteam never writes, deletes or
+reads chunks through a link inside the install directory: every
+component of a path below the install directory that already exists must
+be a real directory, or the job fails ("a symbolic link or a file is
+where the depot has a directory"). *What the official client does here
+is unverified.*
 
 **User configuration files** (flag `0x001`) are written only if the file
 does not exist yet.
@@ -358,7 +368,9 @@ the daemon stopped are `queued` again at the next start and resume.
 
 The **journal** records, per job, the manifests it is installing and the
 chunks already written to staging. It is written in batches, at most once
-per second, so it may lag the files. On resume, each journaled chunk is
+per second, so it may lag the files, and once more when the download step
+ends, whether or not it succeeded. A journal made for other manifests
+than the job's is discarded with the staging. On resume, each journaled chunk is
 read back from staging and checked (§5 checks 1 and 2) before it is
 trusted; a chunk that fails is fetched again. A staged file the journal
 does not know is deleted.
@@ -374,10 +386,14 @@ ones, depot by depot:
   from the installed files when any installed file holds a chunk with the
   same id (read at the old manifest's offset and checked as in §5 before
   it is used, since the file may have changed under us), and downloaded
-  otherwise.
+  otherwise. The new manifest's offsets are tried too, since a resumed
+  update may have put some new files in place already. Every local copy
+  is made before any file is renamed into place, so the copies read the
+  old files.
 - Files and directories that the new manifest no longer lists are
   deleted after every new file is in place, except user configuration
-  files.
+  files (either flag). A directory is deleted only once it is empty, so
+  files the user put there keep it.
 - A depot that is no longer chosen (§6) has its files deleted the same
   way; a newly chosen depot is installed in full.
 
@@ -385,10 +401,14 @@ The installed state is updated in the database only when the whole job
 is done. A crash in between leaves a mix of old and new files, which the
 resumed job completes.
 
-**Update detection.** When product info changes for an installed app
-(`pics.md` §4), ossteam compares each chosen depot's manifest on the
-installed branch with the installed one. If any differs, or a depot is
-added or removed, the app has an update. With `content.auto_update` set
+**Update detection.** When product info or the library changes
+(`pics.md` §4), ossteam chooses the depots of each installed app again
+(§6) and compares them with the installed ones. If an installed depot now
+has another manifest on the installed branch, or is no longer chosen, the
+app has an update. A depot that is chosen but not installed does not mark
+it: that is also what a depot whose key Steam refused (§2) looks like, and
+it would mark the app for ever. An update job installs such a depot all
+the same, since it chooses depots afresh. With `content.auto_update` set
 to `always` (the default) an update job is queued; with `never` the app
 is only marked. *Unverified: the official client's per-app policies
 (always, on launch, high priority) are not reproduced in M1.*
@@ -399,8 +419,9 @@ Verify reads every file of the installed manifests. A file whose size and
 SHA-1 match `sha_content` is good. Otherwise each chunk is read and
 checked (§5 checks 1 and 2), the file is rebuilt in staging from its good
 chunks plus downloads of the bad ones, and renamed into place. Missing
-files and directories are recreated. User configuration files are
-checked only for existence. Files the manifests do not list are left
+files and directories are recreated, and links whose target differs are
+made again. User configuration files (either flag) are checked only for
+existence. Files the manifests do not list are left
 alone. The job reports how many files it repaired.
 
 ## 12. Uninstall

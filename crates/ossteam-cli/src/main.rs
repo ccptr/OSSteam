@@ -2,7 +2,10 @@
 //! `ossteam`, the command-line client (SPEC §15). It talks only to the
 //! daemon (LEAF-1).
 
-use std::io::Write;
+mod events;
+mod session;
+
+use std::io::{IsTerminal, Write};
 use std::process::ExitCode;
 use std::time::Duration;
 
@@ -62,8 +65,34 @@ enum Color {
 
 #[derive(Subcommand)]
 enum Command {
+    /// Sign in to Steam. Prompts on the terminal for the password and any
+    /// Steam Guard code.
+    Login {
+        /// Sign in by scanning a QR code with the Steam mobile app.
+        #[arg(long, conflicts_with = "username")]
+        qr: bool,
+        /// The Steam account name; asked for when not given.
+        #[arg(long)]
+        username: Option<String>,
+        /// Do not store the sign-in: it ends when the daemon stops.
+        #[arg(long)]
+        no_remember: bool,
+    },
+    /// Log off and forget the active account's stored sign-in.
+    Logout,
+    /// Remembered accounts.
+    Account {
+        #[command(subcommand)]
+        action: Option<AccountAction>,
+    },
     /// Daemon, connection, account, jobs and running games.
     Status,
+    /// Print daemon events as they happen.
+    Events {
+        /// Only these topics (repeatable). All topics by default.
+        #[arg(long = "topic", value_enum)]
+        topics: Vec<events::TopicArg>,
+    },
     /// Control the ossteamd daemon.
     Daemon {
         #[command(subcommand)]
@@ -71,6 +100,17 @@ enum Command {
     },
     /// Print a shell completion script.
     Completions { shell: clap_complete::Shell },
+}
+
+#[derive(Subcommand)]
+enum AccountAction {
+    /// List remembered accounts (the default). `*` marks the active one.
+    List,
+    /// Log off the active account and log on as another remembered one.
+    Switch {
+        /// Steam id or account name.
+        account: String,
+    },
 }
 
 #[derive(Subcommand)]
@@ -165,8 +205,28 @@ fn connect(cli: &Cli, autostart: bool) -> Result<Client, ClientError> {
     Client::connect(&opts)
 }
 
+/// Whether to colour what goes to stderr (CLI-4).
+fn stderr_color(cli: &Cli) -> bool {
+    match cli.color {
+        Color::Always => true,
+        Color::Never => false,
+        Color::Auto => std::io::stderr().is_terminal() && std::env::var_os("NO_COLOR").is_none(),
+    }
+}
+
 fn run(cli: &Cli) -> Result<(), Failure> {
     match &cli.command {
+        Command::Login {
+            qr,
+            username,
+            no_remember,
+        } => session::login(cli, *qr, username.as_deref(), *no_remember),
+        Command::Logout => session::logout(cli),
+        Command::Account { action } => match action.as_ref().unwrap_or(&AccountAction::List) {
+            AccountAction::List => session::account_list(cli),
+            AccountAction::Switch { account } => session::account_switch(cli, account),
+        },
+        Command::Events { topics } => events::follow(cli, topics),
         Command::Completions { shell } => {
             let mut cmd = Cli::command();
             clap_complete::generate(*shell, &mut cmd, "ossteam", &mut std::io::stdout());
@@ -298,24 +358,27 @@ fn daemon_stop(cli: &Cli, force: bool) -> Result<(), Failure> {
     Ok(())
 }
 
+fn connection_name(raw: i32) -> &'static str {
+    match ConnectionState::try_from(raw).unwrap_or(ConnectionState::Unspecified) {
+        ConnectionState::Disconnected => "disconnected",
+        ConnectionState::Connecting => "connecting",
+        ConnectionState::Connected => "connected",
+        ConnectionState::Unspecified => "unknown",
+    }
+}
+
 fn print_status(cli: &Cli, s: &v1::GetStatusResponse) {
-    let connection =
-        match ConnectionState::try_from(s.connection).unwrap_or(ConnectionState::Unspecified) {
-            ConnectionState::Disconnected => "disconnected",
-            ConnectionState::Connecting => "connecting",
-            ConnectionState::Connected => "connected",
-            ConnectionState::Unspecified => "unknown",
-        };
+    let connection = connection_name(s.connection);
     if cli.json {
-        let account = s.account.as_ref().map(|a| {
-            json!({ "steam_id": a.steam_id.to_string(), "account_name": a.account_name, "persona_name": a.persona_name })
-        });
+        let account = s.account.as_ref().map(session::account_json);
         println!(
             "{}",
             json!({
                 "daemon": { "version": s.daemon_version, "pid": s.pid, "uptime_secs": s.uptime_secs },
                 "connection": connection,
                 "account": account,
+                "logged_on": s.logged_on,
+                "reason": (!s.session_reason.is_empty()).then_some(&s.session_reason),
                 "active_jobs": s.active_jobs,
                 "running_games": s.running_games,
             })
@@ -336,15 +399,24 @@ fn print_status(cli: &Cli, s: &v1::GetStatusResponse) {
     let _ = writeln!(out, "connection  {connection}");
     match &s.account {
         Some(a) => {
-            let _ = writeln!(
-                out,
-                "account     {} ({}, {})",
-                a.persona_name, a.account_name, a.steam_id
-            );
+            let name = if a.persona_name.is_empty() {
+                format!("{} ({})", a.account_name, a.steam_id)
+            } else {
+                format!("{} ({}, {})", a.persona_name, a.account_name, a.steam_id)
+            };
+            let state = if s.logged_on {
+                "logged on"
+            } else {
+                "not logged on"
+            };
+            let _ = writeln!(out, "account     {name}, {state}");
         }
         None => {
             let _ = writeln!(out, "account     not logged in");
         }
+    }
+    if !s.session_reason.is_empty() {
+        let _ = writeln!(out, "note        {}", s.session_reason);
     }
     let _ = writeln!(out, "jobs        {}", s.active_jobs);
     let _ = writeln!(out, "games       {}", s.running_games);

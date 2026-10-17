@@ -230,3 +230,50 @@ fn shutdown_notifies_subscribers_and_exits() {
         "socket file left behind"
     );
 }
+
+fn remote_code<T: std::fmt::Debug>(r: Result<T, ClientError>) -> ErrorCode {
+    match r {
+        Err(ClientError::Remote(e)) => e.code,
+        other => panic!("expected a remote error, got {other:?}"),
+    }
+}
+
+/// The session methods that need neither the network nor a keyring: with
+/// no account and no login, each fails truthfully.
+#[test]
+fn session_methods_without_an_account() {
+    let _guard = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let _daemon = start();
+    let c = client();
+
+    let status = c.get_status().unwrap();
+    assert!(!status.logged_on);
+    assert_eq!(status.connection, v1::ConnectionState::Disconnected as i32);
+
+    let accounts = c.list_accounts().unwrap();
+    assert!(accounts.accounts.is_empty());
+    assert_eq!(accounts.active, 0);
+
+    assert_eq!(remote_code(c.logout()), ErrorCode::NotLoggedIn);
+    assert_eq!(
+        remote_code(c.switch_account(76561197960287930)),
+        ErrorCode::NotFound
+    );
+    let code = ossteam_types::Secret::new("ABCDE".into());
+    assert_eq!(
+        remote_code(c.submit_guard_code(&code, v1::LoginPromptKind::Unspecified)),
+        ErrorCode::Conflict
+    );
+    let empty = ossteam_types::Secret::new(" ".into());
+    assert_eq!(
+        remote_code(c.submit_guard_code(&empty, v1::LoginPromptKind::EmailCode)),
+        ErrorCode::InvalidArgument
+    );
+    let password = ossteam_types::Secret::new("pw".into());
+    assert_eq!(
+        remote_code(c.login_with_credentials("  ", &password, false)),
+        ErrorCode::InvalidArgument
+    );
+    // Cancelling when nothing is in progress succeeds.
+    c.cancel_login().unwrap();
+}

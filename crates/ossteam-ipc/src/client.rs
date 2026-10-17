@@ -16,6 +16,7 @@ use std::time::{Duration, Instant};
 
 use crossbeam_channel::{Receiver, RecvTimeoutError, Sender, bounded, unbounded};
 use interprocess::local_socket::{RecvHalf, SendHalf, prelude::*};
+use ossteam_types::Secret;
 
 use crate::endpoint::Endpoint;
 use crate::frame::{FrameError, read_frame, write_frame};
@@ -26,6 +27,9 @@ use crate::{PROTOCOL_VERSION, RemoteError};
 
 /// How long a call waits for its response by default.
 pub const DEFAULT_TIMEOUT: Duration = Duration::from_secs(30);
+/// How long a call that waits on Steam may take: starting a login or
+/// switching accounts may first have to try several servers.
+pub const STEAM_TIMEOUT: Duration = Duration::from_secs(90);
 
 /// Who is connecting; sent in the `Hello`.
 #[derive(Debug, Clone)]
@@ -201,13 +205,14 @@ impl Client {
         let id = self.inner.next_id.fetch_add(1, Ordering::Relaxed);
         let (tx, rx) = bounded(1);
         self.inner.pending.lock().unwrap().insert(id, tx);
-        let env = v1::Envelope {
+        let mut env = v1::Envelope {
             id,
             body: Some(Body::Request(v1::Request {
                 method: Some(method),
             })),
         };
         let sent = write_frame(&mut *self.inner.writer.lock().unwrap(), &env);
+        scrub(&mut env);
         if let Err(e) = sent {
             self.inner.pending.lock().unwrap().remove(&id);
             return Err(e.into());
@@ -297,6 +302,104 @@ impl Client {
         match self.call(request::Method::Unsubscribe(req), DEFAULT_TIMEOUT)? {
             response::Result::Unsubscribe(r) => Ok(topics_from(&r.topics)),
             other => Err(unexpected(other)),
+        }
+    }
+}
+
+/// Session calls (`docs/spec/ipc.md` §5.2).
+impl Client {
+    /// Starts a credential login. Subscribe to [`Topic::Session`] first:
+    /// the prompts and the outcome arrive as events.
+    pub fn login_with_credentials(
+        &self,
+        username: &str,
+        password: &Secret,
+        remember: bool,
+    ) -> Result<(), ClientError> {
+        let req = v1::LoginWithCredentialsRequest {
+            username: username.into(),
+            password: password.expose().into(),
+            remember,
+        };
+        match self.call(request::Method::LoginWithCredentials(req), STEAM_TIMEOUT)? {
+            response::Result::LoginWithCredentials(_) => Ok(()),
+            other => Err(unexpected(other)),
+        }
+    }
+
+    /// Starts a QR login; see [`login_with_credentials`](Self::login_with_credentials).
+    pub fn login_with_qr(&self, remember: bool) -> Result<(), ClientError> {
+        let req = v1::LoginWithQrRequest { remember };
+        match self.call(request::Method::LoginWithQr(req), STEAM_TIMEOUT)? {
+            response::Result::LoginWithQr(_) => Ok(()),
+            other => Err(unexpected(other)),
+        }
+    }
+
+    pub fn submit_guard_code(
+        &self,
+        code: &Secret,
+        kind: v1::LoginPromptKind,
+    ) -> Result<(), ClientError> {
+        let req = v1::SubmitGuardCodeRequest {
+            code: code.expose().into(),
+            kind: kind as i32,
+        };
+        match self.call(request::Method::SubmitGuardCode(req), STEAM_TIMEOUT)? {
+            response::Result::SubmitGuardCode(_) => Ok(()),
+            other => Err(unexpected(other)),
+        }
+    }
+
+    pub fn cancel_login(&self) -> Result<(), ClientError> {
+        match self.call(
+            request::Method::CancelLogin(v1::CancelLoginRequest {}),
+            DEFAULT_TIMEOUT,
+        )? {
+            response::Result::CancelLogin(_) => Ok(()),
+            other => Err(unexpected(other)),
+        }
+    }
+
+    pub fn logout(&self) -> Result<(), ClientError> {
+        match self.call(request::Method::Logout(v1::LogoutRequest {}), STEAM_TIMEOUT)? {
+            response::Result::Logout(_) => Ok(()),
+            other => Err(unexpected(other)),
+        }
+    }
+
+    pub fn list_accounts(&self) -> Result<v1::ListAccountsResponse, ClientError> {
+        match self.call(
+            request::Method::ListAccounts(v1::ListAccountsRequest {}),
+            DEFAULT_TIMEOUT,
+        )? {
+            response::Result::ListAccounts(r) => Ok(r),
+            other => Err(unexpected(other)),
+        }
+    }
+
+    pub fn switch_account(&self, steam_id: u64) -> Result<v1::Account, ClientError> {
+        let req = v1::SwitchAccountRequest { steam_id };
+        match self.call(request::Method::SwitchAccount(req), STEAM_TIMEOUT)? {
+            response::Result::SwitchAccount(r) => r
+                .account
+                .ok_or_else(|| ClientError::Protocol("switch response has no account".into())),
+            other => Err(unexpected(other)),
+        }
+    }
+}
+
+/// Zeroes the secrets a request carried once it has been sent (IPC-10).
+fn scrub(env: &mut v1::Envelope) {
+    use zeroize::Zeroize;
+    if let Some(Body::Request(v1::Request {
+        method: Some(method),
+    })) = &mut env.body
+    {
+        match method {
+            request::Method::LoginWithCredentials(r) => r.password.zeroize(),
+            request::Method::SubmitGuardCode(r) => r.code.zeroize(),
+            _ => {}
         }
     }
 }

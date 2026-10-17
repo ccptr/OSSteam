@@ -5,6 +5,7 @@
 use std::io::{self, Read, Write};
 
 use prost::Message;
+use zeroize::Zeroizing;
 
 use crate::v1::Envelope;
 
@@ -41,7 +42,9 @@ pub fn read_frame(r: &mut impl Read) -> Result<Envelope, FrameError> {
     if len > MAX_FRAME_LEN {
         return Err(FrameError::TooLarge(len));
     }
-    let mut buf = vec![0u8; len];
+    // Frame buffers are zeroed after use: a login request carries a
+    // password (IPC-10, SEC-2).
+    let mut buf = Zeroizing::new(vec![0u8; len]);
     r.read_exact(&mut buf)?;
     Ok(Envelope::decode(buf.as_slice())?)
 }
@@ -52,9 +55,9 @@ pub fn write_frame(w: &mut impl Write, env: &Envelope) -> Result<(), FrameError>
     if len > MAX_FRAME_LEN {
         return Err(FrameError::TooLarge(len));
     }
-    let mut buf = Vec::with_capacity(4 + len);
+    let mut buf = Zeroizing::new(Vec::with_capacity(4 + len));
     buf.extend_from_slice(&(len as u32).to_le_bytes());
-    env.encode(&mut buf).expect("Vec has room");
+    env.encode(&mut *buf).expect("Vec has room");
     w.write_all(&buf)?;
     w.flush()?;
     Ok(())

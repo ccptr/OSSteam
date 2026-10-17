@@ -8,9 +8,13 @@ use std::time::Instant;
 use crossbeam_channel::{Receiver, Sender, TrySendError};
 use ossteam_ipc::RemoteError;
 use ossteam_ipc::v1::{
-    self, ConnectionState, Envelope, ErrorCode, Event, Hello, Topic, envelope::Body, event,
+    self, Envelope, ErrorCode, Event, Hello, LoginPromptKind, Topic, envelope::Body, event,
     request, response,
 };
+use ossteam_types::{Secret, SteamId};
+
+use crate::db::Db;
+use crate::session::{self, Cmd, ReplyTo, Report};
 
 pub type ClientId = u64;
 
@@ -40,6 +44,8 @@ pub enum Command {
     },
     /// A signal or console event asked the daemon to stop.
     Terminate,
+    /// From the session worker.
+    Session(Report),
 }
 
 /// Why the core loop ended.
@@ -55,22 +61,36 @@ struct ClientState {
     topics: BTreeSet<i32>,
 }
 
+/// A request's outcome. `None` means the session worker replies later.
+type Outcome = Option<Result<response::Result, RemoteError>>;
+
 pub struct Core {
     started: Instant,
     clients: HashMap<ClientId, ClientState>,
+    db: Db,
+    session: session::Handle,
+    /// The session as the worker last reported it.
+    session_state: session::State,
+    /// The client whose login is in progress. The login is cancelled when
+    /// that client disconnects.
+    login_owner: Option<ClientId>,
 }
 
 impl Core {
-    pub fn new() -> Self {
+    pub fn new(db: Db, session: session::Handle) -> Self {
         Self {
             started: Instant::now(),
             clients: HashMap::new(),
+            db,
+            session,
+            session_state: session::State::default(),
+            login_owner: None,
         }
     }
 
     /// Runs until a shutdown is requested or every command sender is gone.
-    /// On return every connection's queue has been dropped, so their
-    /// writer threads finish sending and exit.
+    /// On return the session has logged off and every connection's queue
+    /// has been dropped, so their writer threads finish sending and exit.
     pub fn run(mut self, commands: Receiver<Command>) -> Exit {
         let exit = loop {
             let Ok(cmd) = commands.recv() else {
@@ -92,6 +112,14 @@ impl Core {
                     if let Some(c) = self.clients.remove(&client) {
                         tracing::info!(client, name = %c.hello.name, "client disconnected");
                     }
+                    if self.login_owner == Some(client) {
+                        tracing::info!(
+                            client,
+                            "the client that started the login left; cancelling it"
+                        );
+                        self.login_owner = None;
+                        self.session.cancel_login(None);
+                    }
                 }
                 Command::ProtocolError {
                     client,
@@ -106,13 +134,17 @@ impl Core {
                     );
                 }
                 Command::Request { client, id, method } => {
-                    if self.handle(client, id, method) {
+                    if self.handle(ReplyTo { client, id }, method) {
                         break Exit::Requested;
                     }
                 }
                 Command::Terminate => break Exit::Signal,
+                Command::Session(report) => self.on_session(report),
             }
         };
+        // Log off before telling clients the daemon is going (SPEC D-5).
+        // Reports sent meanwhile are not needed any more.
+        self.session.shutdown();
         self.broadcast(
             Topic::Daemon,
             event::Kind::DaemonStopping(v1::DaemonStopping {}),
@@ -122,61 +154,205 @@ impl Core {
     }
 
     /// Handles one request. Returns true when the daemon should stop.
-    fn handle(&mut self, client: ClientId, id: u64, method: Option<request::Method>) -> bool {
+    fn handle(&mut self, to: ReplyTo, method: Option<request::Method>) -> bool {
         let Some(method) = method else {
             let err = RemoteError::new(
                 ErrorCode::Unsupported,
                 "this daemon does not implement that method",
             );
-            self.send(client, id, Body::Error(err.into()));
+            self.send(to.client, to.id, Body::Error(err.into()));
             return false;
         };
         let mut stop = false;
-        let result = match method {
-            request::Method::GetStatus(_) => Ok(response::Result::GetStatus(self.status())),
+        let outcome: Outcome = match method {
+            request::Method::GetStatus(_) => Some(Ok(response::Result::GetStatus(self.status()))),
             request::Method::GetVersion(_) => {
-                Ok(response::Result::GetVersion(v1::GetVersionResponse {
+                Some(Ok(response::Result::GetVersion(v1::GetVersionResponse {
                     daemon_version: env!("CARGO_PKG_VERSION").into(),
                     protocol: Some(ossteam_ipc::PROTOCOL_VERSION),
                     os: std::env::consts::OS.into(),
                     arch: std::env::consts::ARCH.into(),
-                }))
+                })))
             }
             request::Method::Shutdown(req) => {
                 // No game can be running yet: launching arrives in M1c. When
                 // it does, a non-forced shutdown with running games returns
                 // Conflict here (SPEC D-5).
-                tracing::info!(client, force = req.force, "shutdown requested");
+                tracing::info!(client = to.client, force = req.force, "shutdown requested");
                 stop = true;
-                Ok(response::Result::Shutdown(v1::ShutdownResponse {}))
+                Some(Ok(response::Result::Shutdown(v1::ShutdownResponse {})))
             }
-            request::Method::Subscribe(req) => self
-                .change_topics(client, &req.topics, true)
-                .map(|topics| response::Result::Subscribe(v1::SubscribeResponse { topics })),
-            request::Method::Unsubscribe(req) => self
-                .change_topics(client, &req.topics, false)
-                .map(|topics| response::Result::Unsubscribe(v1::UnsubscribeResponse { topics })),
+            request::Method::Subscribe(req) => Some(
+                self.change_topics(to.client, &req.topics, true)
+                    .map(|topics| response::Result::Subscribe(v1::SubscribeResponse { topics })),
+            ),
+            request::Method::Unsubscribe(req) => Some(
+                self.change_topics(to.client, &req.topics, false)
+                    .map(|topics| {
+                        response::Result::Unsubscribe(v1::UnsubscribeResponse { topics })
+                    }),
+            ),
+            request::Method::LoginWithCredentials(mut req) => {
+                // Moved, not copied, into a type that zeroes it (IPC-10).
+                let password = Secret::new(std::mem::take(&mut req.password));
+                let username = req.username.trim().to_owned();
+                if let Some(busy) = self.login_busy() {
+                    Some(Err(busy))
+                } else if username.is_empty() || password.is_empty() {
+                    Some(Err(invalid("a username and a password are required")))
+                } else {
+                    self.login_owner = Some(to.client);
+                    self.session.send(Cmd::LoginWithCredentials {
+                        reply: to,
+                        username,
+                        password,
+                        remember: req.remember,
+                    });
+                    None
+                }
+            }
+            request::Method::LoginWithQr(req) => {
+                if let Some(busy) = self.login_busy() {
+                    Some(Err(busy))
+                } else {
+                    self.login_owner = Some(to.client);
+                    self.session.send(Cmd::LoginWithQr {
+                        reply: to,
+                        remember: req.remember,
+                    });
+                    None
+                }
+            }
+            request::Method::SubmitGuardCode(mut req) => {
+                let code = Secret::new(std::mem::take(&mut req.code));
+                let code = Secret::new(code.expose().trim().to_owned());
+                match LoginPromptKind::try_from(req.kind) {
+                    _ if code.is_empty() => Some(Err(invalid("the code is empty"))),
+                    Ok(kind) => {
+                        self.session.send(Cmd::SubmitGuardCode {
+                            reply: to,
+                            code,
+                            kind,
+                        });
+                        None
+                    }
+                    Err(_) => Some(Err(invalid(format!("unknown prompt kind {}", req.kind)))),
+                }
+            }
+            request::Method::CancelLogin(_) => {
+                self.session.cancel_login(Some(to));
+                None
+            }
+            request::Method::Logout(_) => {
+                self.session.send(Cmd::Logout { reply: to });
+                None
+            }
+            request::Method::ListAccounts(_) => Some(self.list_accounts()),
+            request::Method::SwitchAccount(req) => match self.db.account(SteamId(req.steam_id)) {
+                Ok(Some(account)) => {
+                    self.session.send(Cmd::SwitchAccount { reply: to, account });
+                    None
+                }
+                Ok(None) => Some(Err(RemoteError::new(
+                    ErrorCode::NotFound,
+                    format!("no remembered account has Steam id {}", req.steam_id),
+                ))),
+                Err(e) => Some(Err(internal(&e))),
+            },
         };
+        if let Some(result) = outcome {
+            self.reply(to, result);
+        }
+        stop
+    }
+
+    /// One login runs at a time. Refusing here keeps `login_owner` naming
+    /// the client whose login is running.
+    fn login_busy(&self) -> Option<RemoteError> {
+        self.login_owner
+            .map(|_| RemoteError::new(ErrorCode::Conflict, "a login is already in progress"))
+    }
+
+    fn reply(&mut self, to: ReplyTo, result: Result<response::Result, RemoteError>) {
         let body = match result {
             Ok(r) => Body::Response(v1::Response { result: Some(r) }),
             Err(e) => Body::Error(e.into()),
         };
-        self.send(client, id, body);
-        stop
+        self.send(to.client, to.id, body);
+    }
+
+    fn on_session(&mut self, report: Report) {
+        let stored = match report {
+            Report::Reply { to, result } => {
+                self.reply(to, result);
+                Ok(())
+            }
+            Report::State(state) => {
+                if state != self.session_state {
+                    tracing::debug!(?state, "session changed");
+                    self.broadcast(Topic::Session, event::Kind::SessionChanged(state.event()));
+                    self.session_state = state;
+                }
+                Ok(())
+            }
+            Report::Prompt(p) => {
+                self.broadcast(Topic::Session, event::Kind::LoginPrompt(p));
+                Ok(())
+            }
+            Report::LoginEnded(ev) => {
+                self.login_owner = None;
+                if let Some(ev) = ev {
+                    self.broadcast(Topic::Session, event::Kind::LoginEnded(ev));
+                }
+                Ok(())
+            }
+            Report::Remembered {
+                steam_id,
+                account_name,
+            } => self.db.remember(steam_id, &account_name),
+            Report::Forgotten { steam_id } => self.db.forget(steam_id),
+            Report::Active(steam_id) => self.db.set_active_account(steam_id),
+            Report::CellId(cell) => self.db.set_cell_id(cell),
+            Report::PersonaName { steam_id, name } => self.db.set_persona_name(steam_id, &name),
+        };
+        if let Err(e) = stored {
+            tracing::error!("updating the state database failed: {e:#}");
+        }
     }
 
     fn status(&self) -> v1::GetStatusResponse {
+        let s = &self.session_state;
         v1::GetStatusResponse {
             daemon_version: env!("CARGO_PKG_VERSION").into(),
             pid: std::process::id(),
             uptime_secs: self.started.elapsed().as_secs(),
-            // The daemon has no Steam connection until M1a adds one.
-            connection: ConnectionState::Disconnected as i32,
-            account: None,
+            connection: s.connection as i32,
+            account: s.account.clone(),
             connected_clients: self.clients.len() as u32,
             active_jobs: 0,
             running_games: 0,
+            logged_on: s.logged_on,
+            session_reason: s.reason.clone(),
         }
+    }
+
+    fn list_accounts(&self) -> Result<response::Result, RemoteError> {
+        let accounts = self.db.accounts().map_err(|e| internal(&e))?;
+        Ok(response::Result::ListAccounts(v1::ListAccountsResponse {
+            accounts: accounts
+                .into_iter()
+                .map(|a| v1::Account {
+                    steam_id: a.steam_id.0,
+                    account_name: a.account_name,
+                    persona_name: a.persona_name,
+                })
+                .collect(),
+            active: self
+                .session_state
+                .account
+                .as_ref()
+                .map_or(0, |a| a.steam_id),
+        }))
     }
 
     fn change_topics(
@@ -187,10 +363,7 @@ impl Core {
     ) -> Result<Vec<i32>, RemoteError> {
         for &t in topics {
             if !matches!(Topic::try_from(t), Ok(topic) if topic != Topic::Unspecified) {
-                return Err(RemoteError::new(
-                    ErrorCode::InvalidArgument,
-                    format!("unknown topic {t}"),
-                ));
+                return Err(invalid(format!("unknown topic {t}")));
             }
         }
         let Some(c) = self.clients.get_mut(&client) else {
@@ -242,4 +415,13 @@ impl Core {
             );
         }
     }
+}
+
+fn invalid(message: impl Into<String>) -> RemoteError {
+    RemoteError::new(ErrorCode::InvalidArgument, message)
+}
+
+fn internal(e: &anyhow::Error) -> RemoteError {
+    tracing::error!("{e:#}");
+    RemoteError::new(ErrorCode::Internal, format!("{e:#}"))
 }

@@ -2,9 +2,9 @@
 
 | | |
 |---|---|
-| Status | Draft for M1a; §1, §2.1, §3 and §4 steps 1 and 2 implemented |
+| Status | Draft for M1a; §1, §2.1, §3, §4 and §5 implemented; §2.2 not built |
 | Requirements | SPEC §9.1 (NET-1 to NET-4), §19.3 |
-| Code | `crates/ossteam-net` (ADR 0001 for the I/O model) |
+| Code | `crates/ossteam-net` (ADR 0001 for the I/O model); the session state machine in `crates/ossteamd/src/session/` |
 
 The CM is the long-lived connection between a Steam client and Valve's
 servers. Logon, licenses, PICS, depot keys, persona state and play-session
@@ -34,8 +34,11 @@ servers. Each entry has:
 - `type`: `websockets` or `netfilter`, where netfilter means raw TCP;
 - a datacenter tag and load figures.
 
-The daemon caches the list in its cache directory together with the time
-it was fetched, and tries servers in the order returned. A failed server
+The daemon caches the list in its cache directory (`cm-servers.json`)
+together with the time it was fetched, and tries servers in the order
+returned. It asks the directory once per run, the first time it needs a
+server, and falls back to the cached list when the directory cannot be
+reached. A failed server
 backs off exponentially, starting at 1 s and capped at 5 min, with jitter.
 After a successful logon the server reports the client's cell id, and the
 daemon stores it for the next directory request.
@@ -202,6 +205,37 @@ disconnected, IPC status reports `CONNECTING`, and the game API reports
 the daemon stops retrying. It emits a `SessionChanged` event and asks for
 a new login (AUTH-3).
 
+In detail:
+
+- **When the connection drops** while logged on, the server that dropped
+  it is marked failed (§1), and the first reconnection attempt goes out at
+  once, to the next server.
+- **Each further failed attempt** waits longer: 1 s, doubling up to 60 s,
+  plus up to 50% random jitter. This wait is on top of the per-server
+  backoff in §1, which keeps a failing server out of rotation for longer.
+  A successful logon resets both.
+- **An attempt** is one connection to one server, `ClientHello`, then
+  `ClientLogon`, waiting up to 30 s for `ClientLogOnResponse`.
+- **What a failed logon leads to** depends on its EResult (`auth.md` §4):
+  - server-side or transient (`TryAnotherCM`, `ServiceUnavailable`,
+    `Busy`, ...): retry as above;
+  - the token was rejected: delete it, stop retrying, ask for a login;
+  - anything else (a disabled account, a rate limit): stop retrying and
+    keep the token. Status shows the reason, and `account switch` to the
+    same account tries again.
+- **A logoff the server starts** (`ClientLoggedOff`) is handled by its
+  reason in the same way, with one addition. When the reason says the
+  account signed in elsewhere (`LoggedInElsewhere`,
+  `LogonSessionReplaced`, `AlreadyLoggedInElsewhere`), the daemon does not
+  reconnect, because that would take the session back from the other
+  client. It waits for the user.
+- **Starting a login, or starting the daemon** with a remembered active
+  account, connects the same way. A login gives up after trying servers
+  for 30 s and reports `NETWORK`.
+
+*Whether the official client uses the same intervals is not captured
+(§7). The values above are ossteam's own choices within NET-1.*
+
 ## 6. Messages ossteam needs in M1a
 
 | Purpose | Messages |
@@ -249,3 +283,4 @@ tracked as open items.
 | `ClientHello` before non-authed calls, and its protocol version (§4) | sent with 65580 and the call succeeded; whether it is *required* is unverified |
 | `ClientLogon` header Steam id before logon (§4 step 4) | unverified |
 | `ClientLogon` field values (§7) | not captured |
+| Reconnection timing and the reasons that stop it (§5) | ossteam's own choices; the official client's behaviour is not captured |

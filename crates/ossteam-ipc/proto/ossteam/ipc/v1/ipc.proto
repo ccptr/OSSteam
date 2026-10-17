@@ -82,6 +82,13 @@ message Request {
     ShutdownRequest shutdown = 3;
     SubscribeRequest subscribe = 4;
     UnsubscribeRequest unsubscribe = 5;
+    LoginWithCredentialsRequest login_with_credentials = 6;
+    LoginWithQrRequest login_with_qr = 7;
+    SubmitGuardCodeRequest submit_guard_code = 8;
+    CancelLoginRequest cancel_login = 9;
+    LogoutRequest logout = 10;
+    ListAccountsRequest list_accounts = 11;
+    SwitchAccountRequest switch_account = 12;
   }
 }
 
@@ -92,6 +99,13 @@ message Response {
     ShutdownResponse shutdown = 3;
     SubscribeResponse subscribe = 4;
     UnsubscribeResponse unsubscribe = 5;
+    LoginStartedResponse login_with_credentials = 6;
+    LoginStartedResponse login_with_qr = 7;
+    SubmitGuardCodeResponse submit_guard_code = 8;
+    CancelLoginResponse cancel_login = 9;
+    LogoutResponse logout = 10;
+    ListAccountsResponse list_accounts = 11;
+    SwitchAccountResponse switch_account = 12;
   }
 }
 
@@ -118,11 +132,16 @@ message GetStatusResponse {
   uint32 pid = 2;
   uint64 uptime_secs = 3;
   ConnectionState connection = 4;
-  // Unset when no account is logged on.
+  // The active account: the one logged on, or the one the daemon is
+  // reconnecting (SPEC NET-4). Unset when there is none.
   Account account = 5;
   uint32 connected_clients = 6;
   uint32 active_jobs = 7;
   uint32 running_games = 8;
+  // Whether `account` is logged on to Steam right now.
+  bool logged_on = 9;
+  // Why the session last ended or failed to resume, if it did.
+  string session_reason = 10;
 }
 
 message GetVersionRequest {}
@@ -141,6 +160,77 @@ message ShutdownRequest {
 }
 
 message ShutdownResponse {}
+
+// --- Session (docs/spec/ipc.md §5.2) --------------------------------------
+
+// Starts a credential login. The response arrives once Steam has accepted
+// the start of the sign-in; LoginPrompt events and one LoginEnded follow on
+// the SESSION topic. A login is owned by the connection that started it and
+// is cancelled if that connection closes.
+message LoginWithCredentialsRequest {
+  string username = 1;
+  // Sent only in this request and zeroed by both sides after use (IPC-10).
+  string password = 2;
+  // Store the refresh token so the session resumes after a restart.
+  bool remember = 3;
+}
+
+message LoginWithQrRequest {
+  bool remember = 1;
+}
+
+message LoginStartedResponse {}
+
+enum LoginPromptKind {
+  LOGIN_PROMPT_KIND_UNSPECIFIED = 0;
+  // Enter the code Steam emailed; `hint` is the address's domain.
+  LOGIN_PROMPT_KIND_EMAIL_CODE = 1;
+  // Enter the code from the Steam mobile authenticator.
+  LOGIN_PROMPT_KIND_DEVICE_CODE = 2;
+  // Approve the sign-in in the Steam mobile app, or by the link in an
+  // email when `hint` says so. Nothing needs to be submitted.
+  LOGIN_PROMPT_KIND_DEVICE_CONFIRMATION = 3;
+  // Show `qr_url` as a QR code. A later prompt with a new URL replaces it.
+  LOGIN_PROMPT_KIND_QR_URL = 4;
+}
+
+// Answers an EMAIL_CODE or DEVICE_CODE prompt.
+message SubmitGuardCodeRequest {
+  string code = 1;
+  // Which prompt this answers. Unspecified is accepted when the login
+  // offers exactly one kind of code.
+  LoginPromptKind kind = 2;
+}
+
+message SubmitGuardCodeResponse {}
+
+message CancelLoginRequest {}
+
+message CancelLoginResponse {}
+
+// Logs the active account off and deletes its stored token.
+message LogoutRequest {}
+
+message LogoutResponse {}
+
+message ListAccountsRequest {}
+
+message ListAccountsResponse {
+  // Accounts with a stored refresh token.
+  repeated Account accounts = 1;
+  // The active account's Steam id, or 0.
+  fixed64 active = 2;
+}
+
+// Logs off the active account, if any, and logs on with the stored token of
+// `steam_id`. The response arrives once that logon has succeeded or failed.
+message SwitchAccountRequest {
+  fixed64 steam_id = 1;
+}
+
+message SwitchAccountResponse {
+  Account account = 1;
+}
 
 // --- Events ---------------------------------------------------------------
 
@@ -175,6 +265,9 @@ message Event {
   oneof kind {
     Notice notice = 1;
     DaemonStopping daemon_stopping = 2;
+    SessionChanged session_changed = 3;
+    LoginPrompt login_prompt = 4;
+    LoginEnded login_ended = 5;
   }
 }
 
@@ -193,3 +286,29 @@ message Notice {
 
 // Topic: DAEMON. Sent once, just before the daemon closes all connections.
 message DaemonStopping {}
+
+// Topic: SESSION. The connection or the active account changed. Carries the
+// same fields as GetStatus.
+message SessionChanged {
+  ConnectionState connection = 1;
+  Account account = 2;
+  bool logged_on = 3;
+  string reason = 4;
+  // The stored token was rejected or is missing: the account must log in
+  // again before it can be used.
+  bool login_required = 5;
+}
+
+// Topic: SESSION. Steam needs something from the user to continue a login.
+message LoginPrompt {
+  LoginPromptKind kind = 1;
+  string hint = 2;
+  string qr_url = 3;
+}
+
+// Topic: SESSION. A login finished: `account` on success, `error` otherwise.
+// Sent once per login that got as far as LoginStartedResponse.
+message LoginEnded {
+  Account account = 1;
+  Error error = 2;
+}

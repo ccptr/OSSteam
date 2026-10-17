@@ -7,7 +7,10 @@ license.workspace = true
 publish.workspace = true
 
 [dependencies]
+ossteam-auth.workspace = true
 ossteam-ipc.workspace = true
+ossteam-net.workspace = true
+ossteam-proto.workspace = true
 ossteam-types.workspace = true
 anyhow.workspace = true
 clap.workspace = true
@@ -15,12 +18,31 @@ crossbeam-channel.workspace = true
 ctrlc = { version = "3.5.2", features = ["termination"] }
 directories.workspace = true
 interprocess.workspace = true
+keyring-core = "1.0.1"
+rusqlite = { version = "0.40.2", features = ["bundled"] }
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+toml.workspace = true
 tracing.workspace = true
 tracing-appender.workspace = true
 tracing-subscriber.workspace = true
+ureq.workspace = true
+zeroize.workspace = true
 
 [target.'cfg(unix)'.dependencies]
-rustix = { workspace = true, features = ["process"] }
+rustix = { workspace = true, features = ["process", "system"] }
+
+# The OS keyrings (SPEC D-8). Secret Service is reached through libdbus,
+# which is synchronous (SYNC-1); the zbus store would bring an async runtime.
+[target.'cfg(all(unix, not(target_os = "macos")))'.dependencies]
+dbus-secret-service-keyring-store = { version = "1.0.1", features = ["crypto-rust"] }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+apple-native-keyring-store = { version = "1.0.2", features = ["keychain"] }
+
+[target.'cfg(windows)'.dependencies]
+windows-native-keyring-store = { version = "1.1.0", default-features = false }
 
 [lints]
 workspace = true

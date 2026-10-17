@@ -40,13 +40,13 @@ jobs:
           - { name: macos-x86_64, os: macos-15-intel }
     steps:
       - uses: actions/checkout@v4
-      - name: Install Linux build dependencies (gpui)
+      - name: Install Linux build dependencies (gpui, libdbus for the keyring)
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
-            libasound2-dev libfontconfig-dev libvulkan1 libwayland-dev \
-            libx11-xcb-dev libxkbcommon-x11-dev libzstd-dev
+            libasound2-dev libdbus-1-dev libfontconfig-dev libvulkan1 \
+            libwayland-dev libx11-xcb-dev libxkbcommon-x11-dev libzstd-dev
       - run: rustup show active-toolchain || rustup toolchain install
       - uses: Swatinem/rust-cache@v2
       # During development CI runs only check, clippy and test.

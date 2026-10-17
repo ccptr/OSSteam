@@ -2,10 +2,10 @@
 
 | | |
 |---|---|
-| Status | Implemented for M0 (`Hello`, Daemon methods, subscriptions) |
-| Requirements | SPEC §8 (IPC-1 to IPC-10), D-1, D-2, D-5, CONC-1 |
+| Status | Implemented: `Hello`, Daemon methods, subscriptions (M0); Session methods except `SetPersonaState` (M1a) |
+| Requirements | SPEC §8 (IPC-1 to IPC-10), D-1, D-2, D-5, CONC-1, NET-4, AUTH-1 to AUTH-4 |
 | Schema | `crates/ossteam-ipc/proto/ossteam/ipc/v1/ipc.proto` |
-| Code | `crates/ossteam-ipc` (both sides), `crates/ossteamd/src/{core,server}.rs` |
+| Code | `crates/ossteam-ipc` (both sides), `crates/ossteamd/src/{core,server}.rs`, `crates/ossteamd/src/session/` |
 
 This is the protocol between `ossteamd` and its clients: the `ossteam`
 CLI, `ossteam-gui`, and any third-party client. The `.proto` file is the
@@ -104,20 +104,73 @@ connection's complete topic set. `TOPIC_UNSPECIFIED`, or a number this
 daemon does not know, is rejected with `INVALID_ARGUMENT`, and the topic set
 is left unchanged. Events always have `id = 0`.
 
-| Topic | Events (M0) |
+| Topic | Events |
 |---|---|
 | `DAEMON` | `DaemonStopping`: sent once, just before shutdown closes connections |
 | `NOTICES` | `Notice{level, text}` |
-| `SESSION`, `LIBRARY`, `JOBS`, `GAMES` | Subscribable now; their events arrive with M1a to M1c |
+| `SESSION` | `SessionChanged`, `LoginPrompt`, `LoginEnded` (§5.2) |
+| `LIBRARY`, `JOBS`, `GAMES` | Subscribable now; their events arrive with M1a to M1c |
 
-## 5. Methods (M0)
+## 5. Methods
+
+### 5.1 Daemon
 
 | Method | Behaviour |
 |---|---|
-| `GetStatus` | Daemon version, pid, uptime, Steam connection state, account (unset when logged off), connected clients, active jobs, running games. In M0 the connection is `DISCONNECTED` and the counts are 0, which is the true state: the daemon has no Steam connection, jobs or games yet. |
+| `GetStatus` | Daemon version, pid, uptime, the session (§5.2: connection state, active account, `logged_on`, `session_reason`), connected clients, active jobs, running games. Jobs and games are 0 until M1b and M1c add them, which is the true state. |
 | `GetVersion` | Daemon version, protocol version, and the OS and architecture the daemon was built for. |
 | `Shutdown{force}` | Replies, then shuts down (§6). Once games can run (M1c), a request without `force` is refused with `CONFLICT` while any game the daemon launched is running (D-5). |
 | `Subscribe`, `Unsubscribe` | See §4. |
+
+### 5.2 Session
+
+The session belongs to the daemon (IPC-9). Its state is what `GetStatus`
+returns and what `SessionChanged` carries:
+
+| Field | Meaning |
+|---|---|
+| `connection` | `CONNECTED` while a CM connection is up, `CONNECTING` while one is being attempted or a retry is scheduled (NET-4), `DISCONNECTED` otherwise |
+| `account` | The active account: the one logged on, or the one being reconnected. Unset when there is none |
+| `logged_on` | Whether `account` is logged on right now |
+| `reason` / `session_reason` | Why the session last ended or failed to resume, in words for people. Empty after a successful logon |
+| `login_required` (event only) | The stored token was rejected or is missing; the account must log in again |
+
+A connection can be `CONNECTED` with `logged_on` false: during a login, and
+between connecting and the logon answer.
+
+| Method | Behaviour |
+|---|---|
+| `LoginWithCredentials{username, password, remember}` | Starts a credential login (`auth.md` §2). The response comes once Steam has accepted the start, which may take a while if servers must be tried first, so clients should allow 90 s. Wrong passwords and other refusals fail here with `NOT_LOGGED_IN`; Steam being unreachable or rate-limiting fails with `NETWORK`. |
+| `LoginWithQr{remember}` | Starts a QR login (`auth.md` §3). |
+| `SubmitGuardCode{code, kind}` | Answers an `EMAIL_CODE` or `DEVICE_CODE` prompt. `kind` may be left unspecified when the login offers one kind of code. A rejected code fails with `NOT_LOGGED_IN`; the login stays open for another try. Without a login waiting, `CONFLICT`. |
+| `CancelLogin` | Ends the login in progress, if any, and succeeds either way. |
+| `Logout` | Logs the active account off and deletes its stored token. `NOT_LOGGED_IN` when there is no active account. |
+| `ListAccounts` | The remembered accounts (those with a stored token) and the active account's Steam id, or 0. |
+| `SwitchAccount{steam_id}` | Logs off the active account and logs on as a remembered one (`auth.md` §6). Replies once that logon has succeeded or failed. `NOT_FOUND` for an account that is not remembered. |
+
+`SetPersonaState` arrives with persona support (PLAY-2).
+
+**Login flow.** A client subscribes to `SESSION` first, then starts a
+login. After `LoginStartedResponse` the daemon sends:
+
+- `LoginPrompt{kind, hint, qr_url}` for each thing Steam needs: a QR URL to
+  show (again whenever it rotates), a code to enter, or an approval to make
+  in the Steam mobile app or by email. Several prompts may be open at
+  once; the user satisfies any one of them, and the daemon keeps polling
+  meanwhile, so approving in the app finishes the login even while a code
+  prompt waits.
+- exactly one `LoginEnded`, with the account on success or an `Error`
+  otherwise. On success the account is already logged on.
+
+One login runs at a time; a second one fails with `CONFLICT`. A login
+belongs to the connection that started it: if that connection closes, the
+daemon cancels the login. Starting a login while an account is active logs
+that account off first (`auth.md` §6).
+
+**Secrets (IPC-10).** The password and Steam Guard codes travel only in
+their request. Both sides zero every frame buffer after use, the client
+library zeroes its copy of the request once it is sent, and the daemon
+moves the value into a type that is zeroed on drop.
 
 ## 6. Daemon lifecycle
 
@@ -171,6 +224,15 @@ queue. A single core thread owns all state and handles every request in
 order. A blocking `accept` cannot be interrupted, so on shutdown the daemon
 sets a flag and then connects to itself once to wake the acceptor.
 
+The session worker (`crates/ossteamd/src/session/`) is a separate thread
+that owns the CM connection and the keyring, because both block: network
+calls take seconds and a locked keyring may wait for the user. The core
+forwards session requests to it, and it reports replies, state changes and
+prompts back on the core's command channel. The core keeps the state
+database and answers `GetStatus` and `ListAccounts` itself, so they never
+wait on the network. A session request that waits on Steam is answered
+when the worker reports back.
+
 The client library runs one reader thread per connection. That thread
 routes each reply to the waiting call by id and queues events. Calls can
 come from any thread, and each one has a timeout (30 s by default).
@@ -179,7 +241,7 @@ come from any thread, and each one has a timeout (30 s by default).
 
 | `ErrorCode` | CLI exit code (SPEC §15.3) |
 |---|---|
-| `NOT_LOGGED_IN` | 4 |
+| `NOT_LOGGED_IN` | 4 (also authentication failures) |
 | `NOT_FOUND` | 5 |
 | `NOT_OWNED` | 6 |
 | `UNSUPPORTED` | 7 |

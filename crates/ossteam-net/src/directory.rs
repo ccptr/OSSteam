@@ -175,7 +175,7 @@ impl ServerPicker {
 
 /// A random duration in `0..=max`. `RandomState` is seeded randomly per
 /// instance by std, which is plenty for spreading retries.
-fn jitter(max: Duration) -> Duration {
+pub fn jitter(max: Duration) -> Duration {
     let mut h = RandomState::new().build_hasher();
     h.write_u8(0);
     let r = h.finish();

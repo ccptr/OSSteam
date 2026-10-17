@@ -1,10 +1,14 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 //! `ossteamd`, the per-user daemon (SPEC §7).
 
+mod config;
 mod core;
+mod db;
 mod logging;
 mod paths;
+mod secrets;
 mod server;
+mod session;
 
 use std::fs::{File, OpenOptions, TryLockError};
 use std::io::Write;
@@ -90,6 +94,14 @@ fn run(args: &Args) -> anyhow::Result<ExitCode> {
         });
     };
 
+    let config = config::Config::load(&paths.config)?;
+    let db = db::Db::open(&paths.data.join(db::FILE_NAME))?;
+    let resume = match db.active_account()? {
+        Some(id) => db.account(id)?,
+        None => None,
+    };
+    let cell_id = db.cell_id()?;
+
     let listener = endpoint
         .listen()
         .with_context(|| format!("listening on {}", endpoint.address))?;
@@ -107,6 +119,18 @@ fn run(args: &Args) -> anyhow::Result<ExitCode> {
     let server = server::Server::start(listener, endpoint.clone(), cmd_tx.clone(), alive_tx)
         .context("starting the IPC server")?;
 
+    let session = session::Handle::spawn(
+        session::Settings {
+            cache_dir: paths.cache.clone(),
+            data_dir: paths.data.clone(),
+            file_fallback: config.secrets_file_fallback,
+            cell_id,
+            resume,
+        },
+        cmd_tx.clone(),
+    )
+    .context("starting the session worker")?;
+
     let signal_tx = cmd_tx.clone();
     ctrlc::set_handler(move || {
         let _ = signal_tx.send(core::Command::Terminate);
@@ -114,7 +138,7 @@ fn run(args: &Args) -> anyhow::Result<ExitCode> {
     .context("installing the signal handler")?;
     drop(cmd_tx);
 
-    let exit = core::Core::new().run(cmd_rx);
+    let exit = core::Core::new(db, session).run(cmd_rx);
     tracing::info!(?exit, "shutting down");
 
     // Shutdown (SPEC D-5): stop accepting (dropping the listener removes the

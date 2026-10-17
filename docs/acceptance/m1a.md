@@ -15,13 +15,18 @@ the date and the build.
 |---|---|
 | `ossteam-proto`: vendored protos at a pinned commit, `xtask update-protos` | ✅ 2026-10-17 |
 | `ossteam-net`: directory, WSS transport, framing, Multi, jobs, service calls, heartbeats | ✅ unit tests and fuzz; live probe without an account 2026-10-17 |
-| `ossteam-net`: reconnection with backoff (NET-4) | ⏳ |
-| `ossteam-auth`: credential and QR sessions, guard codes, token renewal, logon messages | unit tests; QR begin and poll live without an account 2026-10-17; login with an account ⏳ |
-| Daemon session subsystem, state database, keyring storage | ⏳ |
+| Reconnection with backoff (NET-4), in the daemon's session worker | built; unit tests for its parts; live drop-and-reconnect ⏳ (needs an account) |
+| `ossteam-auth`: credential and QR sessions, guard codes, logon messages | unit tests; QR begin and poll live without an account 2026-10-17; login with an account ⏳ |
+| Access-token renewal (AUTH-3) | ⏳ comes with the first WebAPI use |
+| Daemon session subsystem, state database, keyring storage | built; integration tests without an account; live QR start and cancel through `ossteam login --qr` 2026-10-17 |
 | Licenses, PICS, change polling, PICS cache | ⏳ |
 | Persona state (PLAY-2) | ⏳ |
-| IPC: Daemon, Session and Library methods | ⏳ |
-| CLI: `login`, `logout`, `account`, `status`, `persona`, `library`, `info`, `config`, `events`, `daemon`, `completions` | ⏳ |
+| IPC: Daemon methods | ✅ M0 |
+| IPC: Session methods except `SetPersonaState` | built 2026-10-17 |
+| IPC: `SetPersonaState`, Library methods | ⏳ |
+| CLI: `login`, `logout`, `account`, `status`, `events`, `daemon`, `completions` | built 2026-10-17 |
+| CLI: `persona`, `library`, `info`, `config` | ⏳ |
+| Daemon integration tests against a fake CM (§19.1 level 3) | ⏳ needs a test-only WSS server the platform verifier accepts |
 | `cm.md` §7 and `auth.md` §8 captures of the official client | ⏳ needs a capture setup |
 
 ## Checklist

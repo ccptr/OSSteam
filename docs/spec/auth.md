@@ -2,9 +2,9 @@
 
 | | |
 |---|---|
-| Status | Draft for M1a; §1 to §4 implemented in `ossteam-auth`, not yet tried live |
+| Status | Draft for M1a; §1 to §6 implemented (access-token renewal in §4 still open); QR start tried live, account logins not yet |
 | Requirements | SPEC §9.2 (AUTH-1 to AUTH-4), §8.5 (IPC-9, IPC-10), D-8, D-10, SEC-2 |
-| Code | `crates/ossteam-auth`; storage (§4, §5) and accounts (§6) belong to `ossteamd` |
+| Code | `crates/ossteam-auth`; storage (§4, §5) and accounts (§6) in `crates/ossteamd/src/{session,secrets.rs,db.rs}` |
 
 Signing in is done with the `Authentication` unified service
 (`IAuthenticationService`). That service issues a **refresh token**, which
@@ -100,11 +100,19 @@ Steam mobile app.
 - **Access tokens** are needed for some service calls and WebAPI requests.
   They are obtained with `GenerateAccessTokenForApp{refresh_token, steamid}`,
   and that same call may also renew the refresh token. The daemon renews
-  ahead of expiry, never on a fixed schedule it invented.
+  ahead of expiry, never on a fixed schedule it invented. *Not yet
+  implemented: nothing in the daemon needs an access token until the
+  WebAPI is used, and renewal comes with that.*
 - **Storage.** The refresh token goes in the OS keyring under the service
-  name `ossteam` with the account name as the key. If no keyring is
-  available, it goes in a mode-0600 file, but only after the user opts in
-  (D-8). Access tokens are kept in memory only. Tokens use secret types that
+  name `ossteam` with the account name as the key: Secret Service on Linux
+  (through libdbus), the login Keychain on macOS, Credential Manager on
+  Windows. If no keyring is available, it goes in `secrets.json` in the
+  data directory, mode 0600, but only when the user has set
+  `secrets.file_fallback = true` in `ossteamd.toml` (D-8, D-9). Otherwise a
+  remembered login fails before it starts, with a message that names both
+  ways forward: `--no-remember`, or the setting. A `--no-remember` login
+  keeps its token in memory only and is gone when the daemon stops.
+  Access tokens are kept in memory only. Tokens use secret types that
   are zeroed when dropped and have no `Debug` or `Display` output for their
   content (D-10, SEC-2).
 - **Revocation.** If logon with a stored refresh token fails with an
@@ -118,16 +126,29 @@ Steam mobile app.
 A successful email-guarded login can return `new_guard_data`, a machine
 token. Sending it with later logins lets the account skip the email code
 on this machine. It is stored like a refresh token, in the keyring under
-`ossteam-guard`, and handled as a secret. It is the user's real
+`ossteam-guard`, and handled as a secret. It is stored only for remembered
+logins, and `Logout` leaves it in place: logging out ends the session, it
+does not withdraw the machine's trust. It is the user's real
 authorisation for this machine and is never shared between machines.
 
 ## 6. Accounts (AUTH-4)
 
 One account is active per daemon. `ListAccounts` returns the accounts
 that have a stored refresh token. `SwitchAccount` logs off, which sends
-`ClientLogOff` and waits for `ClientLoggedOff` or a timeout, and then logs
-on with the other account's token. `Logout` logs off and deletes that
+`ClientLogOff` and waits for `ClientLoggedOff` or a timeout (2 s), and then
+logs on with the other account's token. `Logout` logs off and deletes that
 account's stored token.
+
+Starting a login while an account is active logs that account off first,
+as the official client does when adding an account. Its token stays
+stored, so `account switch` returns to it. If the new login fails, no
+account is active.
+
+The state database records the remembered accounts (Steam id, account
+name, persona name) and which one is active. At start the daemon logs the
+active account on again with its stored token (`cm.md` §5). A remembered
+login makes its account active; a `--no-remember` login does not, so it is
+not resumed.
 
 ## 7. What the daemon never does
 

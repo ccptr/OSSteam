@@ -137,6 +137,18 @@ impl Connection {
         cancel: &CancelToken,
     ) -> Result<Self, ConnectError> {
         let transport = transport::connect(server, timeout, cancel)?;
+        Self::with_transport(server, transport, events, cancel)
+    }
+
+    /// Starts the I/O thread on a transport that is already connected to
+    /// `server`. [`connect`](Self::connect) uses this after opening its
+    /// transport.
+    pub fn with_transport(
+        server: &CmServer,
+        transport: Box<dyn Transport>,
+        events: Sender<Incoming>,
+        cancel: &CancelToken,
+    ) -> Result<Self, ConnectError> {
         transport.socket().set_nonblocking(true)?;
         let shared = Arc::new(Shared {
             poller: Poller::new()?,

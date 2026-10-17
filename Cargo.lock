@@ -4240,6 +4240,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "apple-native-keyring-store",
+ "base64 0.23.1",
  "clap",
  "crossbeam-channel",
  "ctrlc",
@@ -4253,6 +4254,10 @@ dependencies = [
  "ossteam-pics",
  "ossteam-proto",
  "ossteam-types",
+ "ossteam-vdf",
+ "prost",
+ "rand_core 0.6.4",
+ "rsa",
  "rusqlite",
  "rustix",
  "serde",

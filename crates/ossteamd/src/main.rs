@@ -12,15 +12,19 @@ mod pics;
 mod secrets;
 mod server;
 mod session;
+#[cfg(test)]
+mod testing;
 
 use std::fs::{File, OpenOptions, TryLockError};
 use std::io::Write;
+use std::path::Path;
 use std::process::ExitCode;
 use std::time::{Duration, Instant};
 
 use anyhow::Context;
 use clap::Parser;
-use crossbeam_channel::{RecvTimeoutError, bounded, unbounded};
+use crossbeam_channel::{RecvTimeoutError, Sender, bounded, unbounded};
+use interprocess::local_socket::Listener;
 use ossteam_ipc::v1::PeerKind;
 use ossteam_ipc::{Client, ClientInfo, ConnectOptions, Endpoint};
 use ossteam_pics::Cache;
@@ -98,15 +102,6 @@ fn run(args: &Args) -> anyhow::Result<ExitCode> {
         });
     };
 
-    let mut config = config::Config::load(&paths.config)?;
-    let db = db::Db::open(&paths.data.join(db::FILE_NAME))?;
-    config.apply_overrides(db.setting_overrides()?);
-    let resume = match db.active_account()? {
-        Some(id) => db.account(id)?,
-        None => None,
-    };
-    let cell_id = db.cell_id()?;
-
     let listener = endpoint
         .listen()
         .with_context(|| format!("listening on {}", endpoint.address))?;
@@ -119,34 +114,86 @@ fn run(args: &Args) -> anyhow::Result<ExitCode> {
         "directories"
     );
 
+    let dialer = Box::new(session::Servers::new(paths.cache.clone()));
+    serve(
+        Env {
+            paths,
+            listener,
+            endpoint,
+            dialer,
+            open_secrets: secrets::Secrets::open,
+            pics_poll: pics::POLL_INTERVAL,
+        },
+        |cmd_tx| {
+            let signal_tx = cmd_tx.clone();
+            ctrlc::set_handler(move || {
+                let _ = signal_tx.send(core::Command::Terminate);
+            })
+            .context("installing the signal handler")
+        },
+    )?;
+    Ok(ExitCode::SUCCESS)
+}
+
+/// What [`serve`] runs on. The daemon passes the real CM dialer and the OS
+/// keyring; only tests pass anything else (FAITH-4).
+struct Env {
+    paths: paths::Paths,
+    listener: Listener,
+    endpoint: Endpoint,
+    dialer: Box<dyn session::Dialer>,
+    open_secrets: fn(bool, &Path) -> secrets::Secrets,
+    pics_poll: Duration,
+}
+
+/// Starts the workers and the IPC server and runs the core until it stops
+/// (SPEC §7.1). `started` runs once the core's command channel exists.
+fn serve(
+    env: Env,
+    started: impl FnOnce(&Sender<core::Command>) -> anyhow::Result<()>,
+) -> anyhow::Result<()> {
+    let Env {
+        paths,
+        listener,
+        endpoint,
+        dialer,
+        open_secrets,
+        pics_poll,
+    } = env;
+    let mut config = config::Config::load(&paths.config)?;
+    let db = db::Db::open(&paths.data.join(db::FILE_NAME))?;
+    config.apply_overrides(db.setting_overrides()?);
+    let resume = match db.active_account()? {
+        Some(id) => db.account(id)?,
+        None => None,
+    };
+    let cell_id = db.cell_id()?;
+
     let (cmd_tx, cmd_rx) = unbounded();
     let (alive_tx, alive_rx) = bounded::<()>(0);
-    let server = server::Server::start(listener, endpoint.clone(), cmd_tx.clone(), alive_tx)
+    let server = server::Server::start(listener, endpoint, cmd_tx.clone(), alive_tx)
         .context("starting the IPC server")?;
 
     let pics_dir = paths.cache.join("pics");
-    let pics = pics::Handle::spawn(Cache::new(&pics_dir), cmd_tx.clone())
+    let pics = pics::Handle::spawn(Cache::new(&pics_dir), pics_poll, cmd_tx.clone())
         .context("starting the PICS worker")?;
     let session = session::Handle::spawn(
         session::Settings {
-            cache_dir: paths.cache.clone(),
             data_dir: paths.data.clone(),
             file_fallback: config.file_fallback(),
             cell_id,
+            open_secrets,
             resume,
             pics: pics.sender(),
         },
+        dialer,
         cmd_tx.clone(),
     )
     .context("starting the session worker")?;
 
     let assets = assets::Handle::spawn(cmd_tx.clone()).context("starting the image downloader")?;
 
-    let signal_tx = cmd_tx.clone();
-    ctrlc::set_handler(move || {
-        let _ = signal_tx.send(core::Command::Terminate);
-    })
-    .context("installing the signal handler")?;
+    started(&cmd_tx)?;
     drop(cmd_tx);
 
     let exit = core::Core::new(core::Parts {
@@ -172,7 +219,7 @@ fn run(args: &Args) -> anyhow::Result<ExitCode> {
         Err(RecvTimeoutError::Timeout) => tracing::warn!("some clients did not drain in time"),
     }
     tracing::info!("stopped");
-    Ok(ExitCode::SUCCESS)
+    Ok(())
 }
 
 /// Takes the single-instance lock (SPEC D-1). Returns `None` when another

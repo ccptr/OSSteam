@@ -26,7 +26,7 @@ use ossteam_types::{AppId, CancelToken, PackageId, SteamId};
 use crate::core::Command;
 
 /// How often to ask what changed while logged on (`pics.md` §4).
-const POLL_INTERVAL: Duration = Duration::from_secs(60);
+pub const POLL_INTERVAL: Duration = Duration::from_secs(60);
 /// The worker's wait when nothing is scheduled.
 const IDLE: Duration = Duration::from_secs(3600);
 
@@ -71,10 +71,15 @@ pub struct Handle {
 }
 
 impl Handle {
-    pub fn spawn(cache: Cache, core: Sender<Command>) -> std::io::Result<Self> {
+    /// `poll_interval` is [`POLL_INTERVAL`] in the daemon.
+    pub fn spawn(
+        cache: Cache,
+        poll_interval: Duration,
+        core: Sender<Command>,
+    ) -> std::io::Result<Self> {
         let (tx, rx) = crossbeam_channel::unbounded();
         let stop = CancelToken::new();
-        let worker = Worker::new(cache, core, stop.clone());
+        let worker = Worker::new(cache, poll_interval, core, stop.clone());
         let thread = std::thread::Builder::new()
             .name("pics".into())
             .spawn(move || worker.run(&rx))?;
@@ -142,15 +147,22 @@ struct Worker {
     check_due: bool,
     /// When to run the next update.
     next_poll: Option<Instant>,
+    poll_interval: Duration,
     refreshed: Vec<AppId>,
     published: Option<Arc<Snapshot>>,
 }
 
 impl Worker {
-    fn new(cache: Cache, core: Sender<Command>, stop: CancelToken) -> Self {
+    fn new(
+        cache: Cache,
+        poll_interval: Duration,
+        core: Sender<Command>,
+        stop: CancelToken,
+    ) -> Self {
         let change_number = cache.change_number();
         Self {
             core,
+            poll_interval,
             cache,
             stop,
             account: None,
@@ -209,7 +221,7 @@ impl Worker {
                 self.requester = Some(requester);
                 // Each logon brings a license list, which starts the full
                 // check; until then the earlier one is still in force.
-                self.next_poll = Some(Instant::now() + POLL_INTERVAL);
+                self.next_poll = Some(Instant::now() + self.poll_interval);
             }
             Cmd::Licenses(licenses) => {
                 let Some(account) = self.account else {
@@ -282,11 +294,14 @@ impl Worker {
                 return;
             }
             Err(e) => {
-                tracing::warn!("PICS update failed: {e}; retrying in {POLL_INTERVAL:?}");
+                tracing::warn!(
+                    "PICS update failed: {e}; retrying in {:?}",
+                    self.poll_interval
+                );
                 self.check_due = true;
             }
         }
-        self.next_poll = Some(Instant::now() + POLL_INTERVAL);
+        self.next_poll = Some(Instant::now() + self.poll_interval);
     }
 
     /// Asks what changed and fetches what the library uses (`pics.md` §4).

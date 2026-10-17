@@ -6,9 +6,13 @@
 use std::path::PathBuf;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
+use crossbeam_channel::Sender;
 use ossteam_net::directory;
-use ossteam_net::{CmKind, CmServer, ServerPicker};
+use ossteam_net::{CmKind, CmServer, ConnectError, Connection, Incoming, ServerPicker};
+use ossteam_types::CancelToken;
 use serde::{Deserialize, Serialize};
+
+use super::Dialer;
 
 pub const CACHE_FILE: &str = "cm-servers.json";
 
@@ -39,38 +43,6 @@ impl Servers {
             agent: ossteam_net::tls::http_agent(),
             cache: cache_dir.join(CACHE_FILE),
             picker: None,
-        }
-    }
-
-    /// The next server to try. Only WebSocket servers are used: the TCP
-    /// transport is not built (`cm.md` §2.2, FAITH-2).
-    pub fn next(&mut self, cell_id: u32) -> Result<CmServer, NoServer> {
-        if self.picker.is_none() {
-            self.picker = Some(ServerPicker::new(self.load(cell_id)?));
-        }
-        let picker = self.picker.as_ref().expect("set above");
-        match picker.next(CmKind::Websockets, Instant::now()) {
-            Ok(s) => Ok(s.clone()),
-            Err(Some(wait)) => Err(NoServer::Wait(wait)),
-            Err(None) => {
-                // Drop the list so the next attempt asks the directory again.
-                self.picker = None;
-                Err(NoServer::None(
-                    "the server list has no WebSocket servers".into(),
-                ))
-            }
-        }
-    }
-
-    pub fn failed(&mut self, endpoint: &str) {
-        if let Some(p) = &mut self.picker {
-            p.failed(endpoint, Instant::now());
-        }
-    }
-
-    pub fn succeeded(&mut self, endpoint: &str) {
-        if let Some(p) = &mut self.picker {
-            p.succeeded(endpoint);
         }
     }
 
@@ -118,6 +90,50 @@ impl Servers {
         if let Err(e) = result {
             tracing::warn!(file = %self.cache.display(), "cannot cache the server list: {e}");
         }
+    }
+}
+
+impl Dialer for Servers {
+    /// The next server to try. Only WebSocket servers are used: the TCP
+    /// transport is not built (`cm.md` §2.2, FAITH-2).
+    fn next(&mut self, cell_id: u32) -> Result<CmServer, NoServer> {
+        if self.picker.is_none() {
+            self.picker = Some(ServerPicker::new(self.load(cell_id)?));
+        }
+        let picker = self.picker.as_ref().expect("set above");
+        match picker.next(CmKind::Websockets, Instant::now()) {
+            Ok(s) => Ok(s.clone()),
+            Err(Some(wait)) => Err(NoServer::Wait(wait)),
+            Err(None) => {
+                // Drop the list so the next attempt asks the directory again.
+                self.picker = None;
+                Err(NoServer::None(
+                    "the server list has no WebSocket servers".into(),
+                ))
+            }
+        }
+    }
+
+    fn failed(&mut self, endpoint: &str) {
+        if let Some(p) = &mut self.picker {
+            p.failed(endpoint, Instant::now());
+        }
+    }
+
+    fn succeeded(&mut self, endpoint: &str) {
+        if let Some(p) = &mut self.picker {
+            p.succeeded(endpoint);
+        }
+    }
+
+    fn connect(
+        &mut self,
+        server: &CmServer,
+        timeout: Duration,
+        events: Sender<Incoming>,
+        cancel: &CancelToken,
+    ) -> Result<Connection, ConnectError> {
+        Connection::connect(server, timeout, events, cancel)
     }
 }
 

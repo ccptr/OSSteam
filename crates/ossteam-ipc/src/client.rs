@@ -119,6 +119,15 @@ impl Client {
         }
     }
 
+    /// Connects to the daemon listening at `ep`, without starting one.
+    pub fn connect_endpoint(ep: &Endpoint, info: &ClientInfo) -> Result<Self, ClientError> {
+        let stream = ep.connect().map_err(|source| ClientError::Unavailable {
+            address: ep.address.clone(),
+            source,
+        })?;
+        Self::handshake(stream, info)
+    }
+
     fn handshake(
         stream: interprocess::local_socket::Stream,
         info: &ClientInfo,

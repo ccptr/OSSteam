@@ -11,7 +11,7 @@
 mod servers;
 mod worker;
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
 use std::time::Duration;
@@ -19,10 +19,31 @@ use std::time::Duration;
 use crossbeam_channel::{Receiver, RecvTimeoutError, Sender};
 use ossteam_ipc::RemoteError;
 use ossteam_ipc::v1::{self, ConnectionState, response};
+use ossteam_net::{CmServer, ConnectError, Connection, Incoming};
 use ossteam_types::{CancelToken, Secret, SteamId};
 
+pub use servers::{NoServer, Servers};
+
 use crate::core::{ClientId, Command};
+use crate::secrets::Secrets;
 use crate::{db, pics};
+
+/// How the worker finds and reaches CM servers. The daemon uses
+/// [`Servers`]: the Steam Directory and the WebSocket transport. Only test
+/// code has another implementation, a fake CM (FAITH-4).
+pub trait Dialer: Send {
+    /// The next server to try.
+    fn next(&mut self, cell_id: u32) -> Result<CmServer, NoServer>;
+    fn failed(&mut self, endpoint: &str);
+    fn succeeded(&mut self, endpoint: &str);
+    fn connect(
+        &mut self,
+        server: &CmServer,
+        timeout: Duration,
+        events: Sender<Incoming>,
+        cancel: &CancelToken,
+    ) -> Result<Connection, ConnectError>;
+}
 
 /// Where a deferred reply goes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -139,10 +160,12 @@ impl State {
 }
 
 pub struct Settings {
-    pub cache_dir: PathBuf,
     pub data_dir: PathBuf,
     pub file_fallback: bool,
     pub cell_id: u32,
+    /// Opens token storage; [`Secrets::open`] in the daemon. Called again
+    /// when `secrets.file_fallback` changes.
+    pub open_secrets: fn(file_fallback: bool, data_dir: &Path) -> Secrets,
     /// The account to log on at start (`cm.md` §5, AUTH-3).
     pub resume: Option<db::Account>,
     /// The PICS worker, which follows the active account and its licenses.
@@ -168,12 +191,17 @@ pub struct Handle {
 }
 
 impl Handle {
-    pub fn spawn(settings: Settings, core: Sender<Command>) -> std::io::Result<Self> {
+    pub fn spawn(
+        settings: Settings,
+        dialer: Box<dyn Dialer>,
+        core: Sender<Command>,
+    ) -> std::io::Result<Self> {
         let (tx, rx) = crossbeam_channel::unbounded();
         let (done_tx, done) = crossbeam_channel::bounded::<()>(0);
         let login_cancel = Arc::new(Mutex::new(CancelToken::new()));
         let stop = CancelToken::new();
-        let worker = worker::Worker::new(settings, core, login_cancel.clone(), stop.clone());
+        let worker =
+            worker::Worker::new(settings, dialer, core, login_cancel.clone(), stop.clone());
         let thread = std::thread::Builder::new()
             .name("session".into())
             .spawn(move || {

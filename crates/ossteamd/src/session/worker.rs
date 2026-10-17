@@ -18,8 +18,7 @@ use ossteam_net::{CallError, Connection, Incoming, Packet, SessionIds};
 use ossteam_proto::steam::{CMsgClientAccountInfo, CMsgClientChangeStatus, EMsg};
 use ossteam_types::{CancelToken, EResult, Secret, SteamId};
 
-use super::servers::{NoServer, Servers};
-use super::{Cmd, ReplyTo, Report, Settings, State};
+use super::{Cmd, Dialer, NoServer, ReplyTo, Report, Settings, State};
 use crate::core::Command;
 use crate::secrets::{self, Secrets};
 use crate::{db, pics};
@@ -146,7 +145,7 @@ fn send_report(core: &Sender<Command>, r: Report) {
 pub struct Worker {
     core: Sender<Command>,
     settings: Settings,
-    servers: Servers,
+    servers: Box<dyn Dialer>,
     /// Opened on first use: on Linux that may start the Secret Service.
     secrets: Option<Secrets>,
     cell_id: u32,
@@ -173,13 +172,14 @@ pub struct Worker {
 impl Worker {
     pub fn new(
         settings: Settings,
+        servers: Box<dyn Dialer>,
         core: Sender<Command>,
         login_cancel: Arc<Mutex<CancelToken>>,
         stop: CancelToken,
     ) -> Self {
         Self {
             core,
-            servers: Servers::new(settings.cache_dir.clone()),
+            servers,
             cell_id: settings.cell_id,
             settings,
             secrets: None,
@@ -253,7 +253,7 @@ impl Worker {
     fn secrets(&mut self) -> &Secrets {
         let s = &self.settings;
         self.secrets
-            .get_or_insert_with(|| Secrets::open(s.file_fallback, &s.data_dir))
+            .get_or_insert_with(|| (s.open_secrets)(s.file_fallback, &s.data_dir))
     }
 
     fn state(&self) -> State {
@@ -366,7 +366,10 @@ impl Worker {
         let (tx, rx) = crossbeam_channel::unbounded();
         // The connection lives until it is closed here or the daemon is
         // interrupted, so it gets the stop token, not a login's token.
-        let conn = match Connection::connect(&server, CONNECT_TIMEOUT, tx, &self.stop) {
+        let conn = match self
+            .servers
+            .connect(&server, CONNECT_TIMEOUT, tx, &self.stop)
+        {
             Ok(c) => c,
             Err(e) => {
                 self.servers.failed(&server.endpoint);

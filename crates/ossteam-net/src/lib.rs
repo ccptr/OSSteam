@@ -16,7 +16,7 @@ pub mod multi;
 pub mod tls;
 pub mod transport;
 
-pub use conn::{CallError, CloseReason, Connection, Incoming, SessionIds};
+pub use conn::{CallError, CloseReason, Connection, Incoming, Requester, SessionIds};
 pub use directory::{CmKind, CmServer, ServerPicker};
 pub use msg::{Header, JOB_NONE, Packet};
 pub use transport::ConnectError;

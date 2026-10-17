@@ -6,6 +6,7 @@ members = [
     "crates/ossteam-proto",
     "crates/ossteam-net",
     "crates/ossteam-auth",
+    "crates/ossteam-pics",
     "crates/ossteam-ipc",
     "crates/ossteamd",
     "crates/ossteam-cli",
@@ -18,6 +19,7 @@ default-members = [
     "crates/ossteam-proto",
     "crates/ossteam-net",
     "crates/ossteam-auth",
+    "crates/ossteam-pics",
     "crates/ossteam-ipc",
     "crates/ossteamd",
     "crates/ossteam-cli",
@@ -36,6 +38,7 @@ ossteam-vdf = { path = "crates/ossteam-vdf" }
 ossteam-proto = { path = "crates/ossteam-proto" }
 ossteam-net = { path = "crates/ossteam-net" }
 ossteam-auth = { path = "crates/ossteam-auth" }
+ossteam-pics = { path = "crates/ossteam-pics" }
 ossteam-ipc = { path = "crates/ossteam-ipc" }
 
 anyhow = "1.0.104"

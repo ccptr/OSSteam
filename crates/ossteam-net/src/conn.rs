@@ -4,6 +4,7 @@
 
 use std::collections::{HashMap, VecDeque};
 use std::io::ErrorKind;
+use std::ops::Deref;
 use std::panic::{AssertUnwindSafe, catch_unwind, resume_unwind};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard};
@@ -78,12 +79,20 @@ struct Shared {
     outbox: Mutex<VecDeque<Vec<u8>>>,
     /// `None` once the connection has closed, so no new job can wait on
     /// a reply that will never come.
-    jobs: Mutex<Option<HashMap<u64, Sender<Packet>>>>,
+    jobs: Mutex<Option<HashMap<u64, Job>>>,
     next_job: AtomicU64,
     session: Mutex<Option<SessionIds>>,
     heartbeat: Mutex<Option<Duration>>,
     close_requested: AtomicBool,
     events: Sender<Incoming>,
+}
+
+/// A job waiting for replies (`cm.md` §3.3).
+struct Job {
+    tx: Sender<Packet>,
+    /// The job takes several replies and stays registered until its caller
+    /// is done; otherwise the first reply ends it.
+    multi: bool,
 }
 
 fn lock<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
@@ -93,10 +102,28 @@ fn lock<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
 }
 
 /// A CM connection. Dropping it closes the connection.
+///
+/// Sending and requests go through [`Requester`], which the connection
+/// dereferences to. Clones of it let other threads make requests on this
+/// connection; they fail with [`CallError::Closed`] once it is gone.
 pub struct Connection {
-    shared: Arc<Shared>,
+    requester: Requester,
     server: CmServer,
     thread: Option<JoinHandle<()>>,
+}
+
+/// The part of a [`Connection`] that sends messages and waits for replies.
+#[derive(Clone)]
+pub struct Requester {
+    shared: Arc<Shared>,
+}
+
+impl Deref for Connection {
+    type Target = Requester;
+
+    fn deref(&self) -> &Requester {
+        &self.requester
+    }
 }
 
 impl Connection {
@@ -128,7 +155,7 @@ impl Connection {
             .spawn(move || run(&thread_shared, transport, &cancel))?;
         tracing::info!(endpoint = %server.endpoint, "CM connected");
         Ok(Self {
-            shared,
+            requester: Requester { shared },
             server: server.clone(),
             thread: Some(thread),
         })
@@ -136,10 +163,6 @@ impl Connection {
 
     pub fn server(&self) -> &CmServer {
         &self.server
-    }
-
-    pub fn is_closed(&self) -> bool {
-        lock(&self.shared.jobs).is_none()
     }
 
     /// Sends `ClientHello` (`cm.md` §4 step 2).
@@ -158,14 +181,44 @@ impl Connection {
         *lock(&self.shared.session) = Some(ids);
     }
 
-    pub fn session(&self) -> Option<SessionIds> {
-        *lock(&self.shared.session)
-    }
-
     /// Starts (or changes) heartbeats at the interval the server gave.
     pub fn set_heartbeat(&self, interval: Duration) {
         *lock(&self.shared.heartbeat) = Some(interval.max(Duration::from_secs(1)));
         let _ = self.shared.poller.notify();
+    }
+
+    /// A handle for making requests on this connection from elsewhere.
+    pub fn requester(&self) -> Requester {
+        self.requester.clone()
+    }
+
+    /// Closes the connection and waits for the I/O thread to finish.
+    pub fn close(mut self) {
+        self.shutdown();
+    }
+
+    fn shutdown(&mut self) {
+        self.shared.close_requested.store(true, Ordering::Release);
+        let _ = self.shared.poller.notify();
+        if let Some(t) = self.thread.take() {
+            let _ = t.join();
+        }
+    }
+}
+
+impl Drop for Connection {
+    fn drop(&mut self) {
+        self.shutdown();
+    }
+}
+
+impl Requester {
+    pub fn is_closed(&self) -> bool {
+        lock(&self.shared.jobs).is_none()
+    }
+
+    pub fn session(&self) -> Option<SessionIds> {
+        *lock(&self.shared.session)
     }
 
     /// Queues one message.
@@ -182,42 +235,69 @@ impl Connection {
     /// Sends `packet` as a new job and waits for the reply that targets it.
     pub fn request(
         &self,
-        mut packet: Packet,
+        packet: Packet,
         timeout: Duration,
         cancel: &CancelToken,
     ) -> Result<Packet, CallError> {
+        let (job, rx) = self.start_job(packet, false)?;
+        let reply = wait_reply(&rx, timeout, cancel);
+        if reply.is_err() {
+            self.forget(job);
+        }
+        reply
+    }
+
+    /// Sends `packet` as a new job that takes several replies, and passes
+    /// each to `on_reply` until it returns false. `timeout` bounds the wait
+    /// for each reply, not the whole exchange.
+    pub fn request_each(
+        &self,
+        packet: Packet,
+        timeout: Duration,
+        cancel: &CancelToken,
+        mut on_reply: impl FnMut(Packet) -> bool,
+    ) -> Result<(), CallError> {
+        let (job, rx) = self.start_job(packet, true)?;
+        let result = loop {
+            match wait_reply(&rx, timeout, cancel) {
+                Ok(reply) => {
+                    if !on_reply(reply) {
+                        break Ok(());
+                    }
+                }
+                Err(e) => break Err(e),
+            }
+        };
+        self.forget(job);
+        result
+    }
+
+    fn start_job(
+        &self,
+        mut packet: Packet,
+        multi: bool,
+    ) -> Result<(u64, crossbeam_channel::Receiver<Packet>), CallError> {
         let job = self.shared.next_job.fetch_add(1, Ordering::Relaxed);
         packet.set_source_job(job);
-        let (tx, rx) = crossbeam_channel::bounded(1);
+        let (tx, rx) = if multi {
+            crossbeam_channel::unbounded()
+        } else {
+            crossbeam_channel::bounded(1)
+        };
         match lock(&self.shared.jobs).as_mut() {
-            Some(jobs) => jobs.insert(job, tx),
+            Some(jobs) => jobs.insert(job, Job { tx, multi }),
             None => return Err(CallError::Closed),
         };
-        let forget = || {
-            if let Some(jobs) = lock(&self.shared.jobs).as_mut() {
-                jobs.remove(&job);
-            }
-        };
         if let Err(e) = self.send(packet) {
-            forget();
+            self.forget(job);
             return Err(e);
         }
-        let deadline = Instant::now() + timeout;
-        loop {
-            if cancel.is_cancelled() {
-                forget();
-                return Err(CallError::Cancelled);
-            }
-            let left = deadline.saturating_duration_since(Instant::now());
-            if left.is_zero() {
-                forget();
-                return Err(CallError::Timeout);
-            }
-            match rx.recv_timeout(left.min(CANCEL_SLICE)) {
-                Ok(reply) => return Ok(reply),
-                Err(RecvTimeoutError::Timeout) => {}
-                Err(RecvTimeoutError::Disconnected) => return Err(CallError::Closed),
-            }
+        Ok((job, rx))
+    }
+
+    fn forget(&self, job: u64) {
+        if let Some(jobs) = lock(&self.shared.jobs).as_mut() {
+            jobs.remove(&job);
         }
     }
 
@@ -254,24 +334,29 @@ impl Connection {
         }
         Ok(reply.decode_body()?)
     }
-
-    /// Closes the connection and waits for the I/O thread to finish.
-    pub fn close(mut self) {
-        self.shutdown();
-    }
-
-    fn shutdown(&mut self) {
-        self.shared.close_requested.store(true, Ordering::Release);
-        let _ = self.shared.poller.notify();
-        if let Some(t) = self.thread.take() {
-            let _ = t.join();
-        }
-    }
 }
 
-impl Drop for Connection {
-    fn drop(&mut self) {
-        self.shutdown();
+/// Waits for one reply on a job's channel, checking `cancel` at least
+/// once per [`CANCEL_SLICE`] (CONC-2).
+fn wait_reply(
+    rx: &crossbeam_channel::Receiver<Packet>,
+    timeout: Duration,
+    cancel: &CancelToken,
+) -> Result<Packet, CallError> {
+    let deadline = Instant::now() + timeout;
+    loop {
+        if cancel.is_cancelled() {
+            return Err(CallError::Cancelled);
+        }
+        let left = deadline.saturating_duration_since(Instant::now());
+        if left.is_zero() {
+            return Err(CallError::Timeout);
+        }
+        match rx.recv_timeout(left.min(CANCEL_SLICE)) {
+            Ok(reply) => return Ok(reply),
+            Err(RecvTimeoutError::Timeout) => {}
+            Err(RecvTimeoutError::Disconnected) => return Err(CallError::Closed),
+        }
     }
 }
 
@@ -422,7 +507,13 @@ fn dispatch(shared: &Shared, buf: &[u8], depth: u32) {
 
     let target = packet.target_job();
     if target != JOB_NONE {
-        let waiter = lock(&shared.jobs).as_mut().and_then(|j| j.remove(&target));
+        let waiter = lock(&shared.jobs).as_mut().and_then(|jobs| {
+            if jobs.get(&target)?.multi {
+                jobs.get(&target).map(|j| j.tx.clone())
+            } else {
+                jobs.remove(&target).map(|j| j.tx)
+            }
+        });
         match waiter {
             Some(tx) => {
                 let _ = tx.send(packet);
@@ -439,4 +530,75 @@ fn dispatch(shared: &Shared, buf: &[u8], depth: u32) {
     }
     tracing::trace!(emsg = packet.emsg, kind = ?packet.kind(), "CM message");
     let _ = shared.events.send(Incoming::Message(packet));
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ossteam_proto::steam::CMsgClientPicsProductInfoResponse;
+
+    fn shared() -> (Arc<Shared>, crossbeam_channel::Receiver<Incoming>) {
+        let (events, rx) = crossbeam_channel::unbounded();
+        let shared = Arc::new(Shared {
+            poller: Poller::new().unwrap(),
+            outbox: Mutex::new(VecDeque::new()),
+            jobs: Mutex::new(Some(HashMap::new())),
+            next_job: AtomicU64::new(1),
+            session: Mutex::new(None),
+            heartbeat: Mutex::new(None),
+            close_requested: AtomicBool::new(false),
+            events,
+        });
+        (shared, rx)
+    }
+
+    fn reply_to(job: u64) -> Vec<u8> {
+        let mut p = Packet::proto(
+            EMsg::KEMsgClientPicsProductInfoResponse,
+            &CMsgClientPicsProductInfoResponse::default(),
+        );
+        p.proto_header_mut().unwrap().jobid_target = Some(job);
+        p.encode()
+    }
+
+    #[test]
+    fn single_jobs_end_at_the_first_reply() {
+        let (shared, events) = shared();
+        let r = Requester {
+            shared: shared.clone(),
+        };
+        let (job, rx) = r
+            .start_job(
+                Packet::proto(EMsg::KEMsgClientHello, &CMsgClientHello::default()),
+                false,
+            )
+            .unwrap();
+        dispatch(&shared, &reply_to(job), 0);
+        dispatch(&shared, &reply_to(job), 0);
+        assert!(rx.try_recv().is_ok());
+        assert!(rx.try_recv().is_err());
+        // The second reply had nobody waiting and went to the event stream.
+        assert!(matches!(events.try_recv(), Ok(Incoming::Message(_))));
+    }
+
+    #[test]
+    fn multi_jobs_take_replies_until_forgotten() {
+        let (shared, events) = shared();
+        let r = Requester {
+            shared: shared.clone(),
+        };
+        let (job, rx) = r
+            .start_job(
+                Packet::proto(EMsg::KEMsgClientHello, &CMsgClientHello::default()),
+                true,
+            )
+            .unwrap();
+        dispatch(&shared, &reply_to(job), 0);
+        dispatch(&shared, &reply_to(job), 0);
+        assert_eq!(rx.try_iter().count(), 2);
+        assert!(events.try_recv().is_err());
+        r.forget(job);
+        dispatch(&shared, &reply_to(job), 0);
+        assert!(matches!(events.try_recv(), Ok(Incoming::Message(_))));
+    }
 }

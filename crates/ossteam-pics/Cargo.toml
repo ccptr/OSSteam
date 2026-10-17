@@ -1,0 +1,19 @@
+[package]
+name = "ossteam-pics"
+description = "Steam licenses, PICS product info, change tracking and the PICS cache"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+ossteam-types.workspace = true
+ossteam-vdf.workspace = true
+ossteam-proto.workspace = true
+ossteam-net.workspace = true
+prost.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+
+[lints]
+workspace = true

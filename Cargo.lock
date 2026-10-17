@@ -4199,6 +4199,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "ossteam-pics"
+version = "0.1.0"
+dependencies = [
+ "ossteam-net",
+ "ossteam-proto",
+ "ossteam-types",
+ "ossteam-vdf",
+ "prost",
+ "thiserror 2.0.21",
+ "tracing",
+]
+
+[[package]]
 name = "ossteam-proto"
 version = "0.1.0"
 dependencies = [

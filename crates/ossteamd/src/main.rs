@@ -46,10 +46,23 @@ struct Args {
     /// More log output (-v debug, -vv trace). OSSTEAM_LOG overrides this.
     #[arg(short, long, action = clap::ArgAction::Count)]
     verbose: u8,
+    /// Run as the elevated helper for install scripts, with the steps the
+    /// daemon encoded (`install-scripts.md` §4).
+    #[arg(long, hide = true, value_name = "REQUEST")]
+    script_helper: Option<String>,
 }
 
 fn main() -> ExitCode {
     let args = Args::parse();
+    if let Some(request) = &args.script_helper {
+        return match content::script::helper_main(request) {
+            Ok(()) => ExitCode::SUCCESS,
+            Err(e) => {
+                eprintln!("ossteamd: {e:#}");
+                ExitCode::FAILURE
+            }
+        };
+    }
     if args.background {
         detach();
     }
@@ -125,6 +138,7 @@ fn run(args: &Args) -> anyhow::Result<ExitCode> {
             open_secrets: secrets::Secrets::open,
             pics_poll: pics::POLL_INTERVAL,
             content_fetch: None,
+            scripts: content::script::system(),
         },
         |cmd_tx| {
             let signal_tx = cmd_tx.clone();
@@ -148,6 +162,8 @@ struct Env {
     pics_poll: Duration,
     /// Where content comes from; `None` is the CDN over HTTPS.
     content_fetch: Option<std::sync::Arc<dyn ossteam_content::cdn::Fetch>>,
+    /// What install scripts act on (`install-scripts.md`).
+    scripts: Option<std::sync::Arc<dyn content::script::System>>,
 }
 
 /// Starts the workers and the IPC server and runs the core until it stops
@@ -164,6 +180,7 @@ fn serve(
         open_secrets,
         pics_poll,
         content_fetch,
+        scripts,
     } = env;
     let mut config = config::Config::load(&paths.config)?;
     let db = db::Db::open(&paths.data.join(db::FILE_NAME))?;
@@ -198,13 +215,14 @@ fn serve(
 
     let assets = assets::Handle::spawn(cmd_tx.clone()).context("starting the image downloader")?;
     let content_jobs = match content_fetch {
-        None => content::Handle::new(cmd_tx.clone(), config.bandwidth_limit()),
+        None => content::Handle::new(cmd_tx.clone(), config.bandwidth_limit(), scripts),
         Some(fetch) => content::Handle::with_fetch(
             cmd_tx.clone(),
             fetch,
             std::sync::Arc::new(ossteam_content::throttle::Throttle::new(
                 config.bandwidth_limit(),
             )),
+            scripts,
         ),
     };
 

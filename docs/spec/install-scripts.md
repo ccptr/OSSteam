@@ -176,8 +176,8 @@ to each one. A script without a `kvsignatures` block gets no
 |---|---|
 | Install or update finishes | Nothing runs yet. The app's scripts are recorded with the install (§1) |
 | The game starts (M1c) | Before the game process is created: Registry, then Firewall, then each Run Process entry that is due. The launch waits for them, and shows the step under way |
-| Verify | Registry values the scripts wrote and the `HasRunKey` values (unless `NoCleanUp`) are removed, so everything runs again at the next start |
-| Uninstall | Run Process On Uninstall entries run, then the same removal as verify, then the files are deleted |
+| Verify | After the files are repaired: registry values the scripts wrote and the `HasRunKey` values (unless `NoCleanUp`) are removed, so everything runs again at the next start |
+| Uninstall | Run Process On Uninstall entries that are due run, then the same removal as verify, then the files are deleted. A failed entry or a declined prompt does not stop the uninstall |
 
 The Steamworks documentation states that the client "scans mounted
 depots for flagged files and runs them" when a game starts, and that Run
@@ -197,23 +197,40 @@ specified with the compatibility layer.
 
 ## 4. Elevation
 
-A step needs elevation when it writes `HKEY_LOCAL_MACHINE`, adds a
-firewall rule, or is a Run Process entry without `AsCurrentUser` whose
-program asks for it in its manifest. ossteam gathers the steps that need
-elevation for one start and runs them in a single elevated helper
-(`ossteamd --script-helper`, started with `ShellExecuteEx` and the
-`runas` verb), so the user sees one UAC prompt rather than one per step.
-The helper reads its steps from a file the daemon writes, runs them and
-writes their results back; it does nothing else. If the user declines,
-the elevated steps are reported as not run, and they are tried again at
-the next start. Steps that need no elevation run in the daemon's own
-user context.
+A step needs elevation when it writes or deletes a value under
+`HKEY_LOCAL_MACHINE`, adds a firewall rule, or is a Run Process entry
+without `AsCurrentUser`. The official client runs those entries through
+its elevated service; ossteam has none, so it runs them elevated rather
+than guess from the program's manifest which ones need it. `HasRunKey`
+is set by the process that ran the entry.
+
+ossteam gathers the elevated steps of one start, verify or uninstall
+and runs them in a single elevated helper (`ossteamd --script-helper`,
+started with `ShellExecuteEx` and the `runas` verb), so the user sees one
+UAC prompt rather than one per step. Steps are taken in order, except
+that every elevated step runs in the helper at the place of the first.
+Steps that need no elevation run in the daemon's own user context: a
+user who answers the prompt with an administrator's credentials gets the
+helper in that account, where `HKEY_CURRENT_USER` is another user's.
+
+The helper's steps travel on its command line, JSON in hex, which the
+daemon sets and nothing can change once the helper starts; a file could
+be changed between the daemon writing it and the helper reading it. The
+helper writes each step's outcome to a file the daemon names and reads
+back, and does nothing else. If the user declines, the elevated steps are
+reported as not run, and they are tried again next time.
+
+A step is not planned when it would change nothing: a value to delete
+that is not there, or (M1c) a value that already holds what the script
+writes. So a verify of an app whose scripts have not run asks for no
+elevation.
 
 ## 5. State
 
 The daemon records, per installed app, the scripts it found (depot, path,
-SHA-1) and, per script, the registry values it wrote, so verify and
-uninstall remove exactly those. The `HasRunKey` values themselves stay in
+size, SHA-1) and the registry values they wrote, so verify and uninstall
+remove exactly those. A value whose removal did not happen (the user
+declined, or it failed) stays recorded for the next verify. The `HasRunKey` values themselves stay in
 the registry, where they are shared with the official client: a
 redistributable it already installed is not installed again.
 
@@ -239,3 +256,7 @@ redistributable it already installed is not installed again.
 | Order of scripts | unverified |
 | Firewall rule shape | unverified |
 | Signature algorithm | unknown; not checked (§2.6) |
+| Whether `HasRunKey` applies to Run Process On Uninstall entries | unverified; ossteam applies it |
+| Text encodings of script files | unverified; ossteam reads UTF-8 and UTF-16LE with a byte order mark |
+| `OSType` of Windows 8.1 and 11 | unverified; ossteam uses `Win81` and `Win11` |
+| Whether uninstall removes the firewall rules | unverified; ossteam leaves them |

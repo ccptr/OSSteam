@@ -398,6 +398,103 @@ fn a_depot_shared_from_an_app_outside_the_library() {
     assert!(!installed(&c, ALPHA).expect("installed").update_available);
 }
 
+/// An install script in the game's depot (`install-scripts.md`), against
+/// a registry and process table in memory.
+const SCRIPT: &str = r#"
+"InstallScript"
+{
+    "Run Process"
+    {
+        "Prereq"
+        {
+            "HasRunKey" "HKEY_CURRENT_USER\\Software\\Alpha"
+            "process 1" "%INSTALLDIR%\\_CommonRedist\\prereq.exe"
+            "AsCurrentUser" "1"
+        }
+    }
+    "Run Process On Uninstall"
+    {
+        "Cleanup" { "process 1" "%INSTALLDIR%\\cleanup.exe" "AsCurrentUser" "1" }
+        "Unregister" { "process 1" "%INSTALLDIR%\\unregister.exe" "command 1" "/quiet" }
+    }
+}
+"#;
+
+#[test]
+fn install_scripts_at_verify_and_uninstall() {
+    use crate::content::script::fake::FakeSystem;
+    use crate::content::script::{Key, ValueRef};
+
+    let cdn = Arc::new(FakeCdn::new());
+    let cm = steam(&cdn);
+    let game = data(1, 2 * CHUNK);
+    let entries = [
+        Entry::File {
+            name: "game",
+            data: &game,
+            flags: 0,
+        },
+        Entry::File {
+            name: "_CommonRedist/install.vdf",
+            data: SCRIPT.as_bytes(),
+            flags: ossteam_content::manifest::flags::INSTALL_SCRIPT,
+        },
+    ];
+    let base = Depot::build(DepotId(BASE), ManifestId(1001), key(BASE), &entries);
+    cm.publish(&base, 11);
+    cm.publish(&depot(DLC, 2001, &[("dlc", &data(2, 10))]), 21);
+    cm.app_section(ALPHA, "depots", depots(1001, 2001));
+    let sys = Arc::new(FakeSystem::default());
+    let root = Root::new();
+    let d = TestDaemon::start_with_scripts(&root, &cm, POLL, cdn, sys.clone());
+    login(&d);
+    let c = d.subscribed(&[Topic::Jobs]);
+
+    // Installing runs nothing.
+    done(&c, c.install(ALPHA, "", "").expect("install queued"));
+    let dir = PathBuf::from(&installed(&c, ALPHA).expect("installed").path);
+    assert!(sys.state.lock().unwrap().ran.is_empty());
+
+    // As if a start had run the entry: verify takes the record away, after
+    // repairing the damaged script, so it runs again at the next start.
+    let prereq = ValueRef {
+        key: Key {
+            machine: false,
+            path: "Software\\Alpha".into(),
+        },
+        name: Some("Prereq".into()),
+    };
+    sys.set(&prereq, 1);
+    std::fs::write(
+        dir.join("_CommonRedist/install.vdf"),
+        b"\"InstallScript\" {}",
+    )
+    .unwrap();
+    done(&c, c.verify(ALPHA).expect("verify queued"));
+    assert!(!sys.has(&prereq));
+    assert_eq!(sys.state.lock().unwrap().prompts, 0);
+
+    // Uninstall runs the uninstall entries, the elevated one behind one
+    // prompt, before the files go.
+    done(&c, c.uninstall(ALPHA).expect("uninstall queued"));
+    assert!(!dir.exists());
+    let s = sys.state.lock().unwrap();
+    let ran: Vec<(String, &str, bool)> = s
+        .ran
+        .iter()
+        .map(|(p, a, e)| (p.rsplit('\\').next().unwrap().to_owned(), a.as_str(), *e))
+        .collect();
+    assert_eq!(
+        ran,
+        [
+            ("cleanup.exe".to_owned(), "", false),
+            ("unregister.exe".to_owned(), "/quiet", true)
+        ]
+    );
+    assert!(s.ran[0].0.starts_with(&*dir.to_string_lossy()));
+    assert_eq!(s.prompts, 1);
+}
+
 #[test]
 fn library_folders_and_job_controls() {
     let cdn = Arc::new(FakeCdn::new());

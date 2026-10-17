@@ -10,6 +10,7 @@
 
 pub mod folders;
 pub mod job;
+pub mod script;
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -75,16 +76,22 @@ pub struct Handle {
     fetch: Arc<dyn Fetch>,
     throttle: Arc<Throttle>,
     servers: Arc<ServerList>,
+    scripts: Option<Arc<dyn script::System>>,
     core: Sender<Command>,
     running: HashMap<u64, (Arc<Control>, JoinHandle<()>)>,
 }
 
 impl Handle {
     /// Downloads go over HTTPS, limited to `bytes_per_sec` (0: no limit).
-    pub fn new(core: Sender<Command>, bytes_per_sec: u64) -> Self {
+    /// Install scripts act on `scripts`, `None` where they do not apply.
+    pub fn new(
+        core: Sender<Command>,
+        bytes_per_sec: u64,
+        scripts: Option<Arc<dyn script::System>>,
+    ) -> Self {
         let throttle = Arc::new(Throttle::new(bytes_per_sec));
         let fetch = Arc::new(Https::new(throttle.clone(), CONNECTIONS));
-        Self::with_fetch(core, fetch, throttle)
+        Self::with_fetch(core, fetch, throttle, scripts)
     }
 
     /// With another transport: the fake CDN in tests (FAITH-4).
@@ -92,11 +99,13 @@ impl Handle {
         core: Sender<Command>,
         fetch: Arc<dyn Fetch>,
         throttle: Arc<Throttle>,
+        scripts: Option<Arc<dyn script::System>>,
     ) -> Self {
         Self {
             fetch,
             throttle,
             servers: Arc::new(ServerList::default()),
+            scripts,
             core,
             running: HashMap::new(),
         }
@@ -123,6 +132,7 @@ impl Handle {
             requester,
             fetch: self.fetch.clone(),
             servers: self.servers.clone(),
+            scripts: self.scripts.clone(),
             core: self.core.clone(),
         });
         let c = control.clone();

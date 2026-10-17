@@ -25,6 +25,7 @@ use ossteam_types::{AppId, CancelToken, DepotId, ManifestId};
 use ossteam_vdf::{Object, Value};
 
 use super::folders::Layout;
+use super::script::{self, System};
 use super::{Kind, Report};
 use crate::core::Command;
 use crate::db::{InstalledApp, InstalledDepot};
@@ -63,6 +64,8 @@ pub struct Env {
     pub requester: Requester,
     pub fetch: Arc<dyn Fetch>,
     pub servers: Arc<ServerList>,
+    /// What install scripts act on; `None` where they do not apply.
+    pub scripts: Option<Arc<dyn System>>,
     pub core: Sender<Command>,
 }
 
@@ -281,6 +284,23 @@ impl Runner<'_> {
                 Ok(self.spec.folder.app_dir(&dir))
             }
         }
+    }
+
+    /// The app's install scripts, read from its files
+    /// (`install-scripts.md` §1).
+    fn scripts(
+        &self,
+        sys: &dyn System,
+        installed: &InstalledApp,
+    ) -> Vec<ossteam_content::script::Script> {
+        let dir_of = |depot: DepotId| {
+            let d = installed.depots.iter().find(|d| d.depot == depot)?;
+            match d.shared_from {
+                None => Some(self.spec.folder.app_dir(&installed.install_dir)),
+                Some(_) => self.dir_for(d.shared_from).ok(),
+            }
+        };
+        script::load(&installed.scripts, &dir_of, &self.spec.language, sys)
     }
 
     /// Asks for each depot's key and keeps the depots it is granted for
@@ -542,6 +562,17 @@ impl Runner<'_> {
             size: job.depots.iter().map(|w| w.manifest.original_size).sum(),
             update_available: false,
             depots: recorded,
+            // Nothing runs yet (`install-scripts.md` §3).
+            scripts: job
+                .depots
+                .iter()
+                .flat_map(|w| script::files(&w.manifest))
+                .collect(),
+            script_values: spec
+                .installed
+                .as_ref()
+                .map(|a| a.script_values.clone())
+                .unwrap_or_default(),
         }))
     }
 
@@ -584,6 +615,14 @@ impl Runner<'_> {
         };
         let out = self.engine(&job, &dl)?;
         tracing::info!(app = %spec.app, repaired = out.files_written, "verify finished");
+        let mut installed = installed;
+        if let Some(sys) = &self.env.scripts {
+            let loaded = self.scripts(sys.as_ref(), &installed);
+            let plan = script::removal(&loaded, &installed.script_values, sys.as_ref());
+            let out = script::execute(sys.as_ref(), &plan, self.cancel())
+                .map_err(|script::Stopped| Failure::Cancelled)?;
+            installed.script_values = script::remaining(&installed.script_values, &plan, &out);
+        }
         Ok(Some(installed))
     }
 
@@ -596,6 +635,12 @@ impl Runner<'_> {
             return Ok(None);
         };
         self.preparing();
+        if let Some(sys) = &self.env.scripts {
+            let loaded = self.scripts(sys.as_ref(), installed);
+            let plan = script::uninstall(&loaded, &installed.script_values, sys.as_ref());
+            script::execute(sys.as_ref(), &plan, self.cancel())
+                .map_err(|script::Stopped| Failure::Cancelled)?;
+        }
         // Shared depots: their files go only if no other app has them.
         for d in installed.depots.iter().filter(|d| d.shared_from.is_some()) {
             if self.used_elsewhere(d.depot, None) {

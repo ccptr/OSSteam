@@ -26,7 +26,8 @@ and the build.
 | CLI: `install`, `update`, `verify`, `uninstall`, `jobs`, `folders`; install state in `info` | built 2026-10-17 |
 | Daemon integration tests against the fake CM and CDN | built 2026-10-17: `ossteamd/src/testing/m1b.rs` covers install with DLC, delta update, verify and repair, uninstall, resume after a stop, auto-update, a refused DLC key, folders and job controls |
 | Install scripts (CONT-8): `install-scripts.md`; parsing, variables and due checks in `ossteam-content` | written 2026-10-17; unit tests |
-| Install scripts: running them on Windows (registry, firewall, processes, the elevated helper), at uninstall and verify, and before the first start (M1c) | ⏳ not started |
+| Install scripts: recorded with the install; on Windows, the registry, processes and the elevated helper; removal at verify, uninstall entries and removal at uninstall | built 2026-10-17; unit tests and a daemon test against a fake registry (`testing/m1b.rs`); Windows code type-checked only, never run |
+| Install scripts before the first start: registry writes (§2.6), firewall rules, Run Process | ⏳ M1c, with launching |
 | Depots shared from an app outside the library (`depotfromapp`, for example 228980): its info is fetched with the library's (`pics.md` §5) | built 2026-10-17; daemon test with `sharedinstall` and an update in the source app |
 | Captures of the official client's content requests (`content.md` §13) | ⏳ needs a capture setup |
 

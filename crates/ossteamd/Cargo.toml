@@ -26,6 +26,7 @@ rand_core.workspace = true
 rusqlite = { version = "0.40.2", features = ["bundled"] }
 serde.workspace = true
 serde_json.workspace = true
+sha1.workspace = true
 thiserror.workspace = true
 toml.workspace = true
 tracing.workspace = true
@@ -47,7 +48,17 @@ apple-native-keyring-store = { version = "1.0.2", features = ["keychain"] }
 
 [target.'cfg(windows)'.dependencies]
 windows-native-keyring-store = { version = "1.1.0", default-features = false }
-windows-sys = { workspace = true, features = ["Win32_Storage_FileSystem"] }
+windows-sys = { workspace = true, features = [
+    "Wdk_System_SystemServices",
+    "Win32_Security",
+    "Win32_Storage_FileSystem",
+    "Win32_System_Com",
+    "Win32_System_Registry",
+    "Win32_System_SystemInformation",
+    "Win32_System_Threading",
+    "Win32_UI_Shell",
+    "Win32_UI_WindowsAndMessaging",
+] }
 
 [lints]
 workspace = true

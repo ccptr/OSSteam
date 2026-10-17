@@ -99,7 +99,7 @@ impl TestDaemon {
 
     /// Starts with PICS change polling every `pics_poll`.
     pub fn start_with(root: &Root, cm: &FakeCm, pics_poll: Duration) -> Self {
-        Self::start_full(root, cm, pics_poll, None)
+        Self::start_full(root, cm, pics_poll, None, None)
     }
 
     /// Starts with content served by `cdn` (FAITH-4), and PICS change
@@ -110,7 +110,19 @@ impl TestDaemon {
         pics_poll: Duration,
         cdn: Arc<FakeCdn>,
     ) -> Self {
-        Self::start_full(root, cm, pics_poll, Some(cdn))
+        Self::start_full(root, cm, pics_poll, Some(cdn), None)
+    }
+
+    /// As [`Self::start_with_cdn`], with install scripts acting on
+    /// `scripts`.
+    pub fn start_with_scripts(
+        root: &Root,
+        cm: &FakeCm,
+        pics_poll: Duration,
+        cdn: Arc<FakeCdn>,
+        scripts: Arc<dyn crate::content::script::System>,
+    ) -> Self {
+        Self::start_full(root, cm, pics_poll, Some(cdn), Some(scripts))
     }
 
     fn start_full(
@@ -118,6 +130,7 @@ impl TestDaemon {
         cm: &FakeCm,
         pics_poll: Duration,
         cdn: Option<Arc<FakeCdn>>,
+        scripts: Option<Arc<dyn crate::content::script::System>>,
     ) -> Self {
         let r = root.path();
         let paths = paths::Paths {
@@ -139,6 +152,7 @@ impl TestDaemon {
             open_secrets: file_secrets,
             pics_poll,
             content_fetch: cdn.map(|c| c as Arc<dyn ossteam_content::cdn::Fetch>),
+            scripts,
         };
         let thread = std::thread::Builder::new()
             .name("test-daemon".into())

@@ -9,10 +9,12 @@ use ossteam_ipc::v1;
 use ossteam_types::{AppId, DepotId, ManifestId, SteamId};
 use rusqlite::{Connection, OptionalExtension, params};
 
+use crate::content::script::{Key, ScriptFile, ValueRef};
+
 pub const FILE_NAME: &str = "state.db";
 
 /// The schema version this build writes, kept in `PRAGMA user_version`.
-const SCHEMA_VERSION: i64 = 4;
+const SCHEMA_VERSION: i64 = 5;
 
 const SCHEMA_V1: &str = "
     CREATE TABLE accounts (
@@ -85,6 +87,25 @@ const SCHEMA_V4: &str = "
     );
 ";
 
+/// Install scripts of installed apps, and the registry values they wrote
+/// (`install-scripts.md` §5). A `NULL` name is the key's default value.
+const SCHEMA_V5: &str = "
+    CREATE TABLE install_scripts (
+        app_id   INTEGER NOT NULL REFERENCES installed_apps (app_id) ON DELETE CASCADE,
+        depot_id INTEGER NOT NULL,
+        path     TEXT NOT NULL,
+        size     INTEGER NOT NULL,
+        sha1     BLOB NOT NULL,
+        PRIMARY KEY (app_id, depot_id, path)
+    );
+    CREATE TABLE script_values (
+        app_id  INTEGER NOT NULL REFERENCES installed_apps (app_id) ON DELETE CASCADE,
+        machine INTEGER NOT NULL,
+        key     TEXT NOT NULL,
+        name    TEXT
+    );
+";
+
 /// The persona state a user chose (`pics.md` §8). The numbers are stored
 /// and must not change.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -146,13 +167,14 @@ impl Db {
         conn.pragma_update(None, "foreign_keys", true)?;
         let version: i64 = conn.pragma_query_value(None, "user_version", |r| r.get(0))?;
         match version {
-            0..=3 => {
+            0..=4 => {
                 let tx = conn.unchecked_transaction()?;
                 for (from, schema) in [
                     (0, SCHEMA_V1),
                     (1, SCHEMA_V2),
                     (2, SCHEMA_V3),
                     (3, SCHEMA_V4),
+                    (4, SCHEMA_V5),
                 ] {
                     if version <= from {
                         tx.execute_batch(schema)?;
@@ -340,6 +362,9 @@ pub struct InstalledApp {
     pub size: u64,
     pub update_available: bool,
     pub depots: Vec<InstalledDepot>,
+    pub scripts: Vec<ScriptFile>,
+    /// What the scripts wrote, for verify and uninstall to remove.
+    pub script_values: Vec<ValueRef>,
 }
 
 /// A job as stored; its journal is read separately.
@@ -408,6 +433,8 @@ impl Db {
                     size: r.get::<_, i64>(5)? as u64,
                     update_available: r.get(6)?,
                     depots: Vec::new(),
+                    scripts: Vec::new(),
+                    script_values: Vec::new(),
                 })
             })?
             .collect::<Result<_, _>>()?;
@@ -429,6 +456,48 @@ impl Db {
             let (app, depot) = d?;
             if let Some(a) = apps.iter_mut().find(|a| a.app_id == app) {
                 a.depots.push(depot);
+            }
+        }
+        let mut stmt = self.conn.prepare(
+            "SELECT app_id, depot_id, path, size, sha1 FROM install_scripts
+             ORDER BY app_id, depot_id, path",
+        )?;
+        let scripts = stmt.query_map([], |r| {
+            Ok((
+                AppId(r.get(0)?),
+                ScriptFile {
+                    depot: DepotId(r.get(1)?),
+                    path: r.get(2)?,
+                    size: r.get::<_, i64>(3)? as u64,
+                    sha1: r.get(4)?,
+                },
+            ))
+        })?;
+        for s in scripts {
+            let (app, script) = s?;
+            if let Some(a) = apps.iter_mut().find(|a| a.app_id == app) {
+                a.scripts.push(script);
+            }
+        }
+        let mut stmt = self
+            .conn
+            .prepare("SELECT app_id, machine, key, name FROM script_values ORDER BY rowid")?;
+        let values = stmt.query_map([], |r| {
+            Ok((
+                AppId(r.get(0)?),
+                ValueRef {
+                    key: Key {
+                        machine: r.get(1)?,
+                        path: r.get(2)?,
+                    },
+                    name: r.get(3)?,
+                },
+            ))
+        })?;
+        for v in values {
+            let (app, value) = v?;
+            if let Some(a) = apps.iter_mut().find(|a| a.app_id == app) {
+                a.script_values.push(value);
             }
         }
         Ok(apps)
@@ -465,6 +534,19 @@ impl Db {
                     d.manifest.0 as i64,
                     d.shared_from.map_or(0, |a| a.0)
                 ],
+            )?;
+        }
+        for f in &app.scripts {
+            tx.execute(
+                "INSERT INTO install_scripts (app_id, depot_id, path, size, sha1)
+                 VALUES (?1, ?2, ?3, ?4, ?5)",
+                params![app.app_id.0, f.depot.0, f.path, f.size as i64, f.sha1],
+            )?;
+        }
+        for v in &app.script_values {
+            tx.execute(
+                "INSERT INTO script_values (app_id, machine, key, name) VALUES (?1, ?2, ?3, ?4)",
+                params![app.app_id.0, v.key.machine, v.key.path, v.name],
             )?;
         }
         tx.commit()?;
@@ -713,6 +795,28 @@ mod tests {
                 manifest: ManifestId(u64::MAX - 1),
                 shared_from: None,
             }],
+            scripts: vec![ScriptFile {
+                depot: DepotId(481),
+                path: "_CommonRedist\\x.vdf".into(),
+                size: 10,
+                sha1: vec![7; 20],
+            }],
+            script_values: vec![
+                ValueRef {
+                    key: Key {
+                        machine: true,
+                        path: "Software\\Example".into(),
+                    },
+                    name: None,
+                },
+                ValueRef {
+                    key: Key {
+                        machine: false,
+                        path: "Software\\Example".into(),
+                    },
+                    name: Some("Path".into()),
+                },
+            ],
         };
         db.set_installed(&app).unwrap();
         db.set_installed(&app).unwrap();
@@ -721,6 +825,8 @@ mod tests {
         assert_eq!(got.len(), 1);
         assert!(got[0].update_available);
         assert_eq!(got[0].depots, app.depots);
+        assert_eq!(got[0].scripts, app.scripts);
+        assert_eq!(got[0].script_values, app.script_values);
         assert!(db.remove_folder("ab").is_err(), "an app is installed there");
         db.remove_installed(AppId(480)).unwrap();
         assert!(db.installed_apps().unwrap().is_empty());

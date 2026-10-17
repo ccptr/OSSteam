@@ -85,7 +85,8 @@ even if it works.
   `ossteam-gui` to a Steam-layer crate in `cargo tree` (§5.2).
 - **[LEAF-3]** The CLI and GUI have feature parity at the IPC level. A
   presentation-only feature, such as artwork, is fine. A capability that only
-  one client has is not.
+  one client has is not. During M1 the GUI is built last (M1e), so parity
+  is required from M1e onward.
 
 ### 2.3 Synchronous first
 
@@ -909,24 +910,91 @@ all three OSes from CI-built artifacts.
 
 ### M1: A usable client (no VAC, no Steam DRM)
 
-- Login with credentials, Steam Guard (email, device code, confirmation) and
-  QR. Remembered accounts and switching.
-- Licenses, PICS, the library view and update detection.
-- Install, update (delta), verify, uninstall, resumable jobs and multiple
-  library folders.
-- Launching native games on every OS, plus Proton and the Steam Linux
-  Runtime on Linux. Install scripts. Play-session reporting.
-- `ossteam-steamclient` with the interfaces in §12.3, the ABI discovery
-  entries and conflict handling, and ShimReports.
-- The full CLI from §15 and the GUI views from §16.
-- SteamStub detection with an honest refusal (§13.2).
+M1 is split into five sub-milestones along the user's path: sign in, install,
+play, then Proton. Each one is usable end to end through the CLI. These rules
+apply to all five:
 
-**Exit:** on each OS, a test account goes through every item in
-`docs/acceptance/m1.md` with both the CLI and the GUI. The corpus includes
-Spacewar (app 480) for achievements and stats, a native title without
-Steamworks, a 32-bit Steamworks title, a title with DLC depots, and on Linux
-a Windows-only title under Proton. Each check's result matches the official
-client's result for the same account. All §20 budgets are met.
+- **Platforms.** M1a to M1d exit on Linux and Windows. macOS builds and passes
+  unit and replay tests in CI on every slice (PLAT-1). Its acceptance runs
+  are deferred to M1e.
+- **Clients.** M1a to M1d ship CLI commands only. The GUI crate keeps
+  compiling but gets no new views until M1e, which builds all of them against
+  the finished IPC API. LEAF-3 parity applies from M1e onward.
+- **Acceptance.** Each slice has a checklist in `docs/acceptance/m1x.md`
+  (`m1a.md` to `m1e.md`). Each check's result must match the official
+  client's result for the same account (§19.3). A slice's exit includes the
+  §20 budgets for what it introduces. GUI budgets apply at M1e.
+
+#### M1a: Session and library
+
+- The CM connection, its transports and reconnection (§9.1).
+- Login with credentials, Steam Guard (email, device code, confirmation) and
+  QR. Remembered accounts and switching (§9.2).
+- Licenses, PICS with change polling, and the PICS cache (§9.3).
+- Persona state (PLAY-2).
+- The daemon state database, keyring storage and the IPC methods for the
+  Daemon, Session and Library areas (§8.3).
+- CLI: `login`, `logout`, `account`, `status`, `persona`, `library`, `info`,
+  `config`, `events`, `daemon`, `completions`.
+
+**Exit:** on Linux and Windows, a test account logs in through every login
+path, and `ossteam library` lists exactly the apps its licenses grant, with
+DLC grouped under the parent app. After a restart the session resumes from
+the stored refresh token.
+
+#### M1b: Content
+
+- The CDN directory, manifests, chunks and depot keys (§10).
+- Install, delta update, verify and uninstall. Resumable jobs, bandwidth and
+  concurrency settings, update detection and the auto-update policy.
+- Multiple library folders.
+- Install scripts on native Windows (CONT-8).
+- CLI: `install`, `update`, `verify`, `uninstall`, `jobs`, `folders`.
+
+**Exit:** on Linux and Windows, a title with DLC depots installs, updates
+through a delta, survives a daemon kill in the middle of a download and
+resumes, verifies and repairs a corrupted file, and uninstalls cleanly. The
+download-throughput budget is met.
+
+#### M1c: Play (native)
+
+- Launch-option resolution, the launch environment, supervision and
+  `StopGame` (§11.1, §11.3).
+- Play-session reporting (PLAY-1).
+- `ossteam-steamclient` with the interfaces in §12.3, the game IPC (§12.4),
+  the ABI discovery entries and conflict handling (§12.5), and ShimReports
+  (§12.6).
+- SteamStub detection with an honest refusal (§13.2).
+- CLI: `launch`, `running`, `stop`.
+
+**Exit:** on Linux and Windows, these run correctly: Spacewar (app 480) for
+achievements and stats, a native title without Steamworks, and a 32-bit
+Steamworks title. Playtime and in-game presence show up on the account. A
+SteamStub-protected title is refused with exit code 7, and launches fail with
+exit code 8 while an official Steam install owns the discovery entries.
+
+#### M1d: Compatibility tools (Linux)
+
+- Proton and Steam Linux Runtime chains built from `toolmanifest.vdf`, the
+  compat-tool mapping and user overrides (§11.2).
+- `compatdata` prefixes, the generated client-install directory, and install
+  scripts inside the prefix.
+- Compat-tool settings in the CLI (`config`, plus the `info` output).
+
+**Exit:** on Linux, a Windows-only Steamworks title installs its tools
+through the normal install engine and runs under Proton inside the Steam
+Linux Runtime. Its stats and achievements reach Steam through the shim.
+
+#### M1e: GUI and macOS
+
+- Every GUI view from §16, built against the IPC API delivered by M1a to M1d.
+- macOS: the discovery mechanism (§24, Q1), the macOS discovery entries, and
+  acceptance runs for M1a to M1c.
+- The GUI performance budgets in §20.
+
+**Exit:** the checklists for M1a to M1c pass on macOS, and the M1a to M1d
+checklists pass through the GUI on every platform each applies to. All §20
+budgets are met. This completes M1.
 
 ### M2: Protection (Steam DRM and VAC)
 
@@ -982,7 +1050,7 @@ Steamworks interfaces driven by ShimReport data.
 ## 24. Open questions
 
 1. **macOS discovery.** What exactly does macOS `steam_api` need to locate a
-   client? To be answered in `steamworks-abi.md` during M1.
+   client? To be answered in `steamworks-abi.md` by M1e.
 2. **Application identifier.** The reverse-DNS id used for macOS paths and
    bundles, and for Windows AppUserModelID.
 3. **Project name.** Keep "ossteam" or rename before 1.0 (see §23).

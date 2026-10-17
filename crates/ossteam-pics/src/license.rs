@@ -118,7 +118,11 @@ mod tests {
         let l = parse(&body).unwrap();
         assert_eq!(l.len(), 4);
         assert_eq!(l[0].access_token, 7);
-        let granted: Vec<u32> = l.iter().filter(|l| l.grants(5)).map(|l| l.package_id.0).collect();
+        let granted: Vec<u32> = l
+            .iter()
+            .filter(|l| l.grants(5))
+            .map(|l| l.package_id.0)
+            .collect();
         assert_eq!(granted, [10, 13]);
         assert!(l[2].is_borrowed(5));
     }

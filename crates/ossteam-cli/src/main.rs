@@ -3,6 +3,7 @@
 //! daemon (LEAF-1).
 
 mod events;
+mod library;
 mod session;
 
 use std::io::{IsTerminal, Write};
@@ -87,6 +88,26 @@ enum Command {
     },
     /// Daemon, connection, account, jobs and running games.
     Status,
+    /// Set what friends see.
+    Persona {
+        #[arg(value_enum)]
+        state: session::PersonaArg,
+    },
+    /// List the apps the account's licenses grant, with DLC under its game.
+    Library {
+        /// Only installed apps.
+        #[arg(long)]
+        installed: bool,
+        /// Only apps whose name contains this text, or whose id it is.
+        #[arg(long)]
+        filter: Option<String>,
+    },
+    /// Show an app's info: depots, branches, install state and launch
+    /// options.
+    Info {
+        /// App id, or the exact name of an app in the library.
+        app: String,
+    },
     /// Print daemon events as they happen.
     Events {
         /// Only these topics (repeatable). All topics by default.
@@ -226,6 +247,11 @@ fn run(cli: &Cli) -> Result<(), Failure> {
             AccountAction::List => session::account_list(cli),
             AccountAction::Switch { account } => session::account_switch(cli, account),
         },
+        Command::Persona { state } => session::persona(cli, *state),
+        Command::Library { installed, filter } => {
+            library::list(cli, *installed, filter.as_deref().unwrap_or_default())
+        }
+        Command::Info { app } => library::info(cli, app),
         Command::Events { topics } => events::follow(cli, topics),
         Command::Completions { shell } => {
             let mut cmd = Cli::command();
@@ -379,6 +405,7 @@ fn print_status(cli: &Cli, s: &v1::GetStatusResponse) {
                 "account": account,
                 "logged_on": s.logged_on,
                 "reason": (!s.session_reason.is_empty()).then_some(&s.session_reason),
+                "persona_state": s.account.as_ref().map(|_| session::persona_name(s.persona_state)),
                 "active_jobs": s.active_jobs,
                 "running_games": s.running_games,
             })
@@ -410,6 +437,11 @@ fn print_status(cli: &Cli, s: &v1::GetStatusResponse) {
                 "not logged on"
             };
             let _ = writeln!(out, "account     {name}, {state}");
+            let _ = writeln!(
+                out,
+                "persona     {}",
+                session::persona_name(s.persona_state)
+            );
         }
         None => {
             let _ = writeln!(out, "account     not logged in");

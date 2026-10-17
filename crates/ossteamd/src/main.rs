@@ -4,8 +4,10 @@
 mod config;
 mod core;
 mod db;
+mod library;
 mod logging;
 mod paths;
+mod pics;
 mod secrets;
 mod server;
 mod session;
@@ -20,6 +22,7 @@ use clap::Parser;
 use crossbeam_channel::{RecvTimeoutError, bounded, unbounded};
 use ossteam_ipc::v1::PeerKind;
 use ossteam_ipc::{Client, ClientInfo, ConnectOptions, Endpoint};
+use ossteam_pics::Cache;
 
 /// How long a second instance waits for the first to answer before it
 /// declares the first unhealthy.
@@ -119,6 +122,9 @@ fn run(args: &Args) -> anyhow::Result<ExitCode> {
     let server = server::Server::start(listener, endpoint.clone(), cmd_tx.clone(), alive_tx)
         .context("starting the IPC server")?;
 
+    let pics_dir = paths.cache.join("pics");
+    let pics = pics::Handle::spawn(Cache::new(&pics_dir), cmd_tx.clone())
+        .context("starting the PICS worker")?;
     let session = session::Handle::spawn(
         session::Settings {
             cache_dir: paths.cache.clone(),
@@ -126,6 +132,7 @@ fn run(args: &Args) -> anyhow::Result<ExitCode> {
             file_fallback: config.secrets_file_fallback,
             cell_id,
             resume,
+            pics: pics.sender(),
         },
         cmd_tx.clone(),
     )
@@ -138,7 +145,7 @@ fn run(args: &Args) -> anyhow::Result<ExitCode> {
     .context("installing the signal handler")?;
     drop(cmd_tx);
 
-    let exit = core::Core::new(db, session).run(cmd_rx);
+    let exit = core::Core::new(db, session, pics, Cache::new(pics_dir)).run(cmd_rx);
     tracing::info!(?exit, "shutting down");
 
     // Shutdown (SPEC D-5): stop accepting (dropping the listener removes the

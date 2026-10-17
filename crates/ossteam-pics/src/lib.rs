@@ -18,6 +18,6 @@ pub mod license;
 pub mod request;
 
 pub use cache::Cache;
-pub use info::{AppInfo, Info, PackageInfo};
+pub use info::{AppInfo, AppSummary, Info, PackageInfo};
 pub use library::{Library, LibraryApp};
 pub use license::License;

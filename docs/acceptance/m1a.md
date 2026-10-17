@@ -19,13 +19,14 @@ the date and the build.
 | `ossteam-auth`: credential and QR sessions, guard codes, logon messages | unit tests; QR begin and poll live without an account 2026-10-17; login with an account ⏳ |
 | Access-token renewal (AUTH-3) | ⏳ comes with the first WebAPI use |
 | Daemon session subsystem, state database, keyring storage | built; integration tests without an account; live QR start and cancel through `ossteam login --qr` 2026-10-17 |
-| Licenses, PICS, change polling, PICS cache | ⏳ |
-| Persona state (PLAY-2) | ⏳ |
+| Licenses, PICS, change polling, PICS cache | built 2026-10-17; unit tests; live run ⏳ (needs an account) |
+| Persona state (PLAY-2) | built 2026-10-17; live run ⏳ (needs an account and a friend) |
 | IPC: Daemon methods | ✅ M0 |
-| IPC: Session methods except `SetPersonaState` | built 2026-10-17 |
-| IPC: `SetPersonaState`, Library methods | ⏳ |
+| IPC: Session methods | built 2026-10-17 |
+| IPC: Library methods `ListApps`, `GetApp`; `AppChanged` | built 2026-10-17; `GetAsset` ⏳ |
 | CLI: `login`, `logout`, `account`, `status`, `events`, `daemon`, `completions` | built 2026-10-17 |
-| CLI: `persona`, `library`, `info`, `config` | ⏳ |
+| CLI: `persona`, `library`, `info` | built 2026-10-17 |
+| CLI: `config` | ⏳ |
 | Daemon integration tests against a fake CM (§19.1 level 3) | ⏳ needs a test-only WSS server the platform verifier accepts |
 | `cm.md` §7 and `auth.md` §8 captures of the official client | ⏳ needs a capture setup |
 

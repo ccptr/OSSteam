@@ -6,7 +6,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use ossteam_types::{AppId, PackageId};
 
-use crate::info::{AppInfo, PackageInfo};
+use crate::info::AppSummary;
 use crate::license::License;
 
 /// The packages that the licenses put in this account's library, in id
@@ -51,17 +51,17 @@ pub struct Library {
 
 impl Library {
     /// Builds the library from the granted packages and whatever info is
-    /// available for them and their apps.
-    pub fn build<'a>(
+    /// available: the apps each package grants, and each app's summary.
+    pub fn build<A: IntoIterator<Item = AppId>>(
         packages: &[PackageId],
-        package_info: impl Fn(PackageId) -> Option<PackageInfo<'a>>,
-        app_info: impl Fn(AppId) -> Option<AppInfo<'a>>,
+        package_apps: impl Fn(PackageId) -> Option<A>,
+        app_summary: impl Fn(AppId) -> Option<AppSummary>,
     ) -> Self {
         let mut apps = BTreeSet::new();
         let mut packages_without_info = Vec::new();
         for &p in packages {
-            match package_info(p) {
-                Some(info) => apps.extend(info.app_ids()),
+            match package_apps(p) {
+                Some(ids) => apps.extend(ids),
                 None => packages_without_info.push(p),
             }
         }
@@ -69,12 +69,12 @@ impl Library {
         let mut entries: BTreeMap<AppId, LibraryApp> = apps
             .iter()
             .map(|&id| {
-                let entry = match app_info(id) {
+                let entry = match app_summary(id) {
                     Some(a) => LibraryApp {
                         id,
-                        name: a.name().to_owned(),
-                        app_type: a.app_type().to_owned(),
-                        parent: a.is_dlc().then(|| a.parent()).flatten(),
+                        name: a.name,
+                        app_type: a.app_type,
+                        parent: a.dlc_of,
                         has_info: true,
                         dlc: Vec::new(),
                     },
@@ -120,7 +120,9 @@ impl Library {
 
     /// Every app in the library, DLC included, in listing order.
     pub fn iter(&self) -> impl Iterator<Item = &LibraryApp> {
-        self.apps.iter().flat_map(|a| std::iter::once(a).chain(&a.dlc))
+        self.apps
+            .iter()
+            .flat_map(|a| std::iter::once(a).chain(&a.dlc))
     }
 
     pub fn find(&self, id: AppId) -> Option<&LibraryApp> {
@@ -153,6 +155,7 @@ mod tests {
     use ossteam_vdf::{Object, Value};
 
     use super::*;
+    use crate::info::{AppInfo, PackageInfo};
     use crate::license::flags;
 
     fn license(package: u32, flags: u32, owner: u32) -> License {
@@ -210,8 +213,8 @@ mod tests {
         .into();
         let lib = Library::build(
             &[PackageId(1), PackageId(2), PackageId(3)],
-            |p| packages.get(&p).map(PackageInfo),
-            |a| apps.get(&a).map(AppInfo),
+            |p| packages.get(&p).map(|o| PackageInfo(o).app_ids()),
+            |a| apps.get(&a).map(|o| AppInfo(o).summary()),
         );
 
         assert_eq!(lib.packages_without_info, [PackageId(3)]);
@@ -230,8 +233,8 @@ mod tests {
         let named = app("Spacewar", "Game", None);
         let lib = Library::build(
             &[PackageId(1)],
-            |p| packages.get(&p).map(PackageInfo),
-            |a| (a == AppId(480)).then_some(AppInfo(&named)),
+            |p| packages.get(&p).map(|o| PackageInfo(o).app_ids()),
+            |a| (a == AppId(480)).then(|| AppInfo(&named).summary()),
         );
         assert_eq!(lib.apps.len(), 2);
         assert_eq!(lib.apps[0].name, "Spacewar");
@@ -250,8 +253,8 @@ mod tests {
         .into();
         let lib = Library::build(
             &[PackageId(1)],
-            |p| packages.get(&p).map(PackageInfo),
-            |a| apps.get(&a).map(AppInfo),
+            |p| packages.get(&p).map(|o| PackageInfo(o).app_ids()),
+            |a| apps.get(&a).map(|o| AppInfo(o).summary()),
         );
         assert_eq!(lib.apps.len(), 2);
         assert!(lib.apps.iter().all(|a| a.dlc.is_empty()));
@@ -268,8 +271,8 @@ mod tests {
         .into();
         let lib = Library::build(
             &[PackageId(1)],
-            |p| packages.get(&p).map(PackageInfo),
-            |a| apps.get(&a).map(AppInfo),
+            |p| packages.get(&p).map(|o| PackageInfo(o).app_ids()),
+            |a| apps.get(&a).map(|o| AppInfo(o).summary()),
         );
         let top: Vec<u32> = lib.apps.iter().map(|a| a.id.0).collect();
         assert_eq!(top, [10, 12]);

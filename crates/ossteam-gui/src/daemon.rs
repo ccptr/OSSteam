@@ -10,7 +10,7 @@ use ossteam_ipc::{Client, ClientInfo, ConnectOptions};
 
 pub enum Update {
     Ready {
-        status: v1::GetStatusResponse,
+        status: Box<v1::GetStatusResponse>,
         version: v1::GetVersionResponse,
     },
     Unreachable(String),
@@ -37,7 +37,10 @@ pub fn connect() -> async_channel::Receiver<Update> {
             });
             let client = match result {
                 Ok((client, status, version)) => {
-                    let _ = tx.send_blocking(Update::Ready { status, version });
+                    let _ = tx.send_blocking(Update::Ready {
+                        status: Box::new(status),
+                        version,
+                    });
                     client
                 }
                 Err(e) => {

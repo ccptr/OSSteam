@@ -218,6 +218,39 @@ pub fn account_switch(cli: &Cli, who: &str) -> Result<(), Failure> {
     Ok(())
 }
 
+#[derive(Copy, Clone, clap::ValueEnum)]
+pub enum PersonaArg {
+    Online,
+    Invisible,
+    Offline,
+}
+
+pub fn persona(cli: &Cli, state: PersonaArg) -> Result<(), Failure> {
+    let client = connect(cli, true)?;
+    let state = match state {
+        PersonaArg::Online => v1::PersonaState::Online,
+        PersonaArg::Invisible => v1::PersonaState::Invisible,
+        PersonaArg::Offline => v1::PersonaState::Offline,
+    };
+    client.set_persona_state(state)?;
+    let name = persona_name(state as i32);
+    if cli.json {
+        println!("{}", json!({ "persona_state": name }));
+    } else if !cli.quiet {
+        println!("persona state set to {name}");
+    }
+    Ok(())
+}
+
+pub fn persona_name(raw: i32) -> &'static str {
+    match v1::PersonaState::try_from(raw).unwrap_or(v1::PersonaState::Unspecified) {
+        v1::PersonaState::Online => "online",
+        v1::PersonaState::Invisible => "invisible",
+        v1::PersonaState::Offline => "offline",
+        v1::PersonaState::Unspecified => "unknown",
+    }
+}
+
 pub fn account_json(a: &v1::Account) -> serde_json::Value {
     json!({
         "steam_id": a.steam_id.to_string(),

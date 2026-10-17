@@ -22,7 +22,7 @@ use ossteam_ipc::v1::{self, ConnectionState, response};
 use ossteam_types::{CancelToken, Secret, SteamId};
 
 use crate::core::{ClientId, Command};
-use crate::db;
+use crate::{db, pics};
 
 /// Where a deferred reply goes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -59,6 +59,12 @@ pub enum Cmd {
         reply: ReplyTo,
         account: db::Account,
     },
+    /// Tells Steam the persona state, if the account is logged on
+    /// (`pics.md` §8).
+    SetPersonaState {
+        steam_id: SteamId,
+        state: db::PersonaState,
+    },
 }
 
 /// What the worker tells the core.
@@ -84,6 +90,10 @@ pub enum Report {
     /// The account to resume on the next start, if any.
     Active(Option<SteamId>),
     CellId(u32),
+    /// The account logged on; its persona state is due (`pics.md` §8).
+    LoggedOn {
+        steam_id: SteamId,
+    },
     PersonaName {
         steam_id: SteamId,
         name: String,
@@ -120,6 +130,8 @@ impl State {
             logged_on: self.logged_on,
             reason: self.reason.clone(),
             login_required: self.login_required,
+            // The core fills this in: the choice is in its database.
+            persona_state: v1::PersonaState::Unspecified as i32,
         }
     }
 }
@@ -131,6 +143,8 @@ pub struct Settings {
     pub cell_id: u32,
     /// The account to log on at start (`cm.md` §5, AUTH-3).
     pub resume: Option<db::Account>,
+    /// The PICS worker, which follows the active account and its licenses.
+    pub pics: Sender<pics::Cmd>,
 }
 
 /// How long shutdown waits for a graceful logoff before it interrupts

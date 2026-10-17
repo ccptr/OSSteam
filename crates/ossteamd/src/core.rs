@@ -3,6 +3,7 @@
 //! (SPEC CONC-1). Everything else talks to it through [`Command`]s.
 
 use std::collections::{BTreeSet, HashMap};
+use std::sync::Arc;
 use std::time::Instant;
 
 use crossbeam_channel::{Receiver, Sender, TrySendError};
@@ -11,10 +12,12 @@ use ossteam_ipc::v1::{
     self, Envelope, ErrorCode, Event, Hello, LoginPromptKind, Topic, envelope::Body, event,
     request, response,
 };
+use ossteam_pics::Cache;
 use ossteam_types::{Secret, SteamId};
 
-use crate::db::Db;
+use crate::db::{Db, PersonaState};
 use crate::session::{self, Cmd, ReplyTo, Report};
+use crate::{library, pics};
 
 pub type ClientId = u64;
 
@@ -46,6 +49,8 @@ pub enum Command {
     Terminate,
     /// From the session worker.
     Session(Report),
+    /// From the PICS worker.
+    Pics(pics::Update),
 }
 
 /// Why the core loop ended.
@@ -74,10 +79,15 @@ pub struct Core {
     /// The client whose login is in progress. The login is cancelled when
     /// that client disconnects.
     login_owner: Option<ClientId>,
+    pics: pics::Handle,
+    /// Read for `GetApp`; the PICS worker writes it.
+    pics_cache: Cache,
+    /// The library as the PICS worker last reported it.
+    library: Option<Arc<pics::Snapshot>>,
 }
 
 impl Core {
-    pub fn new(db: Db, session: session::Handle) -> Self {
+    pub fn new(db: Db, session: session::Handle, pics: pics::Handle, pics_cache: Cache) -> Self {
         Self {
             started: Instant::now(),
             clients: HashMap::new(),
@@ -85,6 +95,9 @@ impl Core {
             session,
             session_state: session::State::default(),
             login_owner: None,
+            pics,
+            pics_cache,
+            library: None,
         }
     }
 
@@ -140,11 +153,14 @@ impl Core {
                 }
                 Command::Terminate => break Exit::Signal,
                 Command::Session(report) => self.on_session(report),
+                Command::Pics(update) => self.on_library(update),
             }
         };
         // Log off before telling clients the daemon is going (SPEC D-5).
-        // Reports sent meanwhile are not needed any more.
+        // Reports sent meanwhile are not needed any more. With the
+        // connection closed, PICS requests in flight fail at once.
         self.session.shutdown();
+        self.pics.shutdown();
         self.broadcast(
             Topic::Daemon,
             event::Kind::DaemonStopping(v1::DaemonStopping {}),
@@ -259,6 +275,14 @@ impl Core {
                 ))),
                 Err(e) => Some(Err(internal(&e))),
             },
+            request::Method::SetPersonaState(req) => Some(self.set_persona_state(req.state)),
+            request::Method::ListApps(req) => Some(
+                self.snapshot()
+                    .map(|s| response::Result::ListApps(library::list_apps(&s, &req))),
+            ),
+            request::Method::GetApp(req) => Some(self.snapshot().and_then(|s| {
+                library::get_app(&s, &self.pics_cache, req.app_id).map(response::Result::GetApp)
+            })),
         };
         if let Some(result) = outcome {
             self.reply(to, result);
@@ -290,11 +314,14 @@ impl Core {
             Report::State(state) => {
                 if state != self.session_state {
                     tracing::debug!(?state, "session changed");
-                    self.broadcast(Topic::Session, event::Kind::SessionChanged(state.event()));
                     self.session_state = state;
+                    self.broadcast_session();
                 }
                 Ok(())
             }
+            Report::LoggedOn { steam_id } => self.db.persona_state(steam_id).map(|state| {
+                self.session.send(Cmd::SetPersonaState { steam_id, state });
+            }),
             Report::Prompt(p) => {
                 self.broadcast(Topic::Session, event::Kind::LoginPrompt(p));
                 Ok(())
@@ -320,6 +347,91 @@ impl Core {
         }
     }
 
+    fn on_library(&mut self, update: pics::Update) {
+        let old = self.library.take();
+        let mut changed = library::changed_apps(old.as_deref(), update.snapshot.as_deref());
+        changed.extend(update.refreshed);
+        let complete = update.snapshot.as_ref().is_some_and(|s| s.complete);
+        let was_complete = old.as_ref().is_some_and(|s| s.complete);
+        self.library = update.snapshot;
+        if !changed.is_empty() || complete != was_complete {
+            self.broadcast(
+                Topic::Library,
+                event::Kind::AppChanged(v1::AppChanged {
+                    app_ids: changed.into_iter().map(|a| a.0).collect(),
+                    complete,
+                }),
+            );
+        }
+    }
+
+    /// The active account's library. Until the PICS worker has reported
+    /// one, it is empty and incomplete.
+    fn snapshot(&self) -> Result<Arc<pics::Snapshot>, RemoteError> {
+        let Some(account) = &self.session_state.account else {
+            return Err(RemoteError::new(
+                ErrorCode::NotLoggedIn,
+                "no account is logged in",
+            ));
+        };
+        let steam_id = SteamId(account.steam_id);
+        Ok(match &self.library {
+            Some(s) if s.steam_id == steam_id => s.clone(),
+            _ => Arc::new(pics::Snapshot {
+                steam_id,
+                library: ossteam_pics::Library::default(),
+                complete: false,
+            }),
+        })
+    }
+
+    fn set_persona_state(&mut self, raw: i32) -> Result<response::Result, RemoteError> {
+        let state = match v1::PersonaState::try_from(raw) {
+            Ok(v1::PersonaState::Online) => PersonaState::Online,
+            Ok(v1::PersonaState::Invisible) => PersonaState::Invisible,
+            Ok(v1::PersonaState::Offline) => PersonaState::Offline,
+            _ => return Err(invalid(format!("unknown persona state {raw}"))),
+        };
+        let Some(account) = &self.session_state.account else {
+            return Err(RemoteError::new(
+                ErrorCode::NotLoggedIn,
+                "no account is logged in",
+            ));
+        };
+        let steam_id = SteamId(account.steam_id);
+        self.db
+            .set_persona_state(steam_id, state)
+            .map_err(|e| internal(&e))?;
+        // Applied now if logged on; otherwise at the next logon.
+        self.session.send(Cmd::SetPersonaState { steam_id, state });
+        self.broadcast_session();
+        Ok(response::Result::SetPersonaState(
+            v1::SetPersonaStateResponse {},
+        ))
+    }
+
+    /// The active account's persona state, for clients.
+    fn persona_state(&self) -> v1::PersonaState {
+        let Some(account) = &self.session_state.account else {
+            return v1::PersonaState::Unspecified;
+        };
+        match self.db.persona_state(SteamId(account.steam_id)) {
+            Ok(PersonaState::Online) => v1::PersonaState::Online,
+            Ok(PersonaState::Invisible) => v1::PersonaState::Invisible,
+            Ok(PersonaState::Offline) => v1::PersonaState::Offline,
+            Err(e) => {
+                tracing::error!("reading the persona state failed: {e:#}");
+                v1::PersonaState::Unspecified
+            }
+        }
+    }
+
+    fn broadcast_session(&mut self) {
+        let mut ev = self.session_state.event();
+        ev.persona_state = self.persona_state() as i32;
+        self.broadcast(Topic::Session, event::Kind::SessionChanged(ev));
+    }
+
     fn status(&self) -> v1::GetStatusResponse {
         let s = &self.session_state;
         v1::GetStatusResponse {
@@ -333,6 +445,7 @@ impl Core {
             running_games: 0,
             logged_on: s.logged_on,
             session_reason: s.reason.clone(),
+            persona_state: self.persona_state() as i32,
         }
     }
 

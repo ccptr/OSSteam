@@ -97,6 +97,15 @@ fn id_list(o: Option<&Object>) -> Vec<u32> {
         .unwrap_or_default()
 }
 
+/// What the library needs of an app's info.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct AppSummary {
+    pub name: String,
+    pub app_type: String,
+    /// For DLC: the app it belongs to.
+    pub dlc_of: Option<AppId>,
+}
+
 /// A typed view of an app's info.
 #[derive(Debug, Clone, Copy)]
 pub struct AppInfo<'a>(pub &'a Object);
@@ -162,6 +171,14 @@ impl AppInfo<'_> {
             .and_then(number)
             .filter(|&n: &u32| n != 0)
             .map(AppId)
+    }
+
+    pub fn summary(&self) -> AppSummary {
+        AppSummary {
+            name: self.name().to_owned(),
+            app_type: self.app_type().to_owned(),
+            dlc_of: self.parent().filter(|_| self.is_dlc()),
+        }
     }
 
     pub fn oslist(&self) -> Vec<String> {
@@ -402,6 +419,9 @@ mod tests {
         let p = PackageInfo(&o);
         assert_eq!(p.app_ids(), [AppId(480), AppId(481)]);
         assert_eq!(p.depot_ids(), [DepotId(481)]);
-        assert!(matches!(parse_package_buffer(&[1, 0, 0, 0]), Err(InfoError::Empty)));
+        assert!(matches!(
+            parse_package_buffer(&[1, 0, 0, 0]),
+            Err(InfoError::Empty)
+        ));
     }
 }

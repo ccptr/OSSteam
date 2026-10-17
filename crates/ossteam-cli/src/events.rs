@@ -8,7 +8,7 @@ use clap::ValueEnum;
 use ossteam_ipc::v1::{self, Event, LoginPromptKind, NoticeLevel, Topic, event};
 use serde_json::{Value, json};
 
-use crate::session::account_json;
+use crate::session::{account_json, persona_name};
 use crate::{Cli, Failure, connect, connection_name, exit};
 
 #[derive(Copy, Clone, ValueEnum)]
@@ -109,6 +109,7 @@ fn to_json(ev: &Event) -> Value {
             "logged_on": s.logged_on,
             "reason": s.reason,
             "login_required": s.login_required,
+            "persona_state": persona_name(s.persona_state),
         }),
         Some(event::Kind::LoginPrompt(p)) => json!({
             "event": "login_prompt",
@@ -120,6 +121,11 @@ fn to_json(ev: &Event) -> Value {
             "event": "login_ended",
             "account": e.account.as_ref().map(account_json),
             "error": e.error.as_ref().map(error_json),
+        }),
+        Some(event::Kind::AppChanged(c)) => json!({
+            "event": "app_changed",
+            "app_ids": c.app_ids,
+            "complete": c.complete,
         }),
         // An event kind newer than this client.
         None => json!({ "event": "unknown" }),
@@ -162,6 +168,22 @@ fn to_text(ev: &Event) -> String {
             (Some(a), None) => format!("login    succeeded: {} ({})", a.account_name, a.steam_id),
             (None, None) => "login    ended".into(),
         },
+        Some(event::Kind::AppChanged(c)) => {
+            const SHOWN: usize = 10;
+            let mut ids: Vec<String> = c.app_ids.iter().take(SHOWN).map(u32::to_string).collect();
+            if c.app_ids.len() > SHOWN {
+                ids.push(format!("and {} more", c.app_ids.len() - SHOWN));
+            }
+            let n = c.app_ids.len();
+            let mut line = format!("library  {n} app{} changed", if n == 1 { "" } else { "s" });
+            if !ids.is_empty() {
+                line += &format!(": {}", ids.join(" "));
+            }
+            if !c.complete {
+                line += " (still loading)";
+            }
+            line
+        }
         None => "unknown event".into(),
     }
 }

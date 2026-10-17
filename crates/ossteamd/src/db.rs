@@ -11,7 +11,7 @@ use rusqlite::{Connection, OptionalExtension, params};
 pub const FILE_NAME: &str = "state.db";
 
 /// The schema version this build writes, kept in `PRAGMA user_version`.
-const SCHEMA_VERSION: i64 = 1;
+const SCHEMA_VERSION: i64 = 2;
 
 const SCHEMA_V1: &str = "
     CREATE TABLE accounts (
@@ -24,6 +24,43 @@ const SCHEMA_V1: &str = "
         value TEXT NOT NULL
     );
 ";
+
+/// Per-account choices, kept whether or not the account is remembered.
+const SCHEMA_V2: &str = "
+    CREATE TABLE account_settings (
+        steam_id      INTEGER PRIMARY KEY,
+        persona_state INTEGER NOT NULL
+    );
+";
+
+/// The persona state a user chose (`pics.md` §8). The numbers are stored
+/// and must not change.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum PersonaState {
+    #[default]
+    Online,
+    Invisible,
+    Offline,
+}
+
+impl PersonaState {
+    fn to_db(self) -> i64 {
+        match self {
+            Self::Online => 1,
+            Self::Invisible => 2,
+            Self::Offline => 3,
+        }
+    }
+
+    fn from_db(n: i64) -> Option<Self> {
+        match n {
+            1 => Some(Self::Online),
+            2 => Some(Self::Invisible),
+            3 => Some(Self::Offline),
+            _ => None,
+        }
+    }
+}
 
 /// A remembered account: one whose refresh token is stored.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -57,9 +94,14 @@ impl Db {
         conn.pragma_update(None, "foreign_keys", true)?;
         let version: i64 = conn.pragma_query_value(None, "user_version", |r| r.get(0))?;
         match version {
-            0 => {
-                conn.execute_batch(SCHEMA_V1)?;
-                conn.pragma_update(None, "user_version", SCHEMA_VERSION)?;
+            0 | 1 => {
+                let tx = conn.unchecked_transaction()?;
+                if version == 0 {
+                    tx.execute_batch(SCHEMA_V1)?;
+                }
+                tx.execute_batch(SCHEMA_V2)?;
+                tx.pragma_update(None, "user_version", SCHEMA_VERSION)?;
+                tx.commit()?;
             }
             SCHEMA_VERSION => {}
             v => anyhow::bail!(
@@ -109,6 +151,28 @@ impl Db {
         self.conn.execute(
             "UPDATE accounts SET persona_name = ?2 WHERE steam_id = ?1",
             params![steam_id.0 as i64, name],
+        )?;
+        Ok(())
+    }
+
+    /// The persona state chosen for an account; online when none was.
+    pub fn persona_state(&self, steam_id: SteamId) -> anyhow::Result<PersonaState> {
+        let n: Option<i64> = self
+            .conn
+            .query_row(
+                "SELECT persona_state FROM account_settings WHERE steam_id = ?1",
+                params![steam_id.0 as i64],
+                |r| r.get(0),
+            )
+            .optional()?;
+        Ok(n.and_then(PersonaState::from_db).unwrap_or_default())
+    }
+
+    pub fn set_persona_state(&self, steam_id: SteamId, state: PersonaState) -> anyhow::Result<()> {
+        self.conn.execute(
+            "INSERT INTO account_settings (steam_id, persona_state) VALUES (?1, ?2)
+             ON CONFLICT (steam_id) DO UPDATE SET persona_state = excluded.persona_state",
+            params![steam_id.0 as i64, state.to_db()],
         )?;
         Ok(())
     }
@@ -224,6 +288,37 @@ mod tests {
         let id = SteamId(0xffff_0000_0000_0001);
         db.remember(id, "x").unwrap();
         assert_eq!(db.accounts().unwrap()[0].steam_id, id);
+    }
+
+    #[test]
+    fn persona_state_defaults_to_online() {
+        let db = Db::in_memory();
+        let a = SteamId::individual(1);
+        assert_eq!(db.persona_state(a).unwrap(), PersonaState::Online);
+        db.set_persona_state(a, PersonaState::Invisible).unwrap();
+        db.set_persona_state(a, PersonaState::Offline).unwrap();
+        assert_eq!(db.persona_state(a).unwrap(), PersonaState::Offline);
+    }
+
+    #[test]
+    fn upgrades_a_version_1_database() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(SCHEMA_V1).unwrap();
+        conn.pragma_update(None, "user_version", 1).unwrap();
+        conn.execute(
+            "INSERT INTO accounts (steam_id, account_name) VALUES (1, 'alice')",
+            [],
+        )
+        .unwrap();
+        let db = Db::init(conn).unwrap();
+        assert_eq!(db.accounts().unwrap().len(), 1);
+        db.set_persona_state(SteamId(1), PersonaState::Invisible)
+            .unwrap();
+        let v: i64 = db
+            .conn
+            .pragma_query_value(None, "user_version", |r| r.get(0))
+            .unwrap();
+        assert_eq!(v, SCHEMA_VERSION);
     }
 
     #[test]

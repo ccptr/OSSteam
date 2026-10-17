@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| Status | Implemented: `Hello`, Daemon methods, subscriptions (M0); Session methods except `SetPersonaState` (M1a) |
+| Status | Implemented: `Hello`, Daemon methods, subscriptions (M0); Session methods, `ListApps`, `GetApp` (M1a) |
 | Requirements | SPEC §8 (IPC-1 to IPC-10), D-1, D-2, D-5, CONC-1, NET-4, AUTH-1 to AUTH-4 |
 | Schema | `crates/ossteam-ipc/proto/ossteam/ipc/v1/ipc.proto` |
 | Code | `crates/ossteam-ipc` (both sides), `crates/ossteamd/src/{core,server}.rs`, `crates/ossteamd/src/session/` |
@@ -109,7 +109,8 @@ is left unchanged. Events always have `id = 0`.
 | `DAEMON` | `DaemonStopping`: sent once, just before shutdown closes connections |
 | `NOTICES` | `Notice{level, text}` |
 | `SESSION` | `SessionChanged`, `LoginPrompt`, `LoginEnded` (§5.2) |
-| `LIBRARY`, `JOBS`, `GAMES` | Subscribable now; their events arrive with M1a to M1c |
+| `LIBRARY` | `AppChanged{app_ids, complete}` (§5.3) |
+| `JOBS`, `GAMES` | Subscribable now; their events arrive with M1b and M1c |
 
 ## 5. Methods
 
@@ -134,6 +135,7 @@ returns and what `SessionChanged` carries:
 | `logged_on` | Whether `account` is logged on right now |
 | `reason` / `session_reason` | Why the session last ended or failed to resume, in words for people. Empty after a successful logon |
 | `login_required` (event only) | The stored token was rejected or is missing; the account must log in again |
+| `persona_state` | The active account's chosen persona state; unspecified without an account |
 
 A connection can be `CONNECTED` with `logged_on` false: during a login, and
 between connecting and the logon answer.
@@ -147,8 +149,7 @@ between connecting and the logon answer.
 | `Logout` | Logs the active account off and deletes its stored token. `NOT_LOGGED_IN` when there is no active account. |
 | `ListAccounts` | The remembered accounts (those with a stored token) and the active account's Steam id, or 0. |
 | `SwitchAccount{steam_id}` | Logs off the active account and logs on as a remembered one (`auth.md` §6). Replies once that logon has succeeded or failed. `NOT_FOUND` for an account that is not remembered. |
-
-`SetPersonaState` arrives with persona support (PLAY-2).
+| `SetPersonaState{state}` | Stores `ONLINE`, `INVISIBLE` or `OFFLINE` for the active account and sends it to Steam if the account is logged on; it is sent again after every logon (`pics.md` §8). Replies at once, then `SessionChanged` carries the new state. `NOT_LOGGED_IN` without an active account. |
 
 **Login flow.** A client subscribes to `SESSION` first, then starts a
 login. After `LoginStartedResponse` the daemon sends:
@@ -166,6 +167,24 @@ One login runs at a time; a second one fails with `CONFLICT`. A login
 belongs to the connection that started it: if that connection closes, the
 daemon cancels the login. Starting a login while an account is active logs
 that account off first (`auth.md` §6).
+
+### 5.3 Library
+
+The library is the set of apps the active account's licenses grant
+(`pics.md` §7). The daemon answers from the last library the PICS worker
+built (§7), so these calls never wait on Steam. Both fail with
+`NOT_LOGGED_IN` without an active account.
+
+| Method | Behaviour |
+|---|---|
+| `ListApps{filter, installed_only}` | Top-level apps sorted by name, each with its DLC. `filter` keeps apps whose name contains it, ignoring case, or whose id it is; a matching DLC is listed under its parent even if the parent does not match. `complete` is false until the license list has arrived and every needed info has been fetched or refused, and again after a fetch fails, until the retry succeeds. `packages_without_info` names granted packages whose apps cannot be listed. Until the install engine exists (M1b) nothing is installed, so `installed_only` returns no apps. |
+| `GetApp{app_id}` | The app's summary and its cached info: platforms, install directory, depots, branches and launch options. `NOT_FOUND` when the app is not in the library. An app whose info is not available has only its summary. |
+
+`AppChanged` lists the apps that were added to or removed from the
+library, or whose info was fetched again, and whether the library is now
+complete. It comes after the first library is built, after license
+changes, and after change polling (`pics.md` §4) fetched something.
+Clients read the apps again with `ListApps` or `GetApp`.
 
 **Secrets (IPC-10).** The password and Steam Guard codes travel only in
 their request. Both sides zero every frame buffer after use, the client
@@ -232,6 +251,14 @@ prompts back on the core's command channel. The core keeps the state
 database and answers `GetStatus` and `ListAccounts` itself, so they never
 wait on the network. A session request that waits on Steam is answered
 when the worker reports back.
+
+The PICS worker (`crates/ossteamd/src/pics.rs`) is another thread. The
+session worker tells it the active account, gives it a handle for
+requests after each logon, and forwards the license list. It fetches
+product info, polls for changes, writes the PICS cache, and reports each
+new library to the core, which answers Library methods from it. `GetApp`
+reads the cache file itself, which is safe because the worker replaces
+files by renaming.
 
 The client library runs one reader thread per connection. That thread
 routes each reply to the waiting call by id and queues events. Calls can

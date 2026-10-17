@@ -15,14 +15,14 @@ use ossteam_ipc::RemoteError;
 use ossteam_ipc::v1::{self, ConnectionState, ErrorCode, LoginPromptKind, response};
 use ossteam_net::directory::jitter;
 use ossteam_net::{CallError, Connection, Incoming, Packet, SessionIds};
-use ossteam_proto::steam::{CMsgClientAccountInfo, EMsg};
+use ossteam_proto::steam::{CMsgClientAccountInfo, CMsgClientChangeStatus, EMsg};
 use ossteam_types::{CancelToken, EResult, Secret, SteamId};
 
 use super::servers::{NoServer, Servers};
 use super::{Cmd, ReplyTo, Report, Settings, State};
 use crate::core::Command;
-use crate::db;
 use crate::secrets::{self, Secrets};
+use crate::{db, pics};
 
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 /// How long starting a login or switching accounts keeps trying servers.
@@ -164,6 +164,8 @@ pub struct Worker {
     reason: String,
     login_required: bool,
     published: Option<State>,
+    /// The account the PICS worker was last told about.
+    pics_account: Option<SteamId>,
     login_cancel: Arc<Mutex<CancelToken>>,
     stop: CancelToken,
 }
@@ -194,6 +196,7 @@ impl Worker {
             reason: String::new(),
             login_required: false,
             published: None,
+            pics_account: None,
             login_cancel,
             stop,
         }
@@ -270,8 +273,14 @@ impl Worker {
         }
     }
 
-    /// Reports the state if it changed since the last report.
+    /// Reports the state if it changed since the last report, and tells
+    /// the PICS worker when the active account changed.
     fn publish(&mut self) {
+        let account = self.active.as_ref().map(|a| a.steam_id);
+        if account != self.pics_account {
+            self.pics_account = account;
+            let _ = self.settings.pics.send(pics::Cmd::Account(account));
+        }
         let state = self.state();
         if self.published.as_ref() != Some(&state) {
             self.published = Some(state.clone());
@@ -329,6 +338,7 @@ impl Worker {
             }
             Cmd::Logout { reply } => self.logout(reply),
             Cmd::SwitchAccount { reply, account } => self.switch(reply, account),
+            Cmd::SetPersonaState { steam_id, state } => self.set_persona_state(steam_id, state),
         }
     }
 
@@ -499,6 +509,14 @@ impl Worker {
             active.steam_id = ok.steam_id;
         }
         tracing::info!(account = %active.account_name, steam_id = %ok.steam_id, "logged on");
+        self.pics_account = Some(ok.steam_id);
+        let _ = self.settings.pics.send(pics::Cmd::LoggedOn {
+            steam_id: ok.steam_id,
+            requester: live.conn.requester(),
+        });
+        self.report(Report::LoggedOn {
+            steam_id: ok.steam_id,
+        });
         self.logged_on = true;
         self.retry_at = None;
         self.retry_failures = 0;
@@ -710,7 +728,15 @@ impl Worker {
 
     /// Applies informational messages.
     fn on_info(&mut self, p: &Packet) {
-        if p.is(EMsg::KEMsgClientAccountInfo) {
+        if p.is(EMsg::KEMsgClientLicenseList) {
+            match ossteam_pics::license::parse(&p.body) {
+                Ok(licenses) => {
+                    let _ = self.settings.pics.send(pics::Cmd::Licenses(licenses));
+                }
+                // The last list stays in force (`pics.md` §1).
+                Err(e) => tracing::warn!("ignoring a license list: {e}"),
+            }
+        } else if p.is(EMsg::KEMsgClientAccountInfo) {
             let Ok(info) = p.decode_body::<CMsgClientAccountInfo>() else {
                 tracing::debug!("dropping an undecodable ClientAccountInfo");
                 return;
@@ -722,6 +748,29 @@ impl Worker {
             }
         } else {
             tracing::trace!(emsg = p.emsg, kind = ?p.kind(), "unhandled CM message");
+        }
+    }
+
+    /// Sends `ClientChangeStatus` (`pics.md` §8). The state is applied
+    /// again after every logon, so a send that fails is not retried.
+    fn set_persona_state(&self, steam_id: SteamId, state: db::PersonaState) {
+        let (Some(live), Some(active)) = (&self.live, &self.active) else {
+            return;
+        };
+        if !self.logged_on || active.steam_id != steam_id {
+            return;
+        }
+        let body = CMsgClientChangeStatus {
+            persona_state: Some(steam_persona_state(state)),
+            persona_set_by_user: Some(true),
+            ..Default::default()
+        };
+        match live
+            .conn
+            .send(Packet::proto(EMsg::KEMsgClientChangeStatus, &body))
+        {
+            Ok(()) => tracing::info!(?state, "persona state sent"),
+            Err(e) => tracing::info!("could not send the persona state: {e}"),
         }
     }
 
@@ -1220,6 +1269,15 @@ fn auth_error(e: AuthError) -> RemoteError {
             RemoteError::new(ErrorCode::Network, format!("sign-in failed: {e}"))
         }
         other => RemoteError::new(ErrorCode::Internal, format!("sign-in failed: {other}")),
+    }
+}
+
+/// Steam's number for a persona state (`pics.md` §8).
+fn steam_persona_state(state: db::PersonaState) -> u32 {
+    match state {
+        db::PersonaState::Offline => 0,
+        db::PersonaState::Online => 1,
+        db::PersonaState::Invisible => 7,
     }
 }
 

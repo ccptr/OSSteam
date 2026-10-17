@@ -387,6 +387,42 @@ impl Client {
             other => Err(unexpected(other)),
         }
     }
+
+    pub fn set_persona_state(&self, state: v1::PersonaState) -> Result<(), ClientError> {
+        let req = v1::SetPersonaStateRequest {
+            state: state as i32,
+        };
+        match self.call(request::Method::SetPersonaState(req), DEFAULT_TIMEOUT)? {
+            response::Result::SetPersonaState(_) => Ok(()),
+            other => Err(unexpected(other)),
+        }
+    }
+}
+
+/// Library calls (`docs/spec/ipc.md` §5.3).
+impl Client {
+    pub fn list_apps(
+        &self,
+        filter: &str,
+        installed_only: bool,
+    ) -> Result<v1::ListAppsResponse, ClientError> {
+        let req = v1::ListAppsRequest {
+            filter: filter.into(),
+            installed_only,
+        };
+        match self.call(request::Method::ListApps(req), DEFAULT_TIMEOUT)? {
+            response::Result::ListApps(r) => Ok(r),
+            other => Err(unexpected(other)),
+        }
+    }
+
+    pub fn get_app(&self, app_id: u32) -> Result<v1::GetAppResponse, ClientError> {
+        let req = v1::GetAppRequest { app_id };
+        match self.call(request::Method::GetApp(req), DEFAULT_TIMEOUT)? {
+            response::Result::GetApp(r) => Ok(r),
+            other => Err(unexpected(other)),
+        }
+    }
 }
 
 /// Zeroes the secrets a request carried once it has been sent (IPC-10).

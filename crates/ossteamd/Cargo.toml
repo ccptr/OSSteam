@@ -10,6 +10,7 @@ publish.workspace = true
 ossteam-auth.workspace = true
 ossteam-ipc.workspace = true
 ossteam-net.workspace = true
+ossteam-pics.workspace = true
 ossteam-proto.workspace = true
 ossteam-types.workspace = true
 anyhow.workspace = true

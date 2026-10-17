@@ -21,7 +21,7 @@ actions!(ossteam, [Retry, Quit]);
 enum State {
     Connecting,
     Ready {
-        status: v1::GetStatusResponse,
+        status: Box<v1::GetStatusResponse>,
         version: v1::GetVersionResponse,
     },
     Unreachable(SharedString),

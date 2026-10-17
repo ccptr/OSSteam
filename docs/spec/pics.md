@@ -2,9 +2,9 @@
 
 | | |
 |---|---|
-| Status | Draft for M1a; §1 to §7 implemented, nothing yet tried with an account |
+| Status | Draft for M1a; §1 to §8 implemented, nothing yet tried with an account |
 | Requirements | SPEC §9.3 (PICS-1 to PICS-3), §9.4 (PLAY-2), D-7, §19.3 |
-| Code | `crates/ossteam-pics`; the daemon side in `crates/ossteamd/src/pics.rs` and the session worker |
+| Code | `crates/ossteam-pics`; the daemon side in `crates/ossteamd/src/{pics,library}.rs` and the session worker |
 
 After logon the CM tells the client which **licenses** the account holds.
 A license names a **package** (also called a sub). The Product Info and

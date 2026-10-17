@@ -4250,6 +4250,7 @@ dependencies = [
  "ossteam-auth",
  "ossteam-ipc",
  "ossteam-net",
+ "ossteam-pics",
  "ossteam-proto",
  "ossteam-types",
  "rusqlite",

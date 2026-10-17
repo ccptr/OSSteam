@@ -63,7 +63,8 @@ pub fn app_tokens(
         for t in r.app_access_tokens {
             out.tokens.insert(AppId(t.appid()), t.access_token());
         }
-        out.denied.extend(r.app_denied_tokens.into_iter().map(AppId));
+        out.denied
+            .extend(r.app_denied_tokens.into_iter().map(AppId));
     }
     Ok(out)
 }
@@ -238,7 +239,11 @@ fn take_response(r: CMsgClientPicsProductInfoResponse, meta_only: bool, out: &mu
                 data,
             }),
             Err(e) => {
-                tracing::warn!(package = id, size = p.size(), "package info unavailable: {e}");
+                tracing::warn!(
+                    package = id,
+                    size = p.size(),
+                    "package info unavailable: {e}"
+                );
                 out.unavailable_packages.push(id);
             }
         }

@@ -89,6 +89,9 @@ message Request {
     LogoutRequest logout = 10;
     ListAccountsRequest list_accounts = 11;
     SwitchAccountRequest switch_account = 12;
+    SetPersonaStateRequest set_persona_state = 13;
+    ListAppsRequest list_apps = 14;
+    GetAppRequest get_app = 15;
   }
 }
 
@@ -106,6 +109,9 @@ message Response {
     LogoutResponse logout = 10;
     ListAccountsResponse list_accounts = 11;
     SwitchAccountResponse switch_account = 12;
+    SetPersonaStateResponse set_persona_state = 13;
+    ListAppsResponse list_apps = 14;
+    GetAppResponse get_app = 15;
   }
 }
 
@@ -142,6 +148,8 @@ message GetStatusResponse {
   bool logged_on = 9;
   // Why the session last ended or failed to resume, if it did.
   string session_reason = 10;
+  // The active account's chosen persona state; unspecified without one.
+  PersonaState persona_state = 11;
 }
 
 message GetVersionRequest {}
@@ -232,6 +240,113 @@ message SwitchAccountResponse {
   Account account = 1;
 }
 
+// What friends see (SPEC PLAY-2). Stored per account; the default is ONLINE.
+enum PersonaState {
+  PERSONA_STATE_UNSPECIFIED = 0;
+  PERSONA_STATE_ONLINE = 1;
+  PERSONA_STATE_INVISIBLE = 2;
+  PERSONA_STATE_OFFLINE = 3;
+}
+
+// Sets the active account's persona state. It is sent to Steam at once when
+// the account is logged on, and after every later logon.
+message SetPersonaStateRequest {
+  PersonaState state = 1;
+}
+
+message SetPersonaStateResponse {}
+
+// --- Library (docs/spec/ipc.md §5.3) --------------------------------------
+
+message ListAppsRequest {
+  // Keeps apps whose name contains this text, ignoring case, or whose id it
+  // is. A DLC that matches is listed under its parent. Empty keeps all.
+  string filter = 1;
+  // Only installed apps.
+  bool installed_only = 2;
+}
+
+message AppSummary {
+  uint32 app_id = 1;
+  // Empty when the app's info is not available.
+  string name = 2;
+  // As Steam writes it: "Game", "DLC", "Application", ... Empty when the
+  // app's info is not available.
+  string type = 3;
+  // For DLC: the app it belongs to; 0 otherwise.
+  uint32 parent = 4;
+  // Whether the app's info is available.
+  bool has_info = 5;
+  bool installed = 6;
+  // The account's DLC for this app.
+  repeated AppSummary dlc = 7;
+}
+
+message ListAppsResponse {
+  // Top-level apps sorted by name, each with its DLC.
+  repeated AppSummary apps = 1;
+  // False while the license list or product info is still being fetched,
+  // or after a fetch failed and is waiting for a retry.
+  bool complete = 2;
+  // Granted packages whose info is not available, so their apps are not
+  // known.
+  repeated uint32 packages_without_info = 3;
+}
+
+message GetAppRequest {
+  uint32 app_id = 1;
+}
+
+message Depot {
+  uint32 depot_id = 1;
+  string name = 2;
+  repeated string oslist = 3;
+  string osarch = 4;
+  string language = 5;
+  // The DLC this depot belongs to; 0 for none.
+  uint32 dlc_app_id = 6;
+  // For a depot shared from another app: that app; 0 otherwise.
+  uint32 from_app_id = 7;
+  bool shared_install = 8;
+  // 0 when not given.
+  uint64 max_size = 9;
+}
+
+message Branch {
+  string name = 1;
+  // 0 when not given.
+  uint32 build_id = 2;
+  string description = 3;
+  bool password_required = 4;
+  // Unix time; 0 when not given.
+  uint64 time_updated = 5;
+}
+
+message LaunchOption {
+  // The key under config/launch.
+  uint32 index = 1;
+  string executable = 2;
+  string arguments = 3;
+  string description = 4;
+  string type = 5;
+  repeated string oslist = 6;
+  string osarch = 7;
+  string betakey = 8;
+}
+
+message GetAppResponse {
+  AppSummary app = 1;
+  // The rest is empty when `app.has_info` is false.
+  uint32 change_number = 2;
+  // Steam limited the info because no access token was available.
+  bool missing_token = 3;
+  repeated string oslist = 4;
+  string install_dir = 5;
+  repeated Depot depots = 6;
+  repeated Branch branches = 7;
+  repeated LaunchOption launch_options = 8;
+}
+
 // --- Events ---------------------------------------------------------------
 
 enum Topic {
@@ -268,6 +383,7 @@ message Event {
     SessionChanged session_changed = 3;
     LoginPrompt login_prompt = 4;
     LoginEnded login_ended = 5;
+    AppChanged app_changed = 6;
   }
 }
 
@@ -297,6 +413,7 @@ message SessionChanged {
   // The stored token was rejected or is missing: the account must log in
   // again before it can be used.
   bool login_required = 5;
+  PersonaState persona_state = 6;
 }
 
 // Topic: SESSION. Steam needs something from the user to continue a login.
@@ -311,4 +428,12 @@ message LoginPrompt {
 message LoginEnded {
   Account account = 1;
   Error error = 2;
+}
+
+// Topic: LIBRARY. These apps were added to or removed from the library, or
+// their info changed. Clients read them again with ListApps or GetApp.
+message AppChanged {
+  repeated uint32 app_ids = 1;
+  // Whether the library is complete now (ListAppsResponse.complete).
+  bool complete = 2;
 }

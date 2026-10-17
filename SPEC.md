@@ -119,7 +119,8 @@ even if it works.
   are written up in our own words under `docs/spec/` before or together with
   the code that uses them.
 - **[RE-2]** No Valve code, binaries or copyrighted assets are copied into the
-  repository. §3.3 covers protocol definitions.
+  repository. The one exception is the community-maintained protobuf
+  definitions described in §3.3.
 
 ---
 
@@ -149,15 +150,23 @@ even if it works.
 
 ### 3.3 Steam protocol definitions
 
-- **[LIC-5]** `ossteam-proto` contains hand-written `.proto` files. They
-  declare only the messages and fields ossteam uses, with field numbers and
-  types established for interoperability. Each file names the `docs/spec/`
-  page that records its provenance. Wholesale copies of protobuf definitions
-  dumped from Valve binaries are not committed (see §24, Q1).
+- **[LIC-5]** `ossteam-proto` uses the community-maintained Steam protobuf
+  definitions from the SteamDatabase `Protobufs` repository. ossteam does not
+  hand-write its own.
+- **[LIC-6]** The files ossteam needs are vendored unmodified into
+  `crates/ossteam-proto/protos/`, from a pinned upstream commit.
+  `cargo xtask update-protos <rev>` refreshes them, and the commit hash,
+  upstream URL and file list are recorded in `crates/ossteam-proto/PROVENANCE.md`.
+  Vendored files are exempt from the SPDX header check (LIC-1) and keep
+  whatever notices they carry upstream.
+- **[LIC-7]** Any local fix goes upstream first. Until it lands, the fix lives
+  as a patch in `crates/ossteam-proto/patches/` that `update-protos` applies,
+  so the vendored tree always stays identical to upstream plus explicit
+  patches.
 
 ### 3.4 Trademarks and affiliation
 
-- **[LIC-6]** ossteam is not affiliated with or endorsed by Valve. "Steam" is
+- **[LIC-8]** ossteam is not affiliated with or endorsed by Valve. "Steam" is
   used only to describe compatibility. The project uses no Valve logos or
   artwork. Game artwork is fetched at runtime from Valve's CDN for the
   logged-in user, exactly as the official client does, and is never
@@ -212,7 +221,7 @@ Cargo.toml                 workspace; edition 2024; pinned toolchain
 crates/
   ossteam-types/           ids (AppId, DepotId, ManifestId, PackageId, SteamId), shared plain types; no I/O
   ossteam-vdf/             KeyValues text + binary; appinfo/packageinfo cache formats; .acf/.vdf
-  ossteam-proto/           hand-written Steam .proto files + prost codegen (build.rs)
+  ossteam-proto/           vendored community Steam .proto files (LIC-5..7) + prost codegen (build.rs)
   ossteam-net/             CM directory, transports (WebSocket, TCP+channel encryption), framing, EMsg, job ids, service methods
   ossteam-webapi/          HTTPS WebAPI client (ureq)
   ossteam-auth/            IAuthenticationService flows, Steam Guard, token lifecycle
@@ -795,7 +804,7 @@ of empty views.
 ## 17. Filesystem layout
 
 Directories are resolved with `directories::ProjectDirs`. `<id>` is the
-application identifier (§24, Q3).
+application identifier (§24, Q2).
 
 | Kind | Linux | Windows | macOS |
 |---|---|---|---|
@@ -965,20 +974,17 @@ Steamworks interfaces driven by ShimReport data.
 | The Steam protocol changes | Keep spec pages current, use recorded-replay CI, run live tests on a schedule, track Valve's protocol updates |
 | gpui has no stable release and its API churns | Pin a revision, isolate widgets in `src/widgets/`, bump the pin deliberately |
 | The Steamworks interface versions in use are a large surface | Expand interfaces based on ShimReport data. Fail honestly in the meantime. |
-| The name "ossteam" contains "steam" | State non-affiliation clearly (LIC-6). Revisit the name before a 1.0 release (Q4). |
+| The name "ossteam" contains "steam" | State non-affiliation clearly (LIC-8). Revisit the name before a 1.0 release (Q3). |
 | Coexisting with an official Steam install | DISC-3 conflict handling. Never overwrite Valve's entries. |
 
 ---
 
 ## 24. Open questions
 
-1. **Protocol definitions.** Should we hand-write minimal `.proto` files
-   (current decision, LIC-5), or vendor a community-maintained protobuf
-   dump? Get a legal opinion before M1 code freeze.
-2. **macOS discovery.** What exactly does macOS `steam_api` need to locate a
+1. **macOS discovery.** What exactly does macOS `steam_api` need to locate a
    client? To be answered in `steamworks-abi.md` during M1.
-3. **Application identifier.** The reverse-DNS id used for macOS paths and
+2. **Application identifier.** The reverse-DNS id used for macOS paths and
    bundles, and for Windows AppUserModelID.
-4. **Project name.** Keep "ossteam" or rename before 1.0 (see §23).
-5. **Windows VAC privileges.** Does faithful VAC hosting on Windows require
+3. **Project name.** Keep "ossteam" or rename before 1.0 (see §23).
+4. **Windows VAC privileges.** Does faithful VAC hosting on Windows require
    an elevated service? To be decided in `vac.md` (M2).

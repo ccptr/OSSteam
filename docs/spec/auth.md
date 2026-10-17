@@ -2,9 +2,9 @@
 
 | | |
 |---|---|
-| Status | Draft for M1a; nothing implemented yet |
+| Status | Draft for M1a; §1 to §4 implemented in `ossteam-auth`, not yet tried live |
 | Requirements | SPEC §9.2 (AUTH-1 to AUTH-4), §8.5 (IPC-9, IPC-10), D-8, D-10, SEC-2 |
-| Code (planned) | `crates/ossteam-auth` |
+| Code | `crates/ossteam-auth`; storage (§4, §5) and accounts (§6) belong to `ossteamd` |
 
 Signing in is done with the `Authentication` unified service
 (`IAuthenticationService`). That service issues a **refresh token**, which
@@ -16,7 +16,11 @@ Request and response messages come from the vendored
 **Verification.** As in `cm.md`, this draft comes from public community
 documentation. Each statement must be confirmed against a capture of the
 official client on our test account before code depends on it. §8 tracks
-which statements have been confirmed.
+which statements have been confirmed. Rows marked *live* were accepted
+by Valve's servers when the account-free probes ran
+(`crates/ossteam-net/examples/cm_probe.rs`,
+`crates/ossteam-auth/examples/qr_probe.rs`). That confirms the format,
+but it is not a capture of the official client.
 
 ## 1. Transport and identity
 
@@ -32,7 +36,9 @@ which statements have been confirmed.
     OS type, and the gaming-device type.
 
   The exact values the official client sends are recorded from a capture
-  (§8).
+  (§8). Until then ossteam sends the platform type, persistence, website
+  id and friendly name, and leaves the OS type, gaming-device type and
+  machine id unset.
 
 ## 2. Credential login (AUTH-1)
 
@@ -135,10 +141,11 @@ account's stored token.
 
 | Statement | Status |
 |---|---|
-| Auth calls go over CM as non-authed service calls for the client platform (§1) | unverified |
+| Auth calls go over CM as non-authed service calls for the client platform (§1) | live 2026-10-17 (`GetPasswordRSAPublicKey`, `BeginAuthSessionViaQR`, `PollAuthSessionStatus`); capture pending |
 | Identity fields and values (§1) | not captured |
 | RSA scheme and encoding of the password (§2) | unverified |
 | Guard types and their numbering (§2) | taken from the vendored proto; behaviour unverified |
-| QR URL rotation during polling (§3) | unverified |
+| QR begin-session and polling (§3) | live 2026-10-17: `https://s.team/q/1/…` challenge, 5 s interval, device confirmation or device code offered, an unapproved poll is pending |
+| QR URL rotation during polling (§3) | unverified (no rotation within one poll) |
 | Refresh token in `ClientLogon.access_token` (§4) | unverified |
 | Revocation EResults (§4) | unverified |

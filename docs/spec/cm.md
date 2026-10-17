@@ -179,7 +179,10 @@ responses come from the vendored `steammessages_*.steamclient.proto` files.
    calls on the same connection.
 4. **Logon**: send `ClientLogon` with the account name, the token from
    `auth.md` §4, the client's OS type and language, the machine
-   identifiers the official client sends (§7), and the cell id. The server
+   identifiers the official client sends (§7), and the cell id. Because
+   the connection has no Steam id yet, the header names an individual
+   desktop account (public universe, instance 1) with account id 0, and
+   session id 0. *Unverified.* The server
    answers `ClientLogOnResponse` with an EResult. On success it also gives
    the session's Steam id (in the header), the heartbeat interval, the cell
    id, and the public IP as the server sees it.
@@ -244,4 +247,5 @@ tracked as open items.
 | `Multi` format (§3.4) | unverified (no `Multi` seen before logon) |
 | Service-method EMsgs and `target_job_name` format (§3.5) | non-authed call to `Authentication.GetPasswordRSAPublicKey#1`: live 2026-10-17. Authed: unverified |
 | `ClientHello` before non-authed calls, and its protocol version (§4) | sent with 65580 and the call succeeded; whether it is *required* is unverified |
+| `ClientLogon` header Steam id before logon (§4 step 4) | unverified |
 | `ClientLogon` field values (§7) | not captured |

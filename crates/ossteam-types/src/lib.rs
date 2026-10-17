@@ -10,7 +10,9 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 mod eresult;
+mod secret;
 pub use eresult::EResult;
+pub use secret::Secret;
 
 macro_rules! id_type {
     ($(#[$meta:meta])* $name:ident($inner:ty)) => {

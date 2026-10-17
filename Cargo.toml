@@ -5,6 +5,7 @@ members = [
     "crates/ossteam-vdf",
     "crates/ossteam-proto",
     "crates/ossteam-net",
+    "crates/ossteam-auth",
     "crates/ossteam-ipc",
     "crates/ossteamd",
     "crates/ossteam-cli",
@@ -16,6 +17,7 @@ default-members = [
     "crates/ossteam-vdf",
     "crates/ossteam-proto",
     "crates/ossteam-net",
+    "crates/ossteam-auth",
     "crates/ossteam-ipc",
     "crates/ossteamd",
     "crates/ossteam-cli",
@@ -33,9 +35,11 @@ ossteam-types = { path = "crates/ossteam-types" }
 ossteam-vdf = { path = "crates/ossteam-vdf" }
 ossteam-proto = { path = "crates/ossteam-proto" }
 ossteam-net = { path = "crates/ossteam-net" }
+ossteam-auth = { path = "crates/ossteam-auth" }
 ossteam-ipc = { path = "crates/ossteam-ipc" }
 
 anyhow = "1.0.104"
+base64 = "0.23.1"
 clap = { version = "4.6.7", features = ["derive", "wrap_help"] }
 clap_complete = "4.6.11"
 crossbeam-channel = "0.5.17"
@@ -46,6 +50,8 @@ polling = "3.11.0"
 prost = "0.14.4"
 prost-build = "0.14.4"
 protox = "0.10.0"
+rand_core = { version = "0.6.4", features = ["getrandom"] }
+rsa = "0.9.10"
 rustix = "1.1.5"
 # TLS is rustls with the ring provider and the platform verifier (SEC-3).
 # aws-lc-rs is avoided: it needs cmake and nasm on Windows.
@@ -62,6 +68,7 @@ tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
 tungstenite = { version = "0.30.0", default-features = false, features = ["handshake"] }
 ureq = { version = "3.4.2", default-features = false, features = ["rustls-no-provider", "platform-verifier", "gzip"] }
 windows-sys = "0.61.2"
+zeroize = "1.9.1"
 
 # gpui is pinned to one zed revision; bump deliberately (SPEC §23). The
 # toolchain in rust-toolchain.toml follows that revision's requirement.

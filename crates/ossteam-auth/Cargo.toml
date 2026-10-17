@@ -1,0 +1,28 @@
+[package]
+name = "ossteam-auth"
+description = "Steam sign-in: IAuthenticationService flows, Steam Guard, tokens and CM logon"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+ossteam-types.workspace = true
+ossteam-proto.workspace = true
+ossteam-net.workspace = true
+base64.workspace = true
+prost.workspace = true
+rand_core.workspace = true
+rsa.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+zeroize.workspace = true
+
+[lints]
+workspace = true
+
+[dev-dependencies]
+anyhow.workspace = true
+crossbeam-channel.workspace = true

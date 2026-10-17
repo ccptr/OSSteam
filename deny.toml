@@ -51,6 +51,12 @@ yanked = "warn"
 # Unmaintained notices fail the check only for our direct dependencies.
 # Those deeper in gpui's tree are gpui's to replace when we bump the pin.
 unmaintained = "workspace"
+ignore = [
+    # The Marvin timing attack on RSA decryption. ossteam-auth only
+    # encrypts with the server's public key (auth.md §2), so no private
+    # key exists to leak. Revisit if rsa is ever used to decrypt or sign.
+    { id = "RUSTSEC-2023-0071", reason = "rsa is used for public-key encryption only" },
+]
 
 [sources]
 unknown-registry = "deny"

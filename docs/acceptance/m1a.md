@@ -26,7 +26,8 @@ the date and the build.
 | IPC: Library methods `ListApps`, `GetApp`; `AppChanged` | built 2026-10-17; `GetAsset` ⏳ |
 | CLI: `login`, `logout`, `account`, `status`, `events`, `daemon`, `completions` | built 2026-10-17 |
 | CLI: `persona`, `library`, `info` | built 2026-10-17 |
-| CLI: `config` | ⏳ |
+| IPC: Settings methods `GetSettings`, `SetSetting`; `SettingChanged`; overrides in the state database | built 2026-10-17; unit and integration tests |
+| CLI: `config` | built 2026-10-17; live run against an isolated daemon 2026-10-17 |
 | Daemon integration tests against a fake CM (§19.1 level 3) | ⏳ needs a test-only WSS server the platform verifier accepts |
 | `cm.md` §7 and `auth.md` §8 captures of the official client | ⏳ needs a capture setup |
 

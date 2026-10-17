@@ -127,6 +127,10 @@ fn to_json(ev: &Event) -> Value {
             "app_ids": c.app_ids,
             "complete": c.complete,
         }),
+        Some(event::Kind::SettingChanged(c)) => json!({
+            "event": "setting_changed",
+            "setting": c.setting.as_ref().map(crate::config::setting_json),
+        }),
         // An event kind newer than this client.
         None => json!({ "event": "unknown" }),
     }
@@ -184,6 +188,10 @@ fn to_text(ev: &Event) -> String {
             }
             line
         }
+        Some(event::Kind::SettingChanged(c)) => match &c.setting {
+            Some(s) => format!("setting  {} = {}", s.key, s.value),
+            None => "setting  changed".into(),
+        },
         None => "unknown event".into(),
     }
 }

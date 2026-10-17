@@ -339,6 +339,14 @@ impl Worker {
             Cmd::Logout { reply } => self.logout(reply),
             Cmd::SwitchAccount { reply, account } => self.switch(reply, account),
             Cmd::SetPersonaState { steam_id, state } => self.set_persona_state(steam_id, state),
+            Cmd::SetFileFallback(on) => {
+                if self.settings.file_fallback != on {
+                    tracing::info!(on, "secrets.file_fallback changed; reopening token storage");
+                    self.settings.file_fallback = on;
+                    // Opened again on next use, with the new choice.
+                    self.secrets = None;
+                }
+            }
         }
     }
 

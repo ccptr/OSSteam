@@ -59,8 +59,8 @@ impl Secrets {
             Err(e) => {
                 tracing::warn!("no OS keyring: {e}");
                 Err(format!(
-                    "no OS keyring is available ({e}). Log in with --no-remember, or set \
-                     secrets.file_fallback = true in ossteamd.toml to store tokens in a \
+                    "no OS keyring is available ({e}). Log in with --no-remember, or run \
+                     'ossteam config set secrets.file_fallback true' to store tokens in a \
                      private file instead"
                 ))
             }

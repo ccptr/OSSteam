@@ -401,7 +401,7 @@ Adding an async runtime (tokio, async-std, smol) to the daemon requires an ADR
 | Folders | `ListLibraryFolders`, `AddLibraryFolder{path}`, `RemoveLibraryFolder{path}` |
 | Jobs | `Install{app_id, folder, branch}`, `Update{app_ids \| all}`, `Verify{app_id}`, `Uninstall{app_id}`, `ListJobs`, `PauseJob`, `ResumeJob`, `CancelJob`, `SetJobPriority` |
 | Launch | `GetLaunchOptions{app_id}`, `Launch{app_id, option, extra_args}`, `ListRunning`, `StopGame{app_id}` |
-| Settings | `GetSettings`, `SetSetting{key, value}` |
+| Settings | `GetSettings`, `SetSetting{key, value, reset}` |
 | Events | `Subscribe{topics}`, `Unsubscribe{topics}` |
 
 ### 8.4 Events
@@ -409,7 +409,8 @@ Adding an async runtime (tokio, async-std, smol) to the daemon requires an ADR
 `SessionChanged`, `LoginPrompt{kind: email_code | device_code |
 device_confirmation | qr_url}`, `AppChanged`, `JobProgress` (at most 10 Hz
 per job), `JobStateChanged`, `GameStarted`, `GameExited{status}`,
-`ShimReport{app_id, unimplemented_calls}` (§12.6), `Notice{level, text}`.
+`ShimReport{app_id, unimplemented_calls}` (§12.6), `Notice{level, text}`,
+`SettingChanged{setting}`.
 
 ### 8.5 Interactive login
 
@@ -743,7 +744,7 @@ ossteam folders [list | add <PATH> | remove <PATH>]
 ossteam launch <APP> [--option <N>] [--wait] [-- <ARGS>...]
 ossteam running | stop <APP>
 
-ossteam config [get <KEY> | set <KEY> <VALUE> | list]
+ossteam config [list | get <KEY> | set <KEY> <VALUE> | unset <KEY>]
 ossteam events [--topic <T>]...                 # follow the event stream
 ossteam daemon [start | stop [--force] | status]
 ossteam completions <SHELL>

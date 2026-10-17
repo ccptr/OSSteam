@@ -277,3 +277,103 @@ fn session_methods_without_an_account() {
     // Cancelling when nothing is in progress succeeds.
     c.cancel_login().unwrap();
 }
+
+/// Where the daemon under `root` reads `ossteamd.toml` (SPEC §17).
+fn config_dir(root: &Path) -> PathBuf {
+    if cfg!(target_os = "macos") {
+        root.join("home/Library/Application Support/dev.ccptr.ossteam")
+    } else {
+        root.join("config/ossteam")
+    }
+}
+
+/// Stops the daemon and starts a new one on the same directories.
+fn restart(daemon: &mut Daemon) {
+    let c = client();
+    c.shutdown(false).unwrap();
+    assert!(c.wait_closed(Duration::from_secs(10)));
+    assert!(daemon.child.wait().unwrap().success());
+    daemon.child = daemon_command(&daemon.root)
+        .spawn()
+        .expect("spawn ossteamd");
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while Endpoint::client().unwrap().connect().is_err() {
+        assert!(Instant::now() < deadline, "daemon did not start listening");
+        std::thread::sleep(Duration::from_millis(20));
+    }
+}
+
+fn setting(c: &Client, key: &str) -> v1::Setting {
+    c.get_settings()
+        .unwrap()
+        .into_iter()
+        .find(|s| s.key == key)
+        .unwrap_or_else(|| panic!("no setting {key}"))
+}
+
+/// `docs/spec/ipc.md` §5.4: an override wins over ossteamd.toml, the file
+/// over the default; overrides survive a restart, and unknown keys in the
+/// file are not fatal.
+#[test]
+fn settings_layers_and_overrides() {
+    const KEY: &str = "secrets.file_fallback";
+    let _guard = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let mut daemon = start();
+    let c = client();
+
+    let s = setting(&c, KEY);
+    assert_eq!(s.kind, v1::SettingKind::Bool as i32);
+    assert_eq!(
+        (s.value.as_str(), s.default_value.as_str()),
+        ("false", "false")
+    );
+    assert_eq!(s.source, v1::SettingSource::Default as i32);
+    assert!(!s.description.is_empty());
+
+    assert_eq!(
+        remote_code(c.set_setting("no.such.key", Some("true"))),
+        ErrorCode::NotFound
+    );
+    assert_eq!(
+        remote_code(c.set_setting(KEY, Some("yes"))),
+        ErrorCode::InvalidArgument
+    );
+
+    let watcher = client();
+    watcher.subscribe(&[Topic::Daemon]).unwrap();
+    let s = c.set_setting(KEY, Some("true")).unwrap();
+    assert_eq!(s.value, "true");
+    assert_eq!(s.source, v1::SettingSource::Override as i32);
+    let ev = watcher
+        .events()
+        .recv_timeout(Duration::from_secs(5))
+        .unwrap();
+    match ev.kind {
+        Some(event::Kind::SettingChanged(ch)) => assert_eq!(ch.setting, Some(s)),
+        other => panic!("expected SettingChanged, got {other:?}"),
+    }
+    drop((c, watcher));
+
+    // The file sets a value and has a key this build does not know.
+    let dir = config_dir(&daemon.root);
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(
+        dir.join("ossteamd.toml"),
+        "future_key = 1\n[secrets]\nfile_fallback = false\n",
+    )
+    .unwrap();
+    restart(&mut daemon);
+    let c = client();
+
+    // The override outlived the restart and still wins over the file.
+    let s = setting(&c, KEY);
+    assert_eq!(s.value, "true");
+    assert_eq!(s.source, v1::SettingSource::Override as i32);
+    assert_eq!(s.file_value, "false");
+
+    let s = c.set_setting(KEY, None).unwrap();
+    assert_eq!(s.value, "false");
+    assert_eq!(s.source, v1::SettingSource::File as i32);
+    // Resetting again is not an error.
+    assert_eq!(c.set_setting(KEY, None).unwrap(), s);
+}

@@ -15,6 +15,7 @@ use ossteam_ipc::v1::{
 use ossteam_pics::Cache;
 use ossteam_types::{Secret, SteamId};
 
+use crate::config::{self, Config};
 use crate::db::{Db, PersonaState};
 use crate::session::{self, Cmd, ReplyTo, Report};
 use crate::{library, pics};
@@ -73,6 +74,7 @@ pub struct Core {
     started: Instant,
     clients: HashMap<ClientId, ClientState>,
     db: Db,
+    config: Config,
     session: session::Handle,
     /// The session as the worker last reported it.
     session_state: session::State,
@@ -87,11 +89,18 @@ pub struct Core {
 }
 
 impl Core {
-    pub fn new(db: Db, session: session::Handle, pics: pics::Handle, pics_cache: Cache) -> Self {
+    pub fn new(
+        db: Db,
+        config: Config,
+        session: session::Handle,
+        pics: pics::Handle,
+        pics_cache: Cache,
+    ) -> Self {
         Self {
             started: Instant::now(),
             clients: HashMap::new(),
             db,
+            config,
             session,
             session_state: session::State::default(),
             login_owner: None,
@@ -283,6 +292,12 @@ impl Core {
             request::Method::GetApp(req) => Some(self.snapshot().and_then(|s| {
                 library::get_app(&s, &self.pics_cache, req.app_id).map(response::Result::GetApp)
             })),
+            request::Method::GetSettings(_) => {
+                Some(Ok(response::Result::GetSettings(v1::GetSettingsResponse {
+                    settings: self.config.all(),
+                })))
+            }
+            request::Method::SetSetting(req) => Some(self.set_setting(&req)),
         };
         if let Some(result) = outcome {
             self.reply(to, result);
@@ -408,6 +423,50 @@ impl Core {
         Ok(response::Result::SetPersonaState(
             v1::SetPersonaStateResponse {},
         ))
+    }
+
+    fn set_setting(
+        &mut self,
+        req: &v1::SetSettingRequest,
+    ) -> Result<response::Result, RemoteError> {
+        let key = req.key.trim();
+        let Some(def) = config::def(key) else {
+            return Err(RemoteError::new(
+                ErrorCode::NotFound,
+                format!("there is no setting {key:?}"),
+            ));
+        };
+        let value = if req.reset {
+            None
+        } else {
+            Some(def.parse(&req.value).map_err(invalid)?)
+        };
+        let stored = value.map(|v| v.to_string());
+        self.db
+            .set_setting_override(def.key, stored.as_deref())
+            .map_err(|e| internal(&e))?;
+        let before = self.config.proto(def);
+        self.config.set_override(def, value);
+        let after = self.config.proto(def);
+        tracing::info!(key = def.key, value = %after.value, reset = req.reset, "setting changed");
+        self.apply_settings();
+        if after != before {
+            self.broadcast(
+                Topic::Daemon,
+                event::Kind::SettingChanged(v1::SettingChanged {
+                    setting: Some(after.clone()),
+                }),
+            );
+        }
+        Ok(response::Result::SetSetting(v1::SetSettingResponse {
+            setting: Some(after),
+        }))
+    }
+
+    /// Hands the settings in effect to the subsystems that use them.
+    fn apply_settings(&self) {
+        self.session
+            .send(Cmd::SetFileFallback(self.config.file_fallback()));
     }
 
     /// The active account's persona state, for clients.

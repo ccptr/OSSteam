@@ -65,6 +65,8 @@ pub enum Cmd {
         steam_id: SteamId,
         state: db::PersonaState,
     },
+    /// `secrets.file_fallback` changed (SPEC D-8).
+    SetFileFallback(bool),
 }
 
 /// What the worker tells the core.

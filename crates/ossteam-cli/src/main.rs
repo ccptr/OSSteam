@@ -2,6 +2,7 @@
 //! `ossteam`, the command-line client (SPEC §15). It talks only to the
 //! daemon (LEAF-1).
 
+mod config;
 mod events;
 mod library;
 mod session;
@@ -108,6 +109,12 @@ enum Command {
         /// App id, or the exact name of an app in the library.
         app: String,
     },
+    /// Show and change daemon settings. Values set here override
+    /// ossteamd.toml.
+    Config {
+        #[command(subcommand)]
+        action: Option<ConfigAction>,
+    },
     /// Print daemon events as they happen.
     Events {
         /// Only these topics (repeatable). All topics by default.
@@ -132,6 +139,19 @@ enum AccountAction {
         /// Steam id or account name.
         account: String,
     },
+}
+
+#[derive(Subcommand)]
+enum ConfigAction {
+    /// List every setting with its value and where it comes from (the
+    /// default).
+    List,
+    /// Print one setting's value.
+    Get { key: String },
+    /// Override a setting.
+    Set { key: String, value: String },
+    /// Remove an override, so ossteamd.toml or the default applies again.
+    Unset { key: String },
 }
 
 #[derive(Subcommand)]
@@ -252,6 +272,12 @@ fn run(cli: &Cli) -> Result<(), Failure> {
             library::list(cli, *installed, filter.as_deref().unwrap_or_default())
         }
         Command::Info { app } => library::info(cli, app),
+        Command::Config { action } => match action.as_ref().unwrap_or(&ConfigAction::List) {
+            ConfigAction::List => config::list(cli),
+            ConfigAction::Get { key } => config::get(cli, key),
+            ConfigAction::Set { key, value } => config::set(cli, key, Some(value)),
+            ConfigAction::Unset { key } => config::set(cli, key, None),
+        },
         Command::Events { topics } => events::follow(cli, topics),
         Command::Completions { shell } => {
             let mut cmd = Cli::command();

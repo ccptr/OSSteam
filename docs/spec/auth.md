@@ -108,7 +108,8 @@ Steam mobile app.
   (through libdbus), the login Keychain on macOS, Credential Manager on
   Windows. If no keyring is available, it goes in `secrets.json` in the
   data directory, mode 0600, but only when the user has set
-  `secrets.file_fallback = true` in `ossteamd.toml` (D-8, D-9). Otherwise a
+  `secrets.file_fallback` to `true`, in `ossteamd.toml` or with `ossteam
+  config set` (D-8, D-9; `ipc.md` §5.4). Otherwise a
   remembered login fails before it starts, with a message that names both
   ways forward: `--no-remember`, or the setting. A `--no-remember` login
   keeps its token in memory only and is gone when the daemon stops.

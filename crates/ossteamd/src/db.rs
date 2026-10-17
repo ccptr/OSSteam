@@ -11,7 +11,7 @@ use rusqlite::{Connection, OptionalExtension, params};
 pub const FILE_NAME: &str = "state.db";
 
 /// The schema version this build writes, kept in `PRAGMA user_version`.
-const SCHEMA_VERSION: i64 = 2;
+const SCHEMA_VERSION: i64 = 3;
 
 const SCHEMA_V1: &str = "
     CREATE TABLE accounts (
@@ -30,6 +30,15 @@ const SCHEMA_V2: &str = "
     CREATE TABLE account_settings (
         steam_id      INTEGER PRIMARY KEY,
         persona_state INTEGER NOT NULL
+    );
+";
+
+/// Setting overrides made over IPC (`config`), as `SetSetting` writes
+/// their values.
+const SCHEMA_V3: &str = "
+    CREATE TABLE settings (
+        key   TEXT PRIMARY KEY,
+        value TEXT NOT NULL
     );
 ";
 
@@ -94,12 +103,13 @@ impl Db {
         conn.pragma_update(None, "foreign_keys", true)?;
         let version: i64 = conn.pragma_query_value(None, "user_version", |r| r.get(0))?;
         match version {
-            0 | 1 => {
+            0..=2 => {
                 let tx = conn.unchecked_transaction()?;
-                if version == 0 {
-                    tx.execute_batch(SCHEMA_V1)?;
+                for (from, schema) in [(0, SCHEMA_V1), (1, SCHEMA_V2), (2, SCHEMA_V3)] {
+                    if version <= from {
+                        tx.execute_batch(schema)?;
+                    }
                 }
-                tx.execute_batch(SCHEMA_V2)?;
                 tx.pragma_update(None, "user_version", SCHEMA_VERSION)?;
                 tx.commit()?;
             }
@@ -209,6 +219,30 @@ impl Db {
         self.set_meta("cell_id", Some(cell_id.to_string()))
     }
 
+    /// Every stored setting override, as (key, value) rows.
+    pub fn setting_overrides(&self) -> anyhow::Result<Vec<(String, String)>> {
+        let mut stmt = self
+            .conn
+            .prepare("SELECT key, value FROM settings ORDER BY key")?;
+        let rows = stmt.query_map([], |r| Ok((r.get(0)?, r.get(1)?)))?;
+        Ok(rows.collect::<Result<_, _>>()?)
+    }
+
+    /// Stores an override, or with `None` removes it.
+    pub fn set_setting_override(&self, key: &str, value: Option<&str>) -> anyhow::Result<()> {
+        match value {
+            Some(v) => self.conn.execute(
+                "INSERT INTO settings (key, value) VALUES (?1, ?2)
+                 ON CONFLICT (key) DO UPDATE SET value = excluded.value",
+                params![key, v],
+            )?,
+            None => self
+                .conn
+                .execute("DELETE FROM settings WHERE key = ?1", [key])?,
+        };
+        Ok(())
+    }
+
     fn meta(&self, key: &str) -> anyhow::Result<Option<String>> {
         Ok(self
             .conn
@@ -314,11 +348,28 @@ mod tests {
         assert_eq!(db.accounts().unwrap().len(), 1);
         db.set_persona_state(SteamId(1), PersonaState::Invisible)
             .unwrap();
+        db.set_setting_override("k", Some("v")).unwrap();
         let v: i64 = db
             .conn
             .pragma_query_value(None, "user_version", |r| r.get(0))
             .unwrap();
         assert_eq!(v, SCHEMA_VERSION);
+    }
+
+    #[test]
+    fn setting_overrides() {
+        let db = Db::in_memory();
+        assert!(db.setting_overrides().unwrap().is_empty());
+        db.set_setting_override("b.x", Some("true")).unwrap();
+        db.set_setting_override("a.y", Some("1")).unwrap();
+        db.set_setting_override("b.x", Some("false")).unwrap();
+        assert_eq!(
+            db.setting_overrides().unwrap(),
+            [("a.y".into(), "1".into()), ("b.x".into(), "false".into())]
+        );
+        db.set_setting_override("a.y", None).unwrap();
+        db.set_setting_override("missing", None).unwrap();
+        assert_eq!(db.setting_overrides().unwrap().len(), 1);
     }
 
     #[test]

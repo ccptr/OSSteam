@@ -97,8 +97,9 @@ fn run(args: &Args) -> anyhow::Result<ExitCode> {
         });
     };
 
-    let config = config::Config::load(&paths.config)?;
+    let mut config = config::Config::load(&paths.config)?;
     let db = db::Db::open(&paths.data.join(db::FILE_NAME))?;
+    config.apply_overrides(db.setting_overrides()?);
     let resume = match db.active_account()? {
         Some(id) => db.account(id)?,
         None => None,
@@ -129,7 +130,7 @@ fn run(args: &Args) -> anyhow::Result<ExitCode> {
         session::Settings {
             cache_dir: paths.cache.clone(),
             data_dir: paths.data.clone(),
-            file_fallback: config.secrets_file_fallback,
+            file_fallback: config.file_fallback(),
             cell_id,
             resume,
             pics: pics.sender(),
@@ -145,7 +146,7 @@ fn run(args: &Args) -> anyhow::Result<ExitCode> {
     .context("installing the signal handler")?;
     drop(cmd_tx);
 
-    let exit = core::Core::new(db, session, pics, Cache::new(pics_dir)).run(cmd_rx);
+    let exit = core::Core::new(db, config, session, pics, Cache::new(pics_dir)).run(cmd_rx);
     tracing::info!(?exit, "shutting down");
 
     // Shutdown (SPEC D-5): stop accepting (dropping the listener removes the

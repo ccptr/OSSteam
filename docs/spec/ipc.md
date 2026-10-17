@@ -106,7 +106,7 @@ is left unchanged. Events always have `id = 0`.
 
 | Topic | Events |
 |---|---|
-| `DAEMON` | `DaemonStopping`: sent once, just before shutdown closes connections |
+| `DAEMON` | `DaemonStopping`: sent once, just before shutdown closes connections; `SettingChanged{setting}` (§5.4) |
 | `NOTICES` | `Notice{level, text}` |
 | `SESSION` | `SessionChanged`, `LoginPrompt`, `LoginEnded` (§5.2) |
 | `LIBRARY` | `AppChanged{app_ids, complete}` (§5.3) |
@@ -185,6 +185,32 @@ library, or whose info was fetched again, and whether the library is now
 complete. It comes after the first library is built, after license
 changes, and after change polling (`pics.md` §4) fetched something.
 Clients read the apps again with `ListApps` or `GetApp`.
+
+### 5.4 Settings
+
+Settings come in three layers (D-9). An override set with `SetSetting`
+wins over `ossteamd.toml` in the config directory, and the file wins over
+the built-in default. The daemon reads the file once at start, so edits to
+it apply after a restart. Overrides are kept in the state database (D-6)
+and apply at once. Keys are dotted, as in the file: `[secrets]
+file_fallback = true` and `secrets.file_fallback = true` are the same key.
+An unknown key in the file is logged as a warning and ignored; a known key
+with a value of the wrong type stops the daemon from starting, with the
+file and key named.
+
+| Method | Behaviour |
+|---|---|
+| `GetSettings` | Every setting this daemon knows, sorted by key: its kind, the value in effect, where that value comes from (`DEFAULT`, `FILE` or `OVERRIDE`), the default, the file's value if the file sets one, and a description. |
+| `SetSetting{key, value, reset}` | Stores `value` as the key's override, or with `reset` removes the override so the file or default applies again. Replies with the setting as it is afterwards. `NOT_FOUND` for an unknown key; `INVALID_ARGUMENT` for a value of the wrong form. Resetting a key that has no override succeeds. |
+
+`SettingChanged` on `DAEMON` carries the setting whenever a `SetSetting`
+changed its value or its source.
+
+Values are written as text: `true` or `false` for `BOOL`. These keys exist:
+
+| Key | Kind | Default | Effect |
+|---|---|---|---|
+| `secrets.file_fallback` | `BOOL` | `false` | When no OS keyring is available, store refresh tokens in `secrets.json` in the data directory, mode 0600 (D-8, `auth.md` §4). A change applies to the next token read or write. |
 
 **Secrets (IPC-10).** The password and Steam Guard codes travel only in
 their request. Both sides zero every frame buffer after use, the client

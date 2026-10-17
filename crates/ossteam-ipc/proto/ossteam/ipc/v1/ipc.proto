@@ -92,6 +92,8 @@ message Request {
     SetPersonaStateRequest set_persona_state = 13;
     ListAppsRequest list_apps = 14;
     GetAppRequest get_app = 15;
+    GetSettingsRequest get_settings = 16;
+    SetSettingRequest set_setting = 17;
   }
 }
 
@@ -112,6 +114,8 @@ message Response {
     SetPersonaStateResponse set_persona_state = 13;
     ListAppsResponse list_apps = 14;
     GetAppResponse get_app = 15;
+    GetSettingsResponse get_settings = 16;
+    SetSettingResponse set_setting = 17;
   }
 }
 
@@ -347,6 +351,58 @@ message GetAppResponse {
   repeated LaunchOption launch_options = 8;
 }
 
+// --- Settings (docs/spec/ipc.md §5.4) -------------------------------------
+
+enum SettingKind {
+  SETTING_KIND_UNSPECIFIED = 0;
+  // Written "true" or "false".
+  SETTING_KIND_BOOL = 1;
+}
+
+// Where a setting's value comes from. An override wins over the file, and
+// the file over the default.
+enum SettingSource {
+  SETTING_SOURCE_UNSPECIFIED = 0;
+  SETTING_SOURCE_DEFAULT = 1;
+  // ossteamd.toml in the config directory.
+  SETTING_SOURCE_FILE = 2;
+  // Set with SetSetting and kept in the daemon's database.
+  SETTING_SOURCE_OVERRIDE = 3;
+}
+
+message Setting {
+  // Dotted, as in ossteamd.toml: "secrets.file_fallback".
+  string key = 1;
+  SettingKind kind = 2;
+  // The value in effect, written the way SetSetting accepts it.
+  string value = 3;
+  SettingSource source = 4;
+  string default_value = 5;
+  // The value ossteamd.toml gives; empty when the file does not set it.
+  string file_value = 6;
+  string description = 7;
+}
+
+message GetSettingsRequest {}
+
+message GetSettingsResponse {
+  // Every setting this daemon knows, sorted by key.
+  repeated Setting settings = 1;
+}
+
+// Overrides one setting, or with `reset` removes its override so the file
+// or the default applies again. `value` is ignored when `reset` is set.
+message SetSettingRequest {
+  string key = 1;
+  string value = 2;
+  bool reset = 3;
+}
+
+message SetSettingResponse {
+  // The setting as it is now.
+  Setting setting = 1;
+}
+
 // --- Events ---------------------------------------------------------------
 
 enum Topic {
@@ -384,6 +440,7 @@ message Event {
     LoginPrompt login_prompt = 4;
     LoginEnded login_ended = 5;
     AppChanged app_changed = 6;
+    SettingChanged setting_changed = 7;
   }
 }
 
@@ -436,4 +493,9 @@ message AppChanged {
   repeated uint32 app_ids = 1;
   // Whether the library is complete now (ListAppsResponse.complete).
   bool complete = 2;
+}
+
+// Topic: DAEMON. A setting's value or source changed.
+message SettingChanged {
+  Setting setting = 1;
 }

@@ -425,6 +425,33 @@ impl Client {
     }
 }
 
+/// Settings calls (`docs/spec/ipc.md` §5.4).
+impl Client {
+    pub fn get_settings(&self) -> Result<Vec<v1::Setting>, ClientError> {
+        let req = v1::GetSettingsRequest {};
+        match self.call(request::Method::GetSettings(req), DEFAULT_TIMEOUT)? {
+            response::Result::GetSettings(r) => Ok(r.settings),
+            other => Err(unexpected(other)),
+        }
+    }
+
+    /// Overrides `key` with `value`, or with `value` `None` removes the
+    /// override. Returns the setting as it is afterwards.
+    pub fn set_setting(&self, key: &str, value: Option<&str>) -> Result<v1::Setting, ClientError> {
+        let req = v1::SetSettingRequest {
+            key: key.into(),
+            value: value.unwrap_or_default().into(),
+            reset: value.is_none(),
+        };
+        match self.call(request::Method::SetSetting(req), DEFAULT_TIMEOUT)? {
+            response::Result::SetSetting(r) => r.setting.ok_or_else(|| {
+                ClientError::Protocol("SetSetting answered without a setting".into())
+            }),
+            other => Err(unexpected(other)),
+        }
+    }
+}
+
 /// Zeroes the secrets a request carried once it has been sent (IPC-10).
 fn scrub(env: &mut v1::Envelope) {
     use zeroize::Zeroize;

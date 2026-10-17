@@ -1,0 +1,13 @@
+[package]
+name = "ossteam-vdf"
+description = "KeyValues (VDF) text and binary formats"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+thiserror.workspace = true
+
+[lints]
+workspace = true

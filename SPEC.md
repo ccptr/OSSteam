@@ -139,7 +139,7 @@ even if it works.
 ### 3.2 Dependency licenses
 
 - **[LIC-3]** `cargo-deny` enforces an allow-list: MIT, Apache-2.0,
-  BSD-2-Clause, BSD-3-Clause, ISC, Zlib, Unicode-3.0, MPL-2.0, and any
+  BSD-2-Clause, BSD-3-Clause, ISC, 0BSD, CC0-1.0, Zlib, Unicode-3.0, MPL-2.0, and any
   `GPL-2.0-or-later`/`GPL-3.0-or-later`/`LGPL-*-or-later` crate. GPL-2.0-only
   dependencies are denied, because they cannot be combined with Apache-2.0
   code.
@@ -257,7 +257,7 @@ docs/acceptance/           per-milestone acceptance corpora and checklists
 
 | Concern | Choice | Notes |
 |---|---|---|
-| Toolchain | Pinned in `rust-toolchain.toml` | Matches what the pinned gpui needs (currently 1.95.0) |
+| Toolchain | Pinned in `rust-toolchain.toml` | Matches what the pinned gpui needs (currently 1.98.1) |
 | GUI | `gpui` + `gpui_platform`, git dependency pinned to a zed revision | Widgets are written by us on plain gpui. `gpui-component` is not used. |
 | CLI | `clap` v4 (derive), `clap_complete` | |
 | Protobuf | `prost`, `prost-build` | Used for both Steam messages and our IPC |

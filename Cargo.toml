@@ -1,0 +1,75 @@
+[workspace]
+resolver = "3"
+members = [
+    "crates/ossteam-types",
+    "crates/ossteam-vdf",
+    "crates/ossteam-ipc",
+    "crates/ossteamd",
+    "crates/ossteam-cli",
+    "crates/ossteam-gui",
+    "xtask",
+]
+default-members = [
+    "crates/ossteam-types",
+    "crates/ossteam-vdf",
+    "crates/ossteam-ipc",
+    "crates/ossteamd",
+    "crates/ossteam-cli",
+    "crates/ossteam-gui",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+license = "GPL-2.0-or-later"
+publish = false
+
+[workspace.dependencies]
+ossteam-types = { path = "crates/ossteam-types" }
+ossteam-vdf = { path = "crates/ossteam-vdf" }
+ossteam-ipc = { path = "crates/ossteam-ipc" }
+
+anyhow = "1.0.104"
+clap = { version = "4.6.7", features = ["derive", "wrap_help"] }
+clap_complete = "4.6.11"
+crossbeam-channel = "0.5.17"
+directories = "6.0.0"
+interprocess = "2.4.6"
+prost = "0.14.4"
+prost-build = "0.14.4"
+protox = "0.10.0"
+rustix = "1.1.5"
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.154"
+thiserror = "2.0.21"
+toml = "1.1.8"
+tracing = "0.1.44"
+tracing-appender = "0.2.5"
+tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
+windows-sys = "0.61.2"
+
+# gpui is pinned to one zed revision; bump deliberately (SPEC §23). The
+# toolchain in rust-toolchain.toml follows that revision's requirement.
+gpui = { git = "https://github.com/zed-industries/zed", rev = "670a779a5ed9e7161c97aa4f998d395c207d5631" }
+gpui_platform = { git = "https://github.com/zed-industries/zed", rev = "670a779a5ed9e7161c97aa4f998d395c207d5631", features = ["font-kit", "wayland", "x11"] }
+
+[workspace.lints.rust]
+unsafe_op_in_unsafe_fn = "deny"
+
+[workspace.lints.clippy]
+dbg_macro = "deny"
+
+# gpui's own workspace patches these crates. Patches do not propagate through
+# git dependencies, so the ones gpui needs are repeated here at the same revs.
+[patch.crates-io]
+async-process = { git = "https://github.com/zed-industries/async-process.git", rev = "0b6d6713570af61806e1e5cb40e0f757cb93fd9d" }
+async-task = { git = "https://github.com/zed-industries/async-task.git", rev = "015845a19fc31752c02367567d3b8900a406f9da" }
+calloop = { git = "https://github.com/zed-industries/calloop", rev = "3759371fee14c40066d64777e2a36b6ffcc22590" }
+khronos-egl = { git = "https://github.com/zed-industries/khronos-egl", rev = "42214b36347b108fd9630ca6254b96dde59e04fe" }
+
+[profile.dev.package."*"]
+opt-level = 1
+
+[profile.release]
+lto = "thin"
+codegen-units = 1

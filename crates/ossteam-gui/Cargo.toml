@@ -1,0 +1,17 @@
+[package]
+name = "ossteam-gui"
+description = "ossteam graphical client"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+ossteam-ipc.workspace = true
+ossteam-types.workspace = true
+gpui.workspace = true
+gpui_platform.workspace = true
+async-channel = "2.5.0"
+
+[lints]
+workspace = true

@@ -1,0 +1,23 @@
+[package]
+name = "ossteam-cli"
+description = "ossteam command-line client"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[[bin]]
+name = "ossteam"
+path = "src/main.rs"
+
+[dependencies]
+ossteam-ipc.workspace = true
+ossteam-types.workspace = true
+anyhow.workspace = true
+clap.workspace = true
+clap_complete.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+
+[lints]
+workspace = true

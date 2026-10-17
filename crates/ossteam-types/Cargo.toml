@@ -1,0 +1,10 @@
+[package]
+name = "ossteam-types"
+description = "Steam identifiers and shared plain types for ossteam"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true

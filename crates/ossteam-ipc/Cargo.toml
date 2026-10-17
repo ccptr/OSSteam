@@ -1,0 +1,35 @@
+[package]
+name = "ossteam-ipc"
+description = "ossteam client IPC protocol and blocking client library"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+ossteam-types.workspace = true
+crossbeam-channel.workspace = true
+directories.workspace = true
+interprocess.workspace = true
+prost.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+
+[target.'cfg(unix)'.dependencies]
+rustix = { workspace = true, features = ["fs", "net", "process"] }
+
+[target.'cfg(windows)'.dependencies]
+widestring = "1.2.1"
+windows-sys = { workspace = true, features = [
+    "Win32_Foundation",
+    "Win32_Security",
+    "Win32_Security_Authorization",
+    "Win32_System_Threading",
+] }
+
+[build-dependencies]
+prost-build.workspace = true
+protox.workspace = true
+
+[lints]
+workspace = true

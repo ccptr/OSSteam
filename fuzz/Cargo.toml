@@ -1,0 +1,30 @@
+[package]
+name = "ossteam-fuzz"
+version = "0.0.0"
+edition = "2024"
+license = "GPL-2.0-or-later"
+publish = false
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4.10"
+ossteam-vdf = { path = "../crates/ossteam-vdf" }
+
+# Kept out of the main workspace: cargo-fuzz needs a nightly toolchain.
+[workspace]
+
+[[bin]]
+name = "vdf_text"
+path = "fuzz_targets/vdf_text.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "vdf_binary"
+path = "fuzz_targets/vdf_binary.rs"
+test = false
+doc = false
+bench = false

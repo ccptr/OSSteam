@@ -1,0 +1,50 @@
+# cargo-deny configuration (SPEC LIC-3, §19.2).
+
+[graph]
+all-features = false
+
+[licenses]
+# SPEC LIC-3. GPL-2.0-only is deliberately absent: it cannot be combined
+# with the Apache-2.0 code we link (LIC-4).
+allow = [
+    "MIT",
+    "Apache-2.0",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "ISC",
+    "0BSD",
+    "CC0-1.0",
+    "Zlib",
+    "Unicode-3.0",
+    "MPL-2.0",
+    "GPL-2.0-or-later",
+    "GPL-3.0-or-later",
+    "LGPL-2.1-or-later",
+    "LGPL-3.0-or-later",
+]
+confidence-threshold = 0.9
+
+[licenses.private]
+# Workspace crates are unpublished; they are still checked against the
+# allow-list above.
+ignore = false
+
+[bans]
+multiple-versions = "allow"
+wildcards = "deny"
+allow-wildcard-paths = true
+
+[advisories]
+yanked = "warn"
+# Unmaintained notices fail the check only for our direct dependencies.
+# Those deeper in gpui's tree are gpui's to replace when we bump the pin.
+unmaintained = "workspace"
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
+# gpui is a git dependency (pinned in Cargo.toml) and pulls its own forks.
+allow-git = ["https://github.com/gfx-rs/wgpu"]
+
+[sources.allow-org]
+github = ["zed-industries"]

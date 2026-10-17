@@ -1,0 +1,195 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
+//
+// ossteam client IPC protocol, version 1.
+//
+// This file is the public API for third-party clients. Framing, versioning
+// and connection rules are in docs/spec/ipc.md. Within major version 1,
+// changes only add fields, messages and methods; field numbers are never
+// reused.
+
+syntax = "proto3";
+
+package ossteam.ipc.v1;
+
+// One frame on the wire. Requests and their responses share `id`, which the
+// client chooses and which is never 0. Events always have `id = 0`.
+message Envelope {
+  uint64 id = 1;
+  oneof body {
+    Hello hello = 2;
+    Request request = 3;
+    Response response = 4;
+    Event event = 5;
+    Error error = 6;
+  }
+}
+
+message ProtocolVersion {
+  uint32 major = 1;
+  uint32 minor = 2;
+}
+
+enum PeerKind {
+  PEER_KIND_UNSPECIFIED = 0;
+  PEER_KIND_DAEMON = 1;
+  PEER_KIND_CLI = 2;
+  PEER_KIND_GUI = 3;
+  PEER_KIND_OTHER = 4;
+}
+
+// The first frame in each direction. The client sends its Hello with id 0;
+// the daemon answers with its own Hello, or with an Error and then closes
+// the connection.
+message Hello {
+  ProtocolVersion protocol = 1;
+  PeerKind kind = 2;
+  // Program name, e.g. "ossteam" or "ossteam-gui".
+  string name = 3;
+  // Program version, e.g. "0.1.0".
+  string version = 4;
+}
+
+// Stable error codes. Each maps to one CLI exit code (SPEC §15.3).
+enum ErrorCode {
+  ERROR_CODE_UNSPECIFIED = 0;
+  // A malformed frame or a message that is not valid at this point.
+  ERROR_CODE_PROTOCOL = 1;
+  // The client's major protocol version is not supported. `detail` names
+  // the supported range.
+  ERROR_CODE_INCOMPATIBLE_VERSION = 2;
+  ERROR_CODE_INVALID_ARGUMENT = 3;
+  ERROR_CODE_NOT_LOGGED_IN = 4;
+  ERROR_CODE_NOT_FOUND = 5;
+  ERROR_CODE_NOT_OWNED = 6;
+  // Honest "not implemented" (SPEC FAITH-2). Also returned for a request
+  // method this daemon does not know.
+  ERROR_CODE_UNSUPPORTED = 7;
+  ERROR_CODE_CONFLICT = 8;
+  ERROR_CODE_NETWORK = 9;
+  ERROR_CODE_INTERNAL = 10;
+}
+
+message Error {
+  ErrorCode code = 1;
+  string message = 2;
+  string detail = 3;
+}
+
+message Request {
+  oneof method {
+    GetStatusRequest get_status = 1;
+    GetVersionRequest get_version = 2;
+    ShutdownRequest shutdown = 3;
+    SubscribeRequest subscribe = 4;
+    UnsubscribeRequest unsubscribe = 5;
+  }
+}
+
+message Response {
+  oneof result {
+    GetStatusResponse get_status = 1;
+    GetVersionResponse get_version = 2;
+    ShutdownResponse shutdown = 3;
+    SubscribeResponse subscribe = 4;
+    UnsubscribeResponse unsubscribe = 5;
+  }
+}
+
+// --- Daemon ---------------------------------------------------------------
+
+message GetStatusRequest {}
+
+enum ConnectionState {
+  CONNECTION_STATE_UNSPECIFIED = 0;
+  // No connection to Steam exists and none is being attempted.
+  CONNECTION_STATE_DISCONNECTED = 1;
+  CONNECTION_STATE_CONNECTING = 2;
+  CONNECTION_STATE_CONNECTED = 3;
+}
+
+message Account {
+  fixed64 steam_id = 1;
+  string account_name = 2;
+  string persona_name = 3;
+}
+
+message GetStatusResponse {
+  string daemon_version = 1;
+  uint32 pid = 2;
+  uint64 uptime_secs = 3;
+  ConnectionState connection = 4;
+  // Unset when no account is logged on.
+  Account account = 5;
+  uint32 connected_clients = 6;
+  uint32 active_jobs = 7;
+  uint32 running_games = 8;
+}
+
+message GetVersionRequest {}
+
+message GetVersionResponse {
+  string daemon_version = 1;
+  ProtocolVersion protocol = 2;
+  // Rust target triple components, e.g. "linux" and "x86_64".
+  string os = 3;
+  string arch = 4;
+}
+
+message ShutdownRequest {
+  // Stop even while games launched by the daemon are running (SPEC D-5).
+  bool force = 1;
+}
+
+message ShutdownResponse {}
+
+// --- Events ---------------------------------------------------------------
+
+enum Topic {
+  TOPIC_UNSPECIFIED = 0;
+  TOPIC_DAEMON = 1;
+  TOPIC_SESSION = 2;
+  TOPIC_LIBRARY = 3;
+  TOPIC_JOBS = 4;
+  TOPIC_GAMES = 5;
+  TOPIC_NOTICES = 6;
+}
+
+message SubscribeRequest {
+  repeated Topic topics = 1;
+}
+
+message SubscribeResponse {
+  // Every topic the connection is subscribed to after the request.
+  repeated Topic topics = 1;
+}
+
+message UnsubscribeRequest {
+  repeated Topic topics = 1;
+}
+
+message UnsubscribeResponse {
+  repeated Topic topics = 1;
+}
+
+message Event {
+  oneof kind {
+    Notice notice = 1;
+    DaemonStopping daemon_stopping = 2;
+  }
+}
+
+enum NoticeLevel {
+  NOTICE_LEVEL_UNSPECIFIED = 0;
+  NOTICE_LEVEL_INFO = 1;
+  NOTICE_LEVEL_WARNING = 2;
+  NOTICE_LEVEL_ERROR = 3;
+}
+
+// Topic: NOTICES.
+message Notice {
+  NoticeLevel level = 1;
+  string text = 2;
+}
+
+// Topic: DAEMON. Sent once, just before the daemon closes all connections.
+message DaemonStopping {}

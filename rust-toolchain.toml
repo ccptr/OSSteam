@@ -1,0 +1,5 @@
+[toolchain]
+# Matches the pinned gpui revision (see the gpui entry in Cargo.toml).
+channel = "1.98.1"
+profile = "minimal"
+components = ["rustfmt", "clippy"]

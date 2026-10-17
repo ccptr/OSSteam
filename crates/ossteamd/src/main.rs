@@ -3,6 +3,7 @@
 
 mod assets;
 mod config;
+mod content;
 mod core;
 mod db;
 mod library;
@@ -123,6 +124,7 @@ fn run(args: &Args) -> anyhow::Result<ExitCode> {
             dialer,
             open_secrets: secrets::Secrets::open,
             pics_poll: pics::POLL_INTERVAL,
+            content_fetch: None,
         },
         |cmd_tx| {
             let signal_tx = cmd_tx.clone();
@@ -144,6 +146,8 @@ struct Env {
     dialer: Box<dyn session::Dialer>,
     open_secrets: fn(bool, &Path) -> secrets::Secrets,
     pics_poll: Duration,
+    /// Where content comes from; `None` is the CDN over HTTPS.
+    content_fetch: Option<std::sync::Arc<dyn ossteam_content::cdn::Fetch>>,
 }
 
 /// Starts the workers and the IPC server and runs the core until it stops
@@ -159,6 +163,7 @@ fn serve(
         dialer,
         open_secrets,
         pics_poll,
+        content_fetch,
     } = env;
     let mut config = config::Config::load(&paths.config)?;
     let db = db::Db::open(&paths.data.join(db::FILE_NAME))?;
@@ -192,6 +197,16 @@ fn serve(
     .context("starting the session worker")?;
 
     let assets = assets::Handle::spawn(cmd_tx.clone()).context("starting the image downloader")?;
+    let content_jobs = match content_fetch {
+        None => content::Handle::new(cmd_tx.clone(), config.bandwidth_limit()),
+        Some(fetch) => content::Handle::with_fetch(
+            cmd_tx.clone(),
+            fetch,
+            std::sync::Arc::new(ossteam_content::throttle::Throttle::new(
+                config.bandwidth_limit(),
+            )),
+        ),
+    };
 
     started(&cmd_tx)?;
     drop(cmd_tx);
@@ -204,6 +219,8 @@ fn serve(
         pics_cache: Cache::new(pics_dir),
         assets,
         assets_dir: paths.cache.join("assets"),
+        content_jobs,
+        default_folder: paths.data.join("library"),
     })
     .run(cmd_rx);
     tracing::info!(?exit, "shutting down");

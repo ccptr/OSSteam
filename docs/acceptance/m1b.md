@@ -1,0 +1,55 @@
+# M1b acceptance: Content
+
+SPEC §21 M1b. **Exit:** on Linux and Windows, a title with DLC depots
+installs, updates through a delta, survives a daemon kill in the middle of
+a download and resumes, verifies and repairs a corrupted file, and
+uninstalls cleanly. The download-throughput budget is met.
+
+Each check's result must match the official client's on the same account
+(§19.3): the same files, byte for byte, in the same layout. Fill in the
+account used (a test account, never a personal one), the title, the date
+and the build.
+
+## Building blocks
+
+| Item | Status |
+|---|---|
+| `content.md` and ADR 0003 (HTTPS only) | written 2026-10-17 |
+| `ossteam-content`: server list, rotation, manifests, chunks, depot keys, throttle | built 2026-10-17; unit tests |
+| Depot selection (CONT-2, `content.md` §6) | built 2026-10-17; unit tests |
+| Downloader: retries, rotation, CDN auth tokens | built 2026-10-17; tests against the fake CDN |
+| Install engine: install, delta update, verify, journal and resume, removed depots, links | built 2026-10-17; tests against the fake CDN |
+| Library folders (`ipc.md` §5.5) | built 2026-10-17 |
+| Jobs and their scheduling in the daemon (`ipc.md` §5.6) | built 2026-10-17 |
+| Update detection and `content.auto_update` | built 2026-10-17 |
+| Settings `content.bandwidth_limit`, `concurrent_jobs`, `download_threads`, `language` | built 2026-10-17 |
+| CLI: `install`, `update`, `verify`, `uninstall`, `jobs`, `folders`; install state in `info` | built 2026-10-17 |
+| Daemon integration tests against the fake CM and CDN | built 2026-10-17: `ossteamd/src/testing/m1b.rs` covers install with DLC, delta update, verify and repair, uninstall, resume after a stop, auto-update, a refused DLC key, folders and job controls |
+| Install scripts (CONT-8): `install-scripts.md`; parsing, variables and due checks in `ossteam-content` | written 2026-10-17; unit tests |
+| Install scripts: running them on Windows (registry, firewall, processes, the elevated helper), at uninstall and verify, and before the first start (M1c) | ⏳ not started |
+| Depots from another app's info that is not in the PICS cache (`depotfromapp`, for example 228980) | ⏳ fails as unsupported |
+| Captures of the official client's content requests (`content.md` §13) | ⏳ needs a capture setup |
+
+## Checklist
+
+| Check | Linux x86_64 | Windows x86_64 |
+|---|---|---|
+| Install a title with DLC depots; files match the official client's | ⏳ | ⏳ |
+| `info` shows the install: path, size, branch, build, depots | ⏳ | ⏳ |
+| A new build is detected and installed as a delta (only changed chunks fetched) | ⏳ | ⏳ |
+| Kill the daemon (SIGKILL / TerminateProcess) mid-download; the job resumes from its journal after a restart | ⏳ | ⏳ |
+| Corrupt an installed file; `verify` repairs it and only it | ⏳ | ⏳ |
+| `uninstall` removes the files, the manifests and the record, and nothing else | ⏳ | ⏳ |
+| A second library folder: install there, `folders list` shows it, removal refused while used | ⏳ | ⏳ |
+| `jobs pause`, `resume`, `cancel`, `priority` | ⏳ | ⏳ |
+| `content.bandwidth_limit` holds the rate within 10 % | ⏳ | ⏳ |
+| `content.concurrent_jobs` 2 runs two installs at once | ⏳ | ⏳ |
+| A beta branch without a password installs | ⏳ | ⏳ |
+| Install scripts run (CONT-8) | n/a | ⏳ |
+| §20: download saturates 1 Gbit/s on reference hardware with default settings | ⏳ | ⏳ |
+
+The fake CDN tests check the daemon against our spec pages, not against
+Steam. They do not tick any box here: each check still needs a live run
+that matches the official client (§19.3).
+
+✅ verified · ⏳ not yet run

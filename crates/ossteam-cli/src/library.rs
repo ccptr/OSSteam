@@ -54,7 +54,7 @@ fn library_text(apps: &[AppSummary]) -> String {
 
 /// An app's name and type for listings. Apps without info show their id.
 /// A DLC that is not `nested` under its game says which game it is for.
-fn label(a: &AppSummary, nested: bool) -> String {
+pub(crate) fn label(a: &AppSummary, nested: bool) -> String {
     if !a.has_info {
         return format!("(app {}: info not available)", a.app_id);
     }
@@ -99,7 +99,7 @@ pub fn info(cli: &Cli, app: &str) -> Result<(), Failure> {
 
 /// An app id, or the exact name of an app in the library, ignoring case
 /// (CLI-1).
-fn resolve(client: &Client, app: &str) -> Result<u32, Failure> {
+pub(crate) fn resolve(client: &Client, app: &str) -> Result<u32, Failure> {
     if let Ok(id) = app.trim().parse() {
         return Ok(id);
     }
@@ -160,7 +160,21 @@ fn info_text(r: &v1::GetAppResponse) -> String {
     }
     field("platforms", &r.oslist.join(", "));
     field("install dir", &r.install_dir);
-    field("installed", if a.installed { "yes" } else { "no" });
+    match &r.installed {
+        Some(i) => {
+            let mut state = format!("yes, {}", size(i.size));
+            if i.update_available {
+                state.push_str(", update available");
+            }
+            field("installed", &state);
+            field("path", &i.path);
+            field("branch", &i.branch);
+            if i.build_id != 0 {
+                field("build", &i.build_id.to_string());
+            }
+        }
+        None => field("installed", if a.installed { "yes" } else { "no" }),
+    }
     if r.change_number != 0 {
         field("change number", &r.change_number.to_string());
     }
@@ -272,6 +286,19 @@ fn info_json(r: &v1::GetAppResponse) -> Value {
         "missing_token": r.missing_token,
         "oslist": r.oslist,
         "install_dir": r.install_dir,
+        "installed": r.installed.as_ref().map(|i| json!({
+            "folder": i.folder,
+            "path": i.path,
+            "branch": i.branch,
+            "build_id": (i.build_id != 0).then_some(i.build_id),
+            "size": i.size,
+            "update_available": i.update_available,
+            "depots": i.depots.iter().map(|d| json!({
+                "depot_id": d.depot_id,
+                "manifest_id": d.manifest_id.to_string(),
+                "shared_from": (d.shared_from != 0).then_some(d.shared_from),
+            })).collect::<Vec<_>>(),
+        })),
         "depots": r.depots.iter().map(|d| json!({
             "depot_id": d.depot_id,
             "name": d.name,
@@ -304,7 +331,7 @@ fn info_json(r: &v1::GetAppResponse) -> Value {
 }
 
 /// A byte count in binary units.
-fn size(bytes: u64) -> String {
+pub(crate) fn size(bytes: u64) -> String {
     const UNITS: [&str; 5] = ["B", "KiB", "MiB", "GiB", "TiB"];
     let mut v = bytes as f64;
     let mut unit = 0;

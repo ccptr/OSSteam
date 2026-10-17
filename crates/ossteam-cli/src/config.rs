@@ -92,6 +92,8 @@ fn source_text(raw: i32) -> &'static str {
 fn kind_name(raw: i32) -> &'static str {
     match v1::SettingKind::try_from(raw).unwrap_or(v1::SettingKind::Unspecified) {
         v1::SettingKind::Bool => "bool",
+        v1::SettingKind::Integer => "integer",
+        v1::SettingKind::String => "string",
         v1::SettingKind::Unspecified => "unknown",
     }
 }

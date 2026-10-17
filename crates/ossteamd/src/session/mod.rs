@@ -94,7 +94,8 @@ pub enum Cmd {
 pub enum Report {
     Reply {
         to: ReplyTo,
-        result: Result<response::Result, RemoteError>,
+        /// Boxed: a response is far larger than the other reports.
+        result: Box<Result<response::Result, RemoteError>>,
     },
     State(State),
     Prompt(v1::LoginPrompt),
@@ -114,8 +115,11 @@ pub enum Report {
     Active(Option<SteamId>),
     CellId(u32),
     /// The account logged on; its persona state is due (`pics.md` §8).
+    /// Content jobs send their requests through `requester` until it
+    /// closes.
     LoggedOn {
         steam_id: SteamId,
+        requester: ossteam_net::Requester,
     },
     PersonaName {
         steam_id: SteamId,

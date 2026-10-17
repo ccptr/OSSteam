@@ -480,6 +480,126 @@ impl Client {
     }
 }
 
+/// Library folder calls (`docs/spec/ipc.md` §5.5).
+impl Client {
+    pub fn list_library_folders(&self) -> Result<Vec<v1::LibraryFolder>, ClientError> {
+        let req = v1::ListLibraryFoldersRequest {};
+        match self.call(request::Method::ListLibraryFolders(req), DEFAULT_TIMEOUT)? {
+            response::Result::ListLibraryFolders(r) => Ok(r.folders),
+            other => Err(unexpected(other)),
+        }
+    }
+
+    pub fn add_library_folder(&self, path: &str) -> Result<v1::LibraryFolder, ClientError> {
+        let req = v1::AddLibraryFolderRequest { path: path.into() };
+        match self.call(request::Method::AddLibraryFolder(req), DEFAULT_TIMEOUT)? {
+            response::Result::AddLibraryFolder(r) => r.folder.ok_or_else(|| {
+                ClientError::Protocol("AddLibraryFolder answered without a folder".into())
+            }),
+            other => Err(unexpected(other)),
+        }
+    }
+
+    pub fn remove_library_folder(&self, path: &str) -> Result<(), ClientError> {
+        let req = v1::RemoveLibraryFolderRequest { path: path.into() };
+        match self.call(request::Method::RemoveLibraryFolder(req), DEFAULT_TIMEOUT)? {
+            response::Result::RemoveLibraryFolder(_) => Ok(()),
+            other => Err(unexpected(other)),
+        }
+    }
+}
+
+/// Job calls (`docs/spec/ipc.md` §5.6).
+impl Client {
+    /// Queues an install. An empty `folder` is the default folder, an
+    /// empty `branch` is `public`.
+    pub fn install(&self, app_id: u32, folder: &str, branch: &str) -> Result<v1::Job, ClientError> {
+        let req = v1::InstallRequest {
+            app_id,
+            folder: folder.into(),
+            branch: branch.into(),
+        };
+        match self.call(request::Method::Install(req), DEFAULT_TIMEOUT)? {
+            response::Result::Install(r) => job(r),
+            other => Err(unexpected(other)),
+        }
+    }
+
+    /// Queues updates of `app_ids`, or with `all` of every installed app
+    /// with a known update. Returns the jobs created.
+    pub fn update(&self, app_ids: &[u32], all: bool) -> Result<Vec<v1::Job>, ClientError> {
+        let req = v1::UpdateRequest {
+            app_ids: app_ids.to_vec(),
+            all,
+        };
+        match self.call(request::Method::Update(req), DEFAULT_TIMEOUT)? {
+            response::Result::Update(r) => Ok(r.jobs),
+            other => Err(unexpected(other)),
+        }
+    }
+
+    pub fn verify(&self, app_id: u32) -> Result<v1::Job, ClientError> {
+        let req = v1::VerifyRequest { app_id };
+        match self.call(request::Method::Verify(req), DEFAULT_TIMEOUT)? {
+            response::Result::Verify(r) => job(r),
+            other => Err(unexpected(other)),
+        }
+    }
+
+    pub fn uninstall(&self, app_id: u32) -> Result<v1::Job, ClientError> {
+        let req = v1::UninstallRequest { app_id };
+        match self.call(request::Method::Uninstall(req), DEFAULT_TIMEOUT)? {
+            response::Result::Uninstall(r) => job(r),
+            other => Err(unexpected(other)),
+        }
+    }
+
+    pub fn list_jobs(&self) -> Result<Vec<v1::Job>, ClientError> {
+        let req = v1::ListJobsRequest {};
+        match self.call(request::Method::ListJobs(req), DEFAULT_TIMEOUT)? {
+            response::Result::ListJobs(r) => Ok(r.jobs),
+            other => Err(unexpected(other)),
+        }
+    }
+
+    pub fn pause_job(&self, job_id: u64) -> Result<v1::Job, ClientError> {
+        let req = v1::PauseJobRequest { job_id };
+        match self.call(request::Method::PauseJob(req), DEFAULT_TIMEOUT)? {
+            response::Result::PauseJob(r) => job(r),
+            other => Err(unexpected(other)),
+        }
+    }
+
+    pub fn resume_job(&self, job_id: u64) -> Result<v1::Job, ClientError> {
+        let req = v1::ResumeJobRequest { job_id };
+        match self.call(request::Method::ResumeJob(req), DEFAULT_TIMEOUT)? {
+            response::Result::ResumeJob(r) => job(r),
+            other => Err(unexpected(other)),
+        }
+    }
+
+    pub fn cancel_job(&self, job_id: u64) -> Result<v1::Job, ClientError> {
+        let req = v1::CancelJobRequest { job_id };
+        match self.call(request::Method::CancelJob(req), DEFAULT_TIMEOUT)? {
+            response::Result::CancelJob(r) => job(r),
+            other => Err(unexpected(other)),
+        }
+    }
+
+    pub fn set_job_priority(&self, job_id: u64, priority: i32) -> Result<v1::Job, ClientError> {
+        let req = v1::SetJobPriorityRequest { job_id, priority };
+        match self.call(request::Method::SetJobPriority(req), DEFAULT_TIMEOUT)? {
+            response::Result::SetJobPriority(r) => job(r),
+            other => Err(unexpected(other)),
+        }
+    }
+}
+
+fn job(r: v1::JobResponse) -> Result<v1::Job, ClientError> {
+    r.job
+        .ok_or_else(|| ClientError::Protocol("a job request was answered without a job".into()))
+}
+
 /// Zeroes the secrets a request carried once it has been sent (IPC-10).
 fn scrub(env: &mut v1::Envelope) {
     use zeroize::Zeroize;

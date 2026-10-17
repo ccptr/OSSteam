@@ -291,9 +291,11 @@ Adding an async runtime (tokio, async-std, smol) to the daemon requires an ADR
     timeout.
   - **ipc**: one acceptor thread per endpoint and one thread per connected
     client. Few clients connect, so a thread each is cheap.
-  - **content**: one scheduler thread and a bounded pool of worker threads
-    (default 8, configurable up to 64) for chunk download, decryption,
-    decompression and writes.
+  - **content**: the core schedules jobs. Each running job has one thread
+    that drives it and a bounded pool of worker threads (default 8,
+    configurable up to 64) for chunk download, decryption, decompression
+    and writes. At most `content.concurrent_jobs` jobs (default 1, up to 8)
+    run at once.
   - **launch**: one supervisor thread per running game. It waits on the
     process and reports its exit.
 - **[CONC-2]** Cancellation is cooperative. Cloneable `CancelToken`s
@@ -737,7 +739,7 @@ ossteam info <APP>                              # app info, depots, branches, in
 ossteam install <APP> [--folder <PATH>] [--branch <NAME>] [--wait]
 ossteam update [<APP>... | --all] [--wait]
 ossteam verify <APP> [--wait]
-ossteam uninstall <APP> [--yes]
+ossteam uninstall <APP> [--yes] [--wait]
 ossteam jobs [list | pause <ID> | resume <ID> | cancel <ID> | priority <ID> <N> | watch]
 
 ossteam folders [list | add <PATH> | remove <PATH>]

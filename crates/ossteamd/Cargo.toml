@@ -8,11 +8,13 @@ publish.workspace = true
 
 [dependencies]
 ossteam-auth.workspace = true
+ossteam-content.workspace = true
 ossteam-ipc.workspace = true
 ossteam-net.workspace = true
 ossteam-pics.workspace = true
 ossteam-proto.workspace = true
 ossteam-types.workspace = true
+ossteam-vdf.workspace = true
 anyhow.workspace = true
 clap.workspace = true
 crossbeam-channel.workspace = true
@@ -20,6 +22,7 @@ ctrlc = { version = "3.5.2", features = ["termination"] }
 directories.workspace = true
 interprocess.workspace = true
 keyring-core = "1.0.1"
+rand_core.workspace = true
 rusqlite = { version = "0.40.2", features = ["bundled"] }
 serde.workspace = true
 serde_json.workspace = true
@@ -32,7 +35,7 @@ ureq.workspace = true
 zeroize.workspace = true
 
 [target.'cfg(unix)'.dependencies]
-rustix = { workspace = true, features = ["process", "system"] }
+rustix = { workspace = true, features = ["fs", "process", "system"] }
 
 # The OS keyrings (SPEC D-8). Secret Service is reached through libdbus,
 # which is synchronous (SYNC-1); the zbus store would bring an async runtime.
@@ -44,13 +47,14 @@ apple-native-keyring-store = { version = "1.0.2", features = ["keychain"] }
 
 [target.'cfg(windows)'.dependencies]
 windows-native-keyring-store = { version = "1.1.0", default-features = false }
+windows-sys = { workspace = true, features = ["Win32_Storage_FileSystem"] }
 
 [lints]
 workspace = true
 
 # The fake CM in src/testing (FAITH-4).
 [dev-dependencies]
-ossteam-vdf.workspace = true
+ossteam-content = { workspace = true, features = ["testing"] }
 base64.workspace = true
 prost.workspace = true
 rand_core.workspace = true

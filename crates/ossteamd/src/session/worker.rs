@@ -247,7 +247,10 @@ impl Worker {
     }
 
     fn reply(&self, to: ReplyTo, result: Result<response::Result, RemoteError>) {
-        self.report(Report::Reply { to, result });
+        self.report(Report::Reply {
+            to,
+            result: Box::new(result),
+        });
     }
 
     fn secrets(&mut self) -> &Secrets {
@@ -527,6 +530,7 @@ impl Worker {
         });
         self.report(Report::LoggedOn {
             steam_id: ok.steam_id,
+            requester: live.conn.requester(),
         });
         self.logged_on = true;
         self.retry_at = None;
@@ -1050,7 +1054,7 @@ impl Worker {
                 &self.core,
                 Report::Reply {
                     to: reply,
-                    result: Err(RemoteError::new(ErrorCode::InvalidArgument, message)),
+                    result: Box::new(Err(RemoteError::new(ErrorCode::InvalidArgument, message))),
                 },
             );
             return;
@@ -1060,10 +1064,10 @@ impl Worker {
                 &self.core,
                 Report::Reply {
                     to: reply,
-                    result: Err(RemoteError::new(
+                    result: Box::new(Err(RemoteError::new(
                         ErrorCode::Network,
                         "not connected to Steam",
-                    )),
+                    ))),
                 },
             );
             return;
@@ -1089,7 +1093,13 @@ impl Worker {
             }
             Err(e) => Err(auth_error(e)),
         };
-        send_report(&self.core, Report::Reply { to: reply, result });
+        send_report(
+            &self.core,
+            Report::Reply {
+                to: reply,
+                result: Box::new(result),
+            },
+        );
     }
 
     // --- Accounts (auth.md §6) --------------------------------------------

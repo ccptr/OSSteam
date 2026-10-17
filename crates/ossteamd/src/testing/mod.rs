@@ -11,8 +11,10 @@
 mod fake_cm;
 mod loopback;
 mod m1a;
+mod m1b;
 
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
@@ -21,6 +23,7 @@ use ossteam_ipc::v1::{Event, PeerKind, Topic, event};
 use ossteam_ipc::{Client, ClientInfo, Endpoint};
 
 pub use fake_cm::{Account, FakeCm, Guard};
+pub use ossteam_content::fake::FakeCdn;
 
 use crate::secrets::{FALLBACK_FILE, Secrets};
 use crate::{Env, paths, serve};
@@ -96,6 +99,26 @@ impl TestDaemon {
 
     /// Starts with PICS change polling every `pics_poll`.
     pub fn start_with(root: &Root, cm: &FakeCm, pics_poll: Duration) -> Self {
+        Self::start_full(root, cm, pics_poll, None)
+    }
+
+    /// Starts with content served by `cdn` (FAITH-4), and PICS change
+    /// polling every `pics_poll`.
+    pub fn start_with_cdn(
+        root: &Root,
+        cm: &FakeCm,
+        pics_poll: Duration,
+        cdn: Arc<FakeCdn>,
+    ) -> Self {
+        Self::start_full(root, cm, pics_poll, Some(cdn))
+    }
+
+    fn start_full(
+        root: &Root,
+        cm: &FakeCm,
+        pics_poll: Duration,
+        cdn: Option<Arc<FakeCdn>>,
+    ) -> Self {
         let r = root.path();
         let paths = paths::Paths {
             config: r.join("config"),
@@ -115,6 +138,7 @@ impl TestDaemon {
             dialer: cm.dialer(),
             open_secrets: file_secrets,
             pics_poll,
+            content_fetch: cdn.map(|c| c as Arc<dyn ossteam_content::cdn::Fetch>),
         };
         let thread = std::thread::Builder::new()
             .name("test-daemon".into())

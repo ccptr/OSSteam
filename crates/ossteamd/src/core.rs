@@ -20,7 +20,9 @@ use ossteam_types::{Secret, SteamId};
 use crate::config::{self, Config};
 use crate::db::{Db, PersonaState};
 use crate::session::{self, Cmd, ReplyTo, Report};
-use crate::{assets, library, pics};
+use crate::{assets, content, library, pics};
+
+mod jobs;
 
 pub type ClientId = u64;
 
@@ -56,6 +58,8 @@ pub enum Command {
     Pics(pics::Update),
     /// From the image downloader.
     Asset(assets::Done),
+    /// From a content job.
+    Content(content::Report),
 }
 
 /// Why the core loop ended.
@@ -97,6 +101,10 @@ pub struct Core {
     fetching: HashMap<PathBuf, Vec<ReplyTo>>,
     /// URLs the CDN answered 404 for since the daemon started.
     missing_assets: HashSet<String>,
+    /// Folders, installs and jobs.
+    content: jobs::Content,
+    /// The running jobs' threads.
+    content_jobs: content::Handle,
 }
 
 /// What a `Core` is made of.
@@ -108,6 +116,9 @@ pub struct Parts {
     pub pics_cache: Cache,
     pub assets: assets::Handle,
     pub assets_dir: PathBuf,
+    pub content_jobs: content::Handle,
+    /// `<data>/library`.
+    pub default_folder: PathBuf,
 }
 
 impl Core {
@@ -127,7 +138,20 @@ impl Core {
             assets_dir: p.assets_dir,
             fetching: HashMap::new(),
             missing_assets: HashSet::new(),
+            content: jobs::Content {
+                default_folder: p.default_folder,
+                ..Default::default()
+            },
+            content_jobs: p.content_jobs,
         }
+        .loaded()
+    }
+
+    fn loaded(mut self) -> Self {
+        if let Err(e) = self.load_content() {
+            tracing::error!("reading folders, installs and jobs: {e:#}");
+        }
+        self
     }
 
     /// Runs until a shutdown is requested or every command sender is gone.
@@ -184,8 +208,14 @@ impl Core {
                 Command::Session(report) => self.on_session(report),
                 Command::Pics(update) => self.on_library(update),
                 Command::Asset(done) => self.on_asset(done),
+                Command::Content(report) => self.on_content(report),
             }
         };
+        // Running jobs stop first and keep their journals (`content.md`
+        // §9): stopped while the session is up, they end as cancelled and
+        // are queued again, rather than failing on a closed connection.
+        self.content_jobs.shutdown();
+        self.drain_jobs(&commands);
         // Log off before telling clients the daemon is going (SPEC D-5).
         // Reports sent meanwhile are not needed any more. With the
         // connection closed, PICS requests in flight fail at once.
@@ -307,12 +337,16 @@ impl Core {
                 Err(e) => Some(Err(internal(&e))),
             },
             request::Method::SetPersonaState(req) => Some(self.set_persona_state(req.state)),
-            request::Method::ListApps(req) => Some(
-                self.snapshot()
-                    .map(|s| response::Result::ListApps(library::list_apps(&s, &req))),
-            ),
+            request::Method::ListApps(req) => Some(self.snapshot().map(|s| {
+                response::Result::ListApps(library::list_apps(&s, &req, &|a| self.is_installed(a)))
+            })),
             request::Method::GetApp(req) => Some(self.snapshot().and_then(|s| {
-                library::get_app(&s, &self.pics_cache, req.app_id).map(response::Result::GetApp)
+                library::get_app(&s, &self.pics_cache, req.app_id, &|a| self.is_installed(a)).map(
+                    |mut r| {
+                        r.installed = self.installed_proto(ossteam_types::AppId(req.app_id));
+                        response::Result::GetApp(r)
+                    },
+                )
             })),
             request::Method::GetSettings(_) => {
                 Some(Ok(response::Result::GetSettings(v1::GetSettingsResponse {
@@ -321,6 +355,18 @@ impl Core {
             }
             request::Method::SetSetting(req) => Some(self.set_setting(&req)),
             request::Method::GetAsset(req) => self.get_asset(to, &req),
+            request::Method::ListLibraryFolders(_) => Some(self.list_folders()),
+            request::Method::AddLibraryFolder(req) => Some(self.add_folder(&req)),
+            request::Method::RemoveLibraryFolder(req) => Some(self.remove_folder(&req)),
+            request::Method::Install(req) => Some(self.install(&req)),
+            request::Method::Update(req) => Some(self.update(&req)),
+            request::Method::Verify(req) => Some(self.verify(&req)),
+            request::Method::Uninstall(req) => Some(self.uninstall(&req)),
+            request::Method::ListJobs(_) => Some(self.list_jobs()),
+            request::Method::PauseJob(req) => Some(self.pause_job(req.job_id)),
+            request::Method::ResumeJob(req) => Some(self.resume_job(req.job_id)),
+            request::Method::CancelJob(req) => Some(self.cancel_job(req.job_id)),
+            request::Method::SetJobPriority(req) => Some(self.set_job_priority(&req)),
         };
         if let Some(result) = outcome {
             self.reply(to, result);
@@ -346,20 +392,32 @@ impl Core {
     fn on_session(&mut self, report: Report) {
         let stored = match report {
             Report::Reply { to, result } => {
-                self.reply(to, result);
+                self.reply(to, *result);
                 Ok(())
             }
             Report::State(state) => {
                 if state != self.session_state {
                     tracing::debug!(?state, "session changed");
+                    let logged_on = state.logged_on;
                     self.session_state = state;
                     self.broadcast_session();
+                    if logged_on {
+                        self.schedule();
+                    } else {
+                        self.set_requester(None);
+                    }
                 }
                 Ok(())
             }
-            Report::LoggedOn { steam_id } => self.db.persona_state(steam_id).map(|state| {
-                self.session.send(Cmd::SetPersonaState { steam_id, state });
-            }),
+            Report::LoggedOn {
+                steam_id,
+                requester,
+            } => {
+                self.set_requester(Some(requester));
+                self.db.persona_state(steam_id).map(|state| {
+                    self.session.send(Cmd::SetPersonaState { steam_id, state });
+                })
+            }
             Report::Prompt(p) => {
                 self.broadcast(Topic::Session, event::Kind::LoginPrompt(p));
                 Ok(())
@@ -392,6 +450,8 @@ impl Core {
         let complete = update.snapshot.as_ref().is_some_and(|s| s.complete);
         let was_complete = old.as_ref().is_some_and(|s| s.complete);
         self.library = update.snapshot;
+        self.check_updates();
+        self.schedule();
         if !changed.is_empty() || complete != was_complete {
             self.broadcast(
                 Topic::Library,
@@ -476,6 +536,7 @@ impl Core {
                 steam_id,
                 library: ossteam_pics::Library::default(),
                 complete: false,
+                low_violence: Default::default(),
             }),
         })
     }
@@ -544,9 +605,13 @@ impl Core {
     }
 
     /// Hands the settings in effect to the subsystems that use them.
-    fn apply_settings(&self) {
+    fn apply_settings(&mut self) {
         self.session
             .send(Cmd::SetFileFallback(self.config.file_fallback()));
+        self.content_jobs
+            .set_bandwidth(self.config.bandwidth_limit());
+        // More jobs may run now.
+        self.schedule();
     }
 
     /// The active account's persona state, for clients.
@@ -580,7 +645,7 @@ impl Core {
             connection: s.connection as i32,
             account: s.account.clone(),
             connected_clients: self.clients.len() as u32,
-            active_jobs: 0,
+            active_jobs: self.running_jobs(),
             running_games: 0,
             logged_on: s.logged_on,
             session_reason: s.reason.clone(),

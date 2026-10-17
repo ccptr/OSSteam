@@ -13,16 +13,65 @@ use ossteam_ipc::v1;
 pub const FILE_NAME: &str = "ossteamd.toml";
 
 pub const SECRETS_FILE_FALLBACK: &str = "secrets.file_fallback";
+pub const CONTENT_AUTO_UPDATE: &str = "content.auto_update";
+pub const CONTENT_BANDWIDTH_LIMIT: &str = "content.bandwidth_limit";
+pub const CONTENT_CONCURRENT_JOBS: &str = "content.concurrent_jobs";
+pub const CONTENT_DOWNLOAD_THREADS: &str = "content.download_threads";
+pub const CONTENT_LANGUAGE: &str = "content.language";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Kind {
     Bool,
+    /// A whole number in `min..=max`.
+    Integer {
+        min: i64,
+        max: i64,
+    },
+    /// One of a fixed list of words.
+    Choice(&'static [&'static str]),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Value {
     Bool(bool),
+    Int(i64),
+    /// One of a [`Kind::Choice`]'s words.
+    Word(&'static str),
 }
+
+/// The languages Steam names depots by (`content.md` §6, §13).
+const LANGUAGES: &[&str] = &[
+    "arabic",
+    "brazilian",
+    "bulgarian",
+    "czech",
+    "danish",
+    "dutch",
+    "english",
+    "finnish",
+    "french",
+    "german",
+    "greek",
+    "hungarian",
+    "indonesian",
+    "italian",
+    "japanese",
+    "koreana",
+    "latam",
+    "norwegian",
+    "polish",
+    "portuguese",
+    "romanian",
+    "russian",
+    "schinese",
+    "spanish",
+    "swedish",
+    "tchinese",
+    "thai",
+    "turkish",
+    "ukrainian",
+    "vietnamese",
+];
 
 impl Kind {
     /// Parses a value the way `SetSetting` and the database write it.
@@ -31,21 +80,50 @@ impl Kind {
             Self::Bool => match text.trim() {
                 "true" => Ok(Value::Bool(true)),
                 "false" => Ok(Value::Bool(false)),
-                _ => Err("must be true or false".into()),
+                _ => Err(self.expected()),
             },
+            Self::Integer { .. } => text
+                .trim()
+                .parse()
+                .map_err(|_| self.expected())
+                .and_then(|n| self.int(n)),
+            Self::Choice(words) => words
+                .iter()
+                .find(|w| **w == text.trim())
+                .map(|w| Value::Word(w))
+                .ok_or_else(|| self.expected()),
+        }
+    }
+
+    fn int(self, n: i64) -> Result<Value, String> {
+        match self {
+            Self::Integer { min, max } if (min..=max).contains(&n) => Ok(Value::Int(n)),
+            _ => Err(self.expected()),
+        }
+    }
+
+    fn expected(self) -> String {
+        match self {
+            Self::Bool => "must be true or false".into(),
+            Self::Integer { min, max } => format!("must be a whole number from {min} to {max}"),
+            Self::Choice(words) => format!("must be one of {}", words.join(", ")),
         }
     }
 
     fn read_toml(self, value: &toml::Value) -> Result<Value, String> {
         match (self, value) {
             (Self::Bool, toml::Value::Boolean(b)) => Ok(Value::Bool(*b)),
-            (Self::Bool, _) => Err("must be true or false".into()),
+            (Self::Integer { .. }, toml::Value::Integer(n)) => self.int(*n),
+            (Self::Choice(_), toml::Value::String(s)) => self.parse(s),
+            _ => Err(self.expected()),
         }
     }
 
     fn proto(self) -> v1::SettingKind {
         match self {
             Self::Bool => v1::SettingKind::Bool,
+            Self::Integer { .. } => v1::SettingKind::Integer,
+            Self::Choice(_) => v1::SettingKind::String,
         }
     }
 }
@@ -54,6 +132,8 @@ impl std::fmt::Display for Value {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::Bool(b) => write!(f, "{b}"),
+            Self::Int(n) => write!(f, "{n}"),
+            Self::Word(w) => f.write_str(w),
         }
     }
 }
@@ -66,13 +146,49 @@ pub struct Def {
 }
 
 /// Every setting this build knows, sorted by key.
-pub const DEFS: &[Def] = &[Def {
-    key: SECRETS_FILE_FALLBACK,
-    kind: Kind::Bool,
-    default: Value::Bool(false),
-    description: "When no OS keyring is available, store refresh tokens in a \
-                  mode-0600 file in the data directory instead (SPEC D-8).",
-}];
+pub const DEFS: &[Def] = &[
+    Def {
+        key: CONTENT_AUTO_UPDATE,
+        kind: Kind::Choice(&["always", "never"]),
+        default: Value::Word("always"),
+        description: "Whether an update job is queued when an installed app has a new build \
+                      (always), or the app is only marked (never).",
+    },
+    Def {
+        key: CONTENT_BANDWIDTH_LIMIT,
+        kind: Kind::Integer {
+            min: 0,
+            max: 1 << 30,
+        },
+        default: Value::Int(0),
+        description: "KiB/s for all downloads together; 0 is no limit.",
+    },
+    Def {
+        key: CONTENT_CONCURRENT_JOBS,
+        kind: Kind::Integer { min: 1, max: 8 },
+        default: Value::Int(1),
+        description: "Content jobs that run at once.",
+    },
+    Def {
+        key: CONTENT_DOWNLOAD_THREADS,
+        kind: Kind::Integer { min: 1, max: 64 },
+        default: Value::Int(8),
+        description: "Chunk downloads at once for each job; applies to jobs started after a change.",
+    },
+    Def {
+        key: CONTENT_LANGUAGE,
+        kind: Kind::Choice(LANGUAGES),
+        default: Value::Word("english"),
+        description: "The language whose depots are installed, as Steam names it.",
+    },
+    Def {
+        key: SECRETS_FILE_FALLBACK,
+        kind: Kind::Bool,
+        default: Value::Bool(false),
+        description: "When no OS keyring is available, store refresh tokens in a \
+                      mode-0600 file in the data directory instead (SPEC D-8).",
+    },
+];
 
 pub fn def(key: &str) -> Option<&'static Def> {
     DEFS.iter().find(|d| d.key == key)
@@ -165,11 +281,51 @@ impl Config {
         }
     }
 
+    fn value(&self, key: &str) -> Value {
+        self.get(def(key).expect("a key from DEFS")).0
+    }
+
     fn bool(&self, key: &str) -> bool {
-        let d = def(key).expect("a key from DEFS");
-        match self.get(d).0 {
+        match self.value(key) {
             Value::Bool(b) => b,
+            v => unreachable!("{key} is {v:?}"),
         }
+    }
+
+    fn int(&self, key: &str) -> i64 {
+        match self.value(key) {
+            Value::Int(n) => n,
+            v => unreachable!("{key} is {v:?}"),
+        }
+    }
+
+    fn word(&self, key: &str) -> &'static str {
+        match self.value(key) {
+            Value::Word(w) => w,
+            v => unreachable!("{key} is {v:?}"),
+        }
+    }
+
+    /// `content.auto_update` is `always`.
+    pub fn auto_update(&self) -> bool {
+        self.word(CONTENT_AUTO_UPDATE) == "always"
+    }
+
+    /// `content.bandwidth_limit` in bytes per second; 0 is no limit.
+    pub fn bandwidth_limit(&self) -> u64 {
+        (self.int(CONTENT_BANDWIDTH_LIMIT) as u64).saturating_mul(1024)
+    }
+
+    pub fn concurrent_jobs(&self) -> usize {
+        self.int(CONTENT_CONCURRENT_JOBS) as usize
+    }
+
+    pub fn download_threads(&self) -> usize {
+        self.int(CONTENT_DOWNLOAD_THREADS) as usize
+    }
+
+    pub fn language(&self) -> &'static str {
+        self.word(CONTENT_LANGUAGE)
     }
 
     /// `secrets.file_fallback` (SPEC D-8).
@@ -232,6 +388,28 @@ fn walk(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn integer_and_choice_settings() {
+        let (file, _) = Config::parse(
+            "[content]\nbandwidth_limit = 512\nlanguage = \"german\"\nauto_update = \"never\"\n",
+        )
+        .unwrap();
+        let c = Config {
+            file,
+            overrides: BTreeMap::new(),
+        };
+        assert_eq!(c.bandwidth_limit(), 512 * 1024);
+        assert_eq!(c.language(), "german");
+        assert!(!c.auto_update());
+        assert_eq!(c.download_threads(), 8);
+        assert!(Config::parse("[content]\ndownload_threads = 65\n").is_err());
+        assert!(Config::parse("[content]\nlanguage = \"klingon\"\n").is_err());
+        assert!(Config::parse("[content]\nconcurrent_jobs = \"2\"\n").is_err());
+        let d = def(CONTENT_CONCURRENT_JOBS).unwrap();
+        assert_eq!(d.parse(" 3 "), Ok(Value::Int(3)));
+        assert!(d.parse("0").is_err());
+    }
 
     fn fallback() -> &'static Def {
         def(SECRETS_FILE_FALLBACK).unwrap()

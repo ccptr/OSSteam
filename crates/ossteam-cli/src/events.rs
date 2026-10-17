@@ -92,7 +92,7 @@ fn level(raw: i32) -> &'static str {
     }
 }
 
-fn error_json(e: &v1::Error) -> Value {
+pub(crate) fn error_json(e: &v1::Error) -> Value {
     json!({ "code": e.code, "message": e.message, "detail": e.detail })
 }
 
@@ -130,6 +130,15 @@ fn to_json(ev: &Event) -> Value {
         Some(event::Kind::SettingChanged(c)) => json!({
             "event": "setting_changed",
             "setting": c.setting.as_ref().map(crate::config::setting_json),
+        }),
+        Some(event::Kind::JobStateChanged(c)) => json!({
+            "event": "job_state_changed",
+            "job": c.job.as_ref().map(crate::content::job_json),
+        }),
+        Some(event::Kind::JobProgress(p)) => json!({
+            "event": "job_progress",
+            "job_id": p.job_id,
+            "progress": p.progress.as_ref().map(crate::content::progress_json),
         }),
         // An event kind newer than this client.
         None => json!({ "event": "unknown" }),
@@ -192,6 +201,18 @@ fn to_text(ev: &Event) -> String {
             Some(s) => format!("setting  {} = {}", s.key, s.value),
             None => "setting  changed".into(),
         },
+        Some(event::Kind::JobStateChanged(c)) => match &c.job {
+            Some(j) => format!("job      {}", crate::content::job_line(j)),
+            None => "job      changed".into(),
+        },
+        Some(event::Kind::JobProgress(p)) => format!(
+            "job      {} {}",
+            p.job_id,
+            p.progress
+                .as_ref()
+                .map(crate::content::progress_text)
+                .unwrap_or_default()
+        ),
         None => "unknown event".into(),
     }
 }

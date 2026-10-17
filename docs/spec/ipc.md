@@ -110,7 +110,8 @@ is left unchanged. Events always have `id = 0`.
 | `NOTICES` | `Notice{level, text}` |
 | `SESSION` | `SessionChanged`, `LoginPrompt`, `LoginEnded` (§5.2) |
 | `LIBRARY` | `AppChanged{app_ids, complete}` (§5.3) |
-| `JOBS`, `GAMES` | Subscribable now; their events arrive with M1b and M1c |
+| `JOBS` | `JobStateChanged{job}`, `JobProgress{job_id, progress}` (§5.6) |
+| `GAMES` | Subscribable now; its events arrive with M1c |
 
 ## 5. Methods
 
@@ -207,16 +208,93 @@ file and key named.
 `SettingChanged` on `DAEMON` carries the setting whenever a `SetSetting`
 changed its value or its source.
 
-Values are written as text: `true` or `false` for `BOOL`. These keys exist:
+Values are written as text: `true` or `false` for `BOOL`, a decimal
+number for `INTEGER`, and one of the words the description lists for
+`STRING`. In `ossteamd.toml` they are TOML booleans, integers and strings.
+These keys exist:
 
 | Key | Kind | Default | Effect |
 |---|---|---|---|
+| `content.auto_update` | `STRING` | `always` | `always` queues an update job when an installed app gets a new build; `never` only marks the app (`content.md` §10) |
+| `content.bandwidth_limit` | `INTEGER` | `0` | KiB/s for all downloads together, 0 to 2^30; 0 is no limit. Applies at once |
+| `content.concurrent_jobs` | `INTEGER` | `1` | Jobs that run at once, 1 to 8 |
+| `content.download_threads` | `INTEGER` | `8` | Chunk downloads at once per job, 1 to 64. Applies to jobs started after the change |
+| `content.language` | `STRING` | `english` | The language whose depots are installed, as Steam names languages (`german`, `schinese`, ...) |
 | `secrets.file_fallback` | `BOOL` | `false` | When no OS keyring is available, store refresh tokens in `secrets.json` in the data directory, mode 0600 (D-8, `auth.md` §4). A change applies to the next token read or write. |
 
 **Secrets (IPC-10).** The password and Steam Guard codes travel only in
 their request. Both sides zero every frame buffer after use, the client
 library zeroes its copy of the request once it is sent, and the daemon
 moves the value into a type that is zeroed on drop.
+
+### 5.5 Library folders
+
+A library folder (SPEC §17, `content.md` §8) is a directory that holds
+installed apps. Each one is marked by `.ossteam/library.toml`, which
+records the folder's id, a random 128-bit number written in hex. The
+daemon keeps the list of folders in its state database. The default
+folder is `library` in the data directory; it is created and added the
+first time a folder is needed, and it cannot be removed.
+
+| Method | Behaviour |
+|---|---|
+| `ListLibraryFolders` | Every folder: its absolute path, whether it is the default, the free space on its file system, and the apps installed in it. A folder that cannot be read (an unplugged drive) is listed with `available` false. |
+| `AddLibraryFolder{path}` | Adds a folder. `path` must be absolute; the directory is created if it does not exist. A directory that already has a `library.toml` keeps its id, but apps installed there by another daemon are not known to this one. `CONFLICT` if the folder, or a folder with the same id, is already in the list; `INVALID_ARGUMENT` for a relative path or one that is inside another folder of the list, or contains one. |
+| `RemoveLibraryFolder{path}` | Removes a folder from the list. Its files are left alone, `library.toml` included. `CONFLICT` while an app is installed there or a job uses it, and for the default folder; `NOT_FOUND` for a folder not in the list. |
+
+None of these need an account.
+
+### 5.6 Jobs
+
+A job installs, updates, verifies or uninstalls one app (`content.md` §9).
+Jobs belong to the active account: they are created for it, and they run
+only while it is logged on, because they need depot keys and request
+codes, and once its library is complete, because what it owns decides
+which depots are installed (`content.md` §6). Jobs of an account that is
+not active wait.
+
+| Field | Meaning |
+|---|---|
+| `job_id` | Chosen by the daemon, never reused |
+| `app_id`, `kind` | `INSTALL`, `UPDATE`, `VERIFY` or `UNINSTALL` |
+| `state` | `QUEUED`, `RUNNING`, `PAUSED`, `DONE`, `FAILED` or `CANCELLED` |
+| `priority` | Higher runs first; jobs of equal priority run in the order they were created. Default 0 |
+| `progress` | The engine's progress (`content.md` §9): the phase, file bytes to write and written, bytes to download and downloaded, files to write and written |
+| `error` | Why a `FAILED` job failed, as an `Error` whose code is the one the job would have failed a request with |
+| `folder`, `branch` | Where the app goes and from which branch |
+
+`content.concurrent_jobs` jobs run at once (default 1). A running job
+whose account goes offline is queued again and continues from its
+journal after the next logon. A job that fails, for example because no
+content server answered, stays resumable: `ResumeJob` queues it again,
+and it continues from its journal. Jobs that were running when the
+daemon stopped are queued again when it starts. `DONE` and `CANCELLED`
+jobs are listed until the daemon restarts; `FAILED` jobs stay until they
+are resumed or cancelled, and count as unfinished.
+
+| Method | Behaviour |
+|---|---|
+| `Install{app_id, folder, branch}` | Queues an install and replies with the job. `folder` empty means the default folder; `branch` empty means `public`. Before queueing, the daemon checks what it can without the network: the app is in the library (`NOT_FOUND`), its info names an install directory and the branch exists and needs no password (`UNSUPPORTED` for a password-protected branch, `NOT_FOUND` for an unknown one), the folder is in the list (`NOT_FOUND`), and the app is not installed and has no unfinished job (`CONFLICT`). Entitlement and disk space are checked when the job runs. |
+| `Update{app_ids, all}` | Queues an update of each named app, or with `all` of every installed app whose update is known (`content.md` §10). Replies with the jobs created. An app with an unfinished job gets no second one; `NOT_FOUND` names an app that is not installed. An update of an app that has no new manifests finishes at once and writes nothing. |
+| `Verify{app_id}` | Queues a verify of an installed app. `NOT_FOUND` when it is not installed, `CONFLICT` when it has an unfinished job. |
+| `Uninstall{app_id}` | Queues an uninstall (`content.md` §12). An unfinished install, update or verify of the app is cancelled first. `NOT_FOUND` when the app is neither installed nor being installed. |
+| `ListJobs` | Every job of the active account, unfinished ones first. |
+| `PauseJob{job_id}` | A queued or running job becomes `PAUSED`; a running one stops within a second and keeps its journal. |
+| `ResumeJob{job_id}` | A paused or failed job is queued again. |
+| `CancelJob{job_id}` | Ends a job that has not finished. Staged files are deleted. What an install or update already put in place stays: the app is left as it was before the job only if no file had been renamed yet, and is otherwise marked as needing an update. |
+| `SetJobPriority{job_id, priority}` | Changes the priority of an unfinished job. A running job is not stopped by it. |
+
+The job methods need an active account (`NOT_LOGGED_IN`) and
+`NOT_FOUND` for a job id that is not the active account's. Pausing,
+resuming or cancelling a job in a state where that makes no sense
+(cancelling a finished job, resuming a running one) is `CONFLICT`.
+
+Events on `JOBS`:
+
+- `JobStateChanged{job}` whenever a job is created or its state, priority
+  or error changes;
+- `JobProgress{job_id, progress}` while a job runs, at most ten times a
+  second for each job.
 
 ## 6. Daemon lifecycle
 
@@ -291,6 +369,21 @@ Image downloads for `GetAsset` run on four threads of their own
 (`crates/ossteamd/src/assets.rs`). The core answers a request for an image
 already in the cache itself, and otherwise queues one download per image
 and answers every waiting request when it finishes.
+
+Content jobs (`crates/ossteamd/src/content/`, `content.md` §9) are
+scheduled by the core, which keeps them in the state database and decides
+which run: queued jobs of the active account, highest priority first, at
+most `content.concurrent_jobs` at once, and only while the account is
+logged on. CONC-1 names a scheduler thread; a separate one would only
+relay what the core already knows, so the core does it. Each running job
+gets a thread of its own, which fetches keys, manifests and request codes
+through the session's request handle and runs the install engine with
+`content.download_threads` download threads. It reports progress, its
+journal and its result back on the core's command channel. All jobs share
+one HTTPS agent, one bandwidth throttle and one content server list. To
+pause, cancel or shut down, the core cancels the job's token; the job's
+threads stop within a second (CONC-2), and on shutdown the core waits for
+them and stores their last journals before it exits.
 
 The client library runs one reader thread per connection. That thread
 routes each reply to the waiting call by id and queues events. Calls can

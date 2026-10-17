@@ -3,11 +3,13 @@
 //! daemon (LEAF-1).
 
 mod config;
+mod content;
 mod events;
 mod library;
 mod session;
 
 use std::io::{IsTerminal, Write};
+use std::path::PathBuf;
 use std::process::ExitCode;
 use std::time::Duration;
 
@@ -109,6 +111,59 @@ enum Command {
         /// App id, or the exact name of an app in the library.
         app: String,
     },
+    /// Install an app and its DLC into a library folder.
+    Install {
+        /// App id, or the exact name of an app in the library.
+        app: String,
+        /// The library folder; the default folder when not given.
+        #[arg(long)]
+        folder: Option<PathBuf>,
+        /// The branch to install from; "public" when not given.
+        #[arg(long)]
+        branch: Option<String>,
+        /// Wait until the install has finished.
+        #[arg(long)]
+        wait: bool,
+    },
+    /// Update installed apps.
+    #[command(group = clap::ArgGroup::new("which").required(true).args(["apps", "all"]))]
+    Update {
+        /// App ids or names.
+        apps: Vec<String>,
+        /// Every installed app that has an update.
+        #[arg(long)]
+        all: bool,
+        /// Wait until the updates have finished.
+        #[arg(long)]
+        wait: bool,
+    },
+    /// Check an installed app's files and repair the ones that differ.
+    Verify {
+        app: String,
+        /// Wait until the verify has finished.
+        #[arg(long)]
+        wait: bool,
+    },
+    /// Delete an installed app's files.
+    Uninstall {
+        app: String,
+        /// Do not ask first.
+        #[arg(long, short)]
+        yes: bool,
+        /// Wait until the files are deleted.
+        #[arg(long)]
+        wait: bool,
+    },
+    /// Install, update, verify and uninstall jobs.
+    Jobs {
+        #[command(subcommand)]
+        action: Option<JobsAction>,
+    },
+    /// Library folders, where apps are installed.
+    Folders {
+        #[command(subcommand)]
+        action: Option<FoldersAction>,
+    },
     /// Show and change daemon settings. Values set here override
     /// ossteamd.toml.
     Config {
@@ -155,6 +210,37 @@ enum ConfigAction {
 }
 
 #[derive(Subcommand)]
+enum JobsAction {
+    /// List the active account's jobs, unfinished ones first (the default).
+    List,
+    /// Pause a job; a running one stops and continues later from where it
+    /// was.
+    Pause { job: u64 },
+    /// Queue a paused or failed job again.
+    Resume { job: u64 },
+    /// End a job that has not finished.
+    Cancel { job: u64 },
+    /// Change a job's priority. Higher runs first.
+    Priority {
+        job: u64,
+        #[arg(allow_negative_numbers = true)]
+        priority: i32,
+    },
+    /// Print job events as they happen.
+    Watch,
+}
+
+#[derive(Subcommand)]
+enum FoldersAction {
+    /// List the library folders (the default).
+    List,
+    /// Add a library folder; the directory is created if needed.
+    Add { path: PathBuf },
+    /// Remove a library folder from the list. Its files stay.
+    Remove { path: PathBuf },
+}
+
+#[derive(Subcommand)]
 enum DaemonAction {
     /// Start the daemon if it is not running.
     Start,
@@ -189,15 +275,7 @@ impl From<ClientError> for Failure {
             ClientError::Unavailable { .. } | ClientError::StartFailed(_) => {
                 exit::DAEMON_UNAVAILABLE
             }
-            ClientError::Remote(r) => match r.code {
-                ErrorCode::NotLoggedIn => exit::NOT_LOGGED_IN,
-                ErrorCode::NotFound => exit::NOT_FOUND,
-                ErrorCode::NotOwned => exit::NOT_OWNED,
-                ErrorCode::Unsupported => exit::UNSUPPORTED,
-                ErrorCode::Conflict => exit::CONFLICT,
-                ErrorCode::Network => exit::NETWORK,
-                _ => exit::OTHER,
-            },
+            ClientError::Remote(r) => exit_code(r.code),
             _ => exit::OTHER,
         };
         let mut message = e.to_string();
@@ -210,6 +288,19 @@ impl From<ClientError> for Failure {
             code,
             message: Some(message),
         }
+    }
+}
+
+/// The exit code for a daemon error (SPEC §15.3).
+fn exit_code(code: ErrorCode) -> u8 {
+    match code {
+        ErrorCode::NotLoggedIn => exit::NOT_LOGGED_IN,
+        ErrorCode::NotFound => exit::NOT_FOUND,
+        ErrorCode::NotOwned => exit::NOT_OWNED,
+        ErrorCode::Unsupported => exit::UNSUPPORTED,
+        ErrorCode::Conflict => exit::CONFLICT,
+        ErrorCode::Network => exit::NETWORK,
+        _ => exit::OTHER,
     }
 }
 
@@ -272,6 +363,30 @@ fn run(cli: &Cli) -> Result<(), Failure> {
             library::list(cli, *installed, filter.as_deref().unwrap_or_default())
         }
         Command::Info { app } => library::info(cli, app),
+        Command::Install {
+            app,
+            folder,
+            branch,
+            wait,
+        } => content::install(cli, app, folder.as_deref(), branch.as_deref(), *wait),
+        Command::Update { apps, all, wait } => content::update(cli, apps, *all, *wait),
+        Command::Verify { app, wait } => content::verify(cli, app, *wait),
+        Command::Uninstall { app, yes, wait } => content::uninstall(cli, app, *yes, *wait),
+        Command::Jobs { action } => match action.as_ref().unwrap_or(&JobsAction::List) {
+            JobsAction::List => content::list_jobs(cli),
+            JobsAction::Pause { job } => content::control(cli, *job, content::Control::Pause),
+            JobsAction::Resume { job } => content::control(cli, *job, content::Control::Resume),
+            JobsAction::Cancel { job } => content::control(cli, *job, content::Control::Cancel),
+            JobsAction::Priority { job, priority } => {
+                content::control(cli, *job, content::Control::Priority(*priority))
+            }
+            JobsAction::Watch => events::follow(cli, &[events::TopicArg::Jobs]),
+        },
+        Command::Folders { action } => match action.as_ref().unwrap_or(&FoldersAction::List) {
+            FoldersAction::List => content::list_folders(cli),
+            FoldersAction::Add { path } => content::add_folder(cli, path),
+            FoldersAction::Remove { path } => content::remove_folder(cli, path),
+        },
         Command::Config { action } => match action.as_ref().unwrap_or(&ConfigAction::List) {
             ConfigAction::List => config::list(cli),
             ConfigAction::Get { key } => config::get(cli, key),

@@ -18,14 +18,16 @@ use crate::pics::Snapshot;
 /// The language images are chosen in, until there is a language setting.
 const ASSET_LANGUAGE: &str = "english";
 
-pub fn list_apps(snapshot: &Snapshot, req: &v1::ListAppsRequest) -> v1::ListAppsResponse {
+pub fn list_apps(
+    snapshot: &Snapshot,
+    req: &v1::ListAppsRequest,
+    is_installed: &dyn Fn(AppId) -> bool,
+) -> v1::ListAppsResponse {
     let filter = req.filter.trim().to_lowercase();
     let matches = |a: &LibraryApp| {
         filter.is_empty() || a.name.to_lowercase().contains(&filter) || a.id.to_string() == filter
     };
-    // Nothing is installed until the install engine exists (M1b), which
-    // is the true state.
-    let installed = |_: &LibraryApp| false;
+    let installed = |a: &LibraryApp| is_installed(a.id);
     let keep = |a: &LibraryApp| matches(a) && (!req.installed_only || installed(a));
 
     let apps = snapshot
@@ -42,9 +44,9 @@ pub fn list_apps(snapshot: &Snapshot, req: &v1::ListAppsRequest) -> v1::ListApps
                 } else {
                     a.dlc.iter().collect()
                 };
-                Some(summary(a, &all))
+                Some(summary(a, &all, is_installed))
             } else if !dlc.is_empty() {
-                Some(summary(a, &dlc))
+                Some(summary(a, &dlc, is_installed))
             } else {
                 None
             }
@@ -97,6 +99,7 @@ pub fn get_app(
     snapshot: &Snapshot,
     cache: &Cache,
     app_id: u32,
+    is_installed: &dyn Fn(AppId) -> bool,
 ) -> Result<v1::GetAppResponse, RemoteError> {
     let Some(app) = snapshot.library.find(AppId(app_id)) else {
         let mut message = format!("app {app_id} is not in the library");
@@ -106,7 +109,11 @@ pub fn get_app(
         return Err(RemoteError::new(ErrorCode::NotFound, message));
     };
     let mut r = v1::GetAppResponse {
-        app: Some(summary(app, &app.dlc.iter().collect::<Vec<_>>())),
+        app: Some(summary(
+            app,
+            &app.dlc.iter().collect::<Vec<_>>(),
+            is_installed,
+        )),
         ..Default::default()
     };
     if !app.has_info {
@@ -191,15 +198,19 @@ pub fn changed_apps(old: Option<&Snapshot>, new: Option<&Snapshot>) -> BTreeSet<
     added_or_changed.chain(removed).map(|(&id, _)| id).collect()
 }
 
-fn summary(a: &LibraryApp, dlc: &[&LibraryApp]) -> v1::AppSummary {
+fn summary(
+    a: &LibraryApp,
+    dlc: &[&LibraryApp],
+    is_installed: &dyn Fn(AppId) -> bool,
+) -> v1::AppSummary {
     v1::AppSummary {
         app_id: a.id.0,
         name: a.name.clone(),
         r#type: a.app_type.clone(),
         parent: a.parent.map_or(0, |p| p.0),
         has_info: a.has_info,
-        installed: false,
-        dlc: dlc.iter().map(|d| summary(d, &[])).collect(),
+        installed: is_installed(a.id),
+        dlc: dlc.iter().map(|d| summary(d, &[], is_installed)).collect(),
     }
 }
 
@@ -229,6 +240,7 @@ mod tests {
                 packages_without_info: Vec::new(),
             },
             complete: true,
+            low_violence: Default::default(),
         }
     }
 
@@ -256,6 +268,7 @@ mod tests {
                     filter: filter.into(),
                     installed_only: false,
                 },
+                &|_| false,
             ))
         };
         assert_eq!(list(""), [(10, vec![11]), (20, vec![21, 22])]);
@@ -265,27 +278,37 @@ mod tests {
     }
 
     #[test]
-    fn nothing_is_installed_yet() {
-        let s = snapshot(vec![app(10, "Game", vec![app(11, "Pack", vec![])])]);
-        let r = list_apps(
-            &s,
-            &v1::ListAppsRequest {
-                filter: String::new(),
-                installed_only: true,
-            },
-        );
-        assert!(r.apps.is_empty());
-        assert!(r.complete);
+    fn installed_only_keeps_installed_apps_and_dlc() {
+        let s = snapshot(vec![
+            app(10, "Game", vec![app(11, "Pack", vec![])]),
+            app(20, "Other", vec![]),
+        ]);
+        let only = |installed: &[u32]| {
+            let r = list_apps(
+                &s,
+                &v1::ListAppsRequest {
+                    filter: String::new(),
+                    installed_only: true,
+                },
+                &|a| installed.contains(&a.0),
+            );
+            assert!(r.complete);
+            ids(&r)
+        };
+        assert!(only(&[]).is_empty());
+        assert_eq!(only(&[10]), [(10, vec![])]);
+        // An installed DLC brings its parent along.
+        assert_eq!(only(&[11]), [(10, vec![11])]);
     }
 
     #[test]
     fn get_app_needs_the_app_in_the_library() {
         let s = snapshot(vec![app(10, "Game", vec![])]);
         let cache = Cache::new(std::env::temp_dir().join("ossteamd-no-such-cache"));
-        let e = get_app(&s, &cache, 99).unwrap_err();
+        let e = get_app(&s, &cache, 99, &|_| false).unwrap_err();
         assert_eq!(e.code, ErrorCode::NotFound);
         // Listed but not cached: the summary only.
-        let r = get_app(&s, &cache, 10).unwrap();
+        let r = get_app(&s, &cache, 10, &|_| false).unwrap();
         assert!(!r.app.unwrap().has_info);
     }
 

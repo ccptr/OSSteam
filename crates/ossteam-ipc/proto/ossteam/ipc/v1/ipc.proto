@@ -95,6 +95,18 @@ message Request {
     GetSettingsRequest get_settings = 16;
     SetSettingRequest set_setting = 17;
     GetAssetRequest get_asset = 18;
+    ListLibraryFoldersRequest list_library_folders = 19;
+    AddLibraryFolderRequest add_library_folder = 20;
+    RemoveLibraryFolderRequest remove_library_folder = 21;
+    InstallRequest install = 22;
+    UpdateRequest update = 23;
+    VerifyRequest verify = 24;
+    UninstallRequest uninstall = 25;
+    ListJobsRequest list_jobs = 26;
+    PauseJobRequest pause_job = 27;
+    ResumeJobRequest resume_job = 28;
+    CancelJobRequest cancel_job = 29;
+    SetJobPriorityRequest set_job_priority = 30;
   }
 }
 
@@ -118,6 +130,18 @@ message Response {
     GetSettingsResponse get_settings = 16;
     SetSettingResponse set_setting = 17;
     GetAssetResponse get_asset = 18;
+    ListLibraryFoldersResponse list_library_folders = 19;
+    AddLibraryFolderResponse add_library_folder = 20;
+    RemoveLibraryFolderResponse remove_library_folder = 21;
+    JobResponse install = 22;
+    UpdateResponse update = 23;
+    JobResponse verify = 24;
+    JobResponse uninstall = 25;
+    ListJobsResponse list_jobs = 26;
+    JobResponse pause_job = 27;
+    JobResponse resume_job = 28;
+    JobResponse cancel_job = 29;
+    JobResponse set_job_priority = 30;
   }
 }
 
@@ -351,6 +375,32 @@ message GetAppResponse {
   repeated Depot depots = 6;
   repeated Branch branches = 7;
   repeated LaunchOption launch_options = 8;
+  // Unset when the app is not installed.
+  InstalledApp installed = 9;
+}
+
+// An installed app (docs/spec/content.md §8).
+message InstalledApp {
+  // The library folder's path.
+  string folder = 1;
+  // The absolute path of the app's files.
+  string path = 2;
+  string branch = 3;
+  // The build installed; 0 when the branch gave none.
+  uint32 build_id = 4;
+  repeated InstalledDepot depots = 5;
+  // The sum of the installed manifests' file sizes.
+  uint64 size = 6;
+  // The branch has manifests other than the installed ones
+  // (docs/spec/content.md §10).
+  bool update_available = 7;
+}
+
+message InstalledDepot {
+  uint32 depot_id = 1;
+  fixed64 manifest_id = 2;
+  // For a depot installed into another app's directory: that app.
+  uint32 shared_from = 3;
 }
 
 // An image of an app, as Steam's library and store show it.
@@ -384,12 +434,164 @@ message GetAssetResponse {
   string path = 1;
 }
 
+// --- Library folders (docs/spec/ipc.md §5.5) -------------------------------
+
+message LibraryFolder {
+  string path = 1;
+  bool is_default = 2;
+  // Whether the folder can be read now.
+  bool available = 3;
+  // Free space on the folder's file system; 0 when not available.
+  uint64 free_bytes = 4;
+  repeated uint32 app_ids = 5;
+}
+
+message ListLibraryFoldersRequest {}
+
+message ListLibraryFoldersResponse {
+  // The default folder first, then in the order they were added.
+  repeated LibraryFolder folders = 1;
+}
+
+message AddLibraryFolderRequest {
+  // Absolute.
+  string path = 1;
+}
+
+message AddLibraryFolderResponse {
+  LibraryFolder folder = 1;
+}
+
+message RemoveLibraryFolderRequest {
+  string path = 1;
+}
+
+message RemoveLibraryFolderResponse {}
+
+// --- Jobs (docs/spec/ipc.md §5.6) ------------------------------------------
+
+enum JobKind {
+  JOB_KIND_UNSPECIFIED = 0;
+  JOB_KIND_INSTALL = 1;
+  JOB_KIND_UPDATE = 2;
+  JOB_KIND_VERIFY = 3;
+  JOB_KIND_UNINSTALL = 4;
+}
+
+enum JobState {
+  JOB_STATE_UNSPECIFIED = 0;
+  JOB_STATE_QUEUED = 1;
+  JOB_STATE_RUNNING = 2;
+  JOB_STATE_PAUSED = 3;
+  JOB_STATE_DONE = 4;
+  JOB_STATE_FAILED = 5;
+  JOB_STATE_CANCELLED = 6;
+}
+
+enum JobPhase {
+  JOB_PHASE_UNSPECIFIED = 0;
+  // Fetching depot keys and manifests, and deciding what to write.
+  JOB_PHASE_PREPARING = 1;
+  // Verify is hashing installed files.
+  JOB_PHASE_CHECKING = 2;
+  // Taking chunks from staging and installed files.
+  JOB_PHASE_COPYING = 3;
+  JOB_PHASE_DOWNLOADING = 4;
+  // Links, deletions and recording the result.
+  JOB_PHASE_FINISHING = 5;
+}
+
+message JobProgressInfo {
+  JobPhase phase = 1;
+  // File bytes the job writes and has written; while CHECKING, bytes to
+  // hash and hashed.
+  uint64 bytes_total = 2;
+  uint64 bytes_done = 3;
+  // Bytes to download as served, once known, and downloaded.
+  uint64 download_total = 4;
+  uint64 downloaded = 5;
+  uint64 files_total = 6;
+  uint64 files_done = 7;
+}
+
+message Job {
+  uint64 job_id = 1;
+  uint32 app_id = 2;
+  JobKind kind = 3;
+  JobState state = 4;
+  int32 priority = 5;
+  JobProgressInfo progress = 6;
+  // Set when the job failed.
+  Error error = 7;
+  string folder = 8;
+  string branch = 9;
+  // Unix time.
+  uint64 created = 10;
+}
+
+message JobResponse {
+  Job job = 1;
+}
+
+message InstallRequest {
+  uint32 app_id = 1;
+  // Empty: the default folder.
+  string folder = 2;
+  // Empty: "public".
+  string branch = 3;
+}
+
+message UpdateRequest {
+  repeated uint32 app_ids = 1;
+  // Every installed app with a known update.
+  bool all = 2;
+}
+
+message UpdateResponse {
+  repeated Job jobs = 1;
+}
+
+message VerifyRequest {
+  uint32 app_id = 1;
+}
+
+message UninstallRequest {
+  uint32 app_id = 1;
+}
+
+message ListJobsRequest {}
+
+message ListJobsResponse {
+  repeated Job jobs = 1;
+}
+
+message PauseJobRequest {
+  uint64 job_id = 1;
+}
+
+message ResumeJobRequest {
+  uint64 job_id = 1;
+}
+
+message CancelJobRequest {
+  uint64 job_id = 1;
+}
+
+message SetJobPriorityRequest {
+  uint64 job_id = 1;
+  int32 priority = 2;
+}
+
 // --- Settings (docs/spec/ipc.md §5.4) -------------------------------------
 
 enum SettingKind {
   SETTING_KIND_UNSPECIFIED = 0;
   // Written "true" or "false".
   SETTING_KIND_BOOL = 1;
+  // A decimal integer.
+  SETTING_KIND_INTEGER = 2;
+  // Text; Setting.description names the values allowed.
+  SETTING_KIND_STRING = 3;
 }
 
 // Where a setting's value comes from. An override wins over the file, and
@@ -474,6 +676,8 @@ message Event {
     LoginEnded login_ended = 5;
     AppChanged app_changed = 6;
     SettingChanged setting_changed = 7;
+    JobStateChanged job_state_changed = 8;
+    JobProgress job_progress = 9;
   }
 }
 
@@ -531,4 +735,15 @@ message AppChanged {
 // Topic: DAEMON. A setting's value or source changed.
 message SettingChanged {
   Setting setting = 1;
+}
+
+// Topic: JOBS. A job was created, or its state, priority or error changed.
+message JobStateChanged {
+  Job job = 1;
+}
+
+// Topic: JOBS. A running job's progress, at most ten times a second.
+message JobProgress {
+  uint64 job_id = 1;
+  JobProgressInfo progress = 2;
 }

@@ -53,6 +53,9 @@ pub struct Snapshot {
     /// been fetched, or refused by Steam. False while fetching, and after
     /// a failed fetch until the retry succeeds.
     pub complete: bool,
+    /// Apps granted by a license with the low-violence flag (`pics.md` §1),
+    /// which take low-violence depots (`content.md` §6).
+    pub low_violence: BTreeSet<AppId>,
 }
 
 /// What the worker tells the core.
@@ -555,10 +558,22 @@ impl Worker {
                         .map(|e| e.summary.clone())
                 },
             );
+            let low_violence = self
+                .licenses
+                .iter()
+                .flatten()
+                .filter(|l| {
+                    l.grants(steam_id.account_id())
+                        && l.flags & ossteam_pics::license::flags::LOW_VIOLENCE != 0
+                })
+                .filter_map(|l| self.packages.get(&l.package_id).and_then(Option::as_ref))
+                .flat_map(|e| e.apps.iter().copied())
+                .collect();
             Arc::new(Snapshot {
                 steam_id,
                 library,
                 complete: self.licenses.is_some() && !self.check_due,
+                low_violence,
             })
         });
         let same = match (&snapshot, &self.published) {

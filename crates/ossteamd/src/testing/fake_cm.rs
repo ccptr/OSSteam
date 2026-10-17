@@ -2,9 +2,10 @@
 //! A fake CM for the daemon integration tests (SPEC §19.1 level 3). Test
 //! code only (FAITH-4).
 //!
-//! It answers the messages M1a sends, as `cm.md`, `auth.md` and `pics.md`
-//! describe them: the sign-in service methods, logon and logoff, the
-//! license list, PICS and persona state. It checks what the daemon sends
+//! It answers the messages M1a and M1b send, as `cm.md`, `auth.md`,
+//! `pics.md` and `content.md` describe them: the sign-in service methods,
+//! logon and logoff, the license list, PICS, persona state, depot keys,
+//! manifest request codes, the content server list and CDN auth tokens. It checks what the daemon sends
 //! (the password is decrypted, codes and tokens are compared) so a test
 //! fails when the daemon gets the protocol wrong. Where those pages mark a
 //! server behaviour as unverified, the fake picks one reading; the
@@ -17,6 +18,8 @@ use std::time::{Duration, Instant};
 use base64::Engine as _;
 use base64::engine::general_purpose::{STANDARD, URL_SAFE_NO_PAD};
 use crossbeam_channel::Sender;
+use ossteam_content::download::Tokens;
+use ossteam_content::fake::{Depot, FakeCdn};
 use ossteam_net::conn::method_name;
 use ossteam_net::{CmKind, CmServer, ConnectError, Connection, Incoming, Packet};
 use ossteam_proto::ServiceMethod;
@@ -27,13 +30,21 @@ use ossteam_proto::steam::{
     CAuthenticationGetPasswordRsaPublicKeyResponse, CAuthenticationPollAuthSessionStatusRequest,
     CAuthenticationPollAuthSessionStatusResponse,
     CAuthenticationUpdateAuthSessionWithSteamGuardCodeRequest,
-    CAuthenticationUpdateAuthSessionWithSteamGuardCodeResponse, CMsgClientAccountInfo,
-    CMsgClientChangeStatus, CMsgClientLicenseList, CMsgClientLoggedOff, CMsgClientLogon,
-    CMsgClientLogonResponse, CMsgClientPicsAccessTokenRequest, CMsgClientPicsAccessTokenResponse,
-    CMsgClientPicsChangesSinceRequest, CMsgClientPicsChangesSinceResponse,
-    CMsgClientPicsProductInfoRequest, CMsgClientPicsProductInfoResponse, EAuthSessionGuardType,
-    EMsg, authentication, c_msg_client_license_list, c_msg_client_pics_access_token_response,
+    CAuthenticationUpdateAuthSessionWithSteamGuardCodeResponse,
+    CContentServerDirectoryGetCdnAuthTokenRequest, CContentServerDirectoryGetCdnAuthTokenResponse,
+    CContentServerDirectoryGetManifestRequestCodeRequest,
+    CContentServerDirectoryGetManifestRequestCodeResponse,
+    CContentServerDirectoryGetServersForSteamPipeRequest,
+    CContentServerDirectoryGetServersForSteamPipeResponse, CContentServerDirectoryServerInfo,
+    CMsgClientAccountInfo, CMsgClientChangeStatus, CMsgClientGetDepotDecryptionKey,
+    CMsgClientGetDepotDecryptionKeyResponse, CMsgClientLicenseList, CMsgClientLoggedOff,
+    CMsgClientLogon, CMsgClientLogonResponse, CMsgClientPicsAccessTokenRequest,
+    CMsgClientPicsAccessTokenResponse, CMsgClientPicsChangesSinceRequest,
+    CMsgClientPicsChangesSinceResponse, CMsgClientPicsProductInfoRequest,
+    CMsgClientPicsProductInfoResponse, EAuthSessionGuardType, EMsg, authentication,
+    c_msg_client_license_list, c_msg_client_pics_access_token_response,
     c_msg_client_pics_changes_since_response, c_msg_client_pics_product_info_response,
+    content_server_directory as csd,
 };
 use ossteam_types::{CancelToken, EResult, SteamId};
 use ossteam_vdf::{Object, Value, binary, text};
@@ -50,6 +61,10 @@ pub const ENDPOINT: &str = "fake-cm.invalid:443";
 /// floors it at 100 ms.
 const POLL_INTERVAL: f32 = 0.1;
 const HEARTBEAT_SECONDS: i32 = 9;
+
+/// The one content server the fake lists. Nothing resolves it: the
+/// daemon's downloads go to a [`FakeCdn`].
+pub const CONTENT_SERVER: &str = "cdn.fake.invalid";
 
 /// How the fake asks for Steam Guard (`auth.md` §2 step 4).
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -101,6 +116,8 @@ struct App {
     app_type: String,
     parent: Option<u32>,
     change_number: u32,
+    /// Further sections of the app's info, such as `depots` and `config`.
+    sections: Vec<(String, Object)>,
 }
 
 struct AuthSession {
@@ -133,6 +150,11 @@ struct State {
     persona_states: Vec<(SteamId, u32)>,
     /// Asks every live connection to drop.
     generation: u64,
+    /// Depot keys Steam grants.
+    depot_keys: HashMap<u32, [u8; 32]>,
+    /// Manifest request codes, by depot and manifest.
+    request_codes: HashMap<(u32, u64), u64>,
+    cdn: Option<Arc<FakeCdn>>,
 }
 
 struct Shared {
@@ -202,6 +224,7 @@ impl FakeCm {
                     app_type: app_type.into(),
                     parent,
                     change_number,
+                    sections: Vec::new(),
                 },
             );
         }
@@ -227,6 +250,44 @@ impl FakeCm {
         let app = s.apps.get_mut(&id).expect("a known app");
         app.name = name.into();
         app.change_number = n;
+    }
+
+    /// Sets a section of an app's info (`depots`, `config`, ...) in a new
+    /// PICS change.
+    pub fn app_section(&self, id: u32, key: &str, section: Object) {
+        let mut s = self.state();
+        s.change_number += 1;
+        let n = s.change_number;
+        let app = s.apps.get_mut(&id).expect("a known app");
+        app.sections.retain(|(k, _)| k != key);
+        app.sections.push((key.into(), section));
+        app.change_number = n;
+    }
+
+    /// Serves content from `cdn`: the content server list names
+    /// [`CONTENT_SERVER`], and CDN auth tokens are the ones `cdn` wants.
+    pub fn cdn(self, cdn: Arc<FakeCdn>) -> Self {
+        self.state().cdn = Some(cdn);
+        self
+    }
+
+    /// Publishes a depot's manifest under `code` on the CDN, and grants
+    /// its key.
+    pub fn publish(&self, depot: &Depot, code: u64) {
+        let mut s = self.state();
+        let id = depot.manifest.depot.0;
+        s.depot_keys.insert(id, *depot.key.expose());
+        s.request_codes.insert((id, depot.manifest.id.0), code);
+        s.cdn
+            .as_ref()
+            .expect("FakeCm::cdn first")
+            .publish(depot, code);
+    }
+
+    /// Refuses the key of `depot` from now on, as Steam does for a depot
+    /// the account does not own.
+    pub fn refuse_key(&self, depot: u32) {
+        self.state().depot_keys.remove(&depot);
     }
 
     /// Approves the pending sign-in of `account` in the "mobile app": a
@@ -400,6 +461,21 @@ impl FakeCm {
                 vec![reply_to(p, EMsg::KEMsgClientPicsAccessTokenResponse, &r)]
             }
             EMsg::KEMsgClientPicsProductInfoRequest => vec![self.product_info(p)],
+            EMsg::KEMsgClientGetDepotDecryptionKey => {
+                assert!(conn.logged_on.is_some(), "depot key before logon");
+                let body: CMsgClientGetDepotDecryptionKey = decode(p);
+                let key = self.state().depot_keys.get(&body.depot_id()).copied();
+                let r = CMsgClientGetDepotDecryptionKeyResponse {
+                    eresult: Some(key.map_or(EResult::ACCESS_DENIED, |_| EResult::OK).0),
+                    depot_id: body.depot_id,
+                    depot_encryption_key: key.map(|k| k.to_vec()),
+                };
+                vec![reply_to(
+                    p,
+                    EMsg::KEMsgClientGetDepotDecryptionKeyResponse,
+                    &r,
+                )]
+            }
             other => panic!("the fake CM does not handle {other:?}"),
         }
     }
@@ -451,6 +527,60 @@ impl FakeCm {
             service_reply(p, self.submit_code(&decode(p)))
         } else if is::<authentication::PollAuthSessionStatus>(&name) {
             service_reply(p, self.poll(&decode(p)))
+        } else if is::<csd::GetServersForSteamPipe>(&name) {
+            let _: CContentServerDirectoryGetServersForSteamPipeRequest = decode(p);
+            let server = CContentServerDirectoryServerInfo {
+                r#type: Some("CDN".into()),
+                source_id: Some(1),
+                cell_id: Some(0),
+                load: Some(0),
+                weighted_load: Some(0.0),
+                num_entries_in_client_list: Some(1),
+                host: Some(CONTENT_SERVER.into()),
+                vhost: Some(CONTENT_SERVER.into()),
+                https_support: Some("mandatory".into()),
+                ..Default::default()
+            };
+            service_reply(
+                p,
+                Ok(CContentServerDirectoryGetServersForSteamPipeResponse {
+                    servers: vec![server],
+                    no_change: None,
+                }),
+            )
+        } else if is::<csd::GetManifestRequestCode>(&name) {
+            let body: CContentServerDirectoryGetManifestRequestCodeRequest = decode(p);
+            // Unverified (content.md §3): what Steam answers for a manifest
+            // it will not serve. The fake answers code 0.
+            let code = self
+                .state()
+                .request_codes
+                .get(&(body.depot_id(), body.manifest_id()))
+                .copied()
+                .unwrap_or(0);
+            service_reply(
+                p,
+                Ok(CContentServerDirectoryGetManifestRequestCodeResponse {
+                    manifest_request_code: Some(code),
+                }),
+            )
+        } else if is::<csd::GetCdnAuthToken>(&name) {
+            let body: CContentServerDirectoryGetCdnAuthTokenRequest = decode(p);
+            let cdn = self.state().cdn.clone().expect("FakeCm::cdn first");
+            let (token, until) = cdn
+                .token(
+                    ossteam_types::DepotId(body.depot_id()),
+                    body.host_name(),
+                    &CancelToken::new(),
+                )
+                .expect("the fake CDN issues tokens");
+            service_reply(
+                p,
+                Ok(CContentServerDirectoryGetCdnAuthTokenResponse {
+                    token: Some(token),
+                    expiration_time: Some(until.min(u64::from(u32::MAX)) as u32),
+                }),
+            )
         } else {
             panic!("the fake CM does not handle {name}");
         }
@@ -779,6 +909,9 @@ fn app_buffer(id: u32, app: &App) -> Vec<u8> {
     let mut info = Object::new();
     info.push("appid", id.to_string());
     info.push("common", common);
+    for (k, v) in &app.sections {
+        info.push(k.as_str(), v.clone());
+    }
     let mut root = Object::new();
     root.push("appinfo", info);
     let mut buf = text::to_string(&root).into_bytes();

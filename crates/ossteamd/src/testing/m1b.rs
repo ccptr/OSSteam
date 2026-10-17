@@ -342,6 +342,63 @@ fn a_refused_dlc_key_installs_the_rest() {
 }
 
 #[test]
+fn a_depot_shared_from_an_app_outside_the_library() {
+    // Redist is in no package, as 228980 is in none of an account's: its
+    // info is fetched only because Alpha's depots name it.
+    const REDIST: u32 = 20;
+    const SHARED: u32 = 201;
+    let shared_depots = |manifest: u64| {
+        section(&format!(
+            r#""{SHARED}" {{ "manifests" {{ "public" {{ "gid" "{manifest}" "size" "1" }} }} }}"#
+        ))
+    };
+    let cdn = Arc::new(FakeCdn::new());
+    let cm = steam(&cdn).app(REDIST, "Redist", "Config", None);
+    cm.app_section(REDIST, "config", section(r#""installdir" "Redist""#));
+    let game = data(1, 100);
+    let vcredist = data(2, 100);
+    cm.publish(&depot(BASE, 1001, &[("game", &game)]), 11);
+    cm.publish(&depot(SHARED, 3001, &[("vcredist", &vcredist)]), 31);
+    cm.app_section(REDIST, "depots", shared_depots(3001));
+    cm.app_section(
+        ALPHA,
+        "depots",
+        section(&format!(
+            r#""{BASE}" {{ "manifests" {{ "public" {{ "gid" "1001" "size" "1" }} }} }}
+               "{SHARED}" {{ "depotfromapp" "{REDIST}" "sharedinstall" "1" }}"#
+        )),
+    );
+    let root = Root::new();
+    let d = TestDaemon::start_with_cdn(&root, &cm, POLL, cdn.clone());
+    login(&d);
+    let c = d.subscribed(&[Topic::Jobs]);
+    c.set_setting("content.auto_update", Some("never"))
+        .expect("setting");
+    let apps = c.list_apps("", false).expect("list apps").apps;
+    assert!(apps.iter().all(|a| a.app_id != REDIST), "{apps:?}");
+
+    // The shared depot goes to Redist's directory, next to Alpha's.
+    done(&c, c.install(ALPHA, "", "").expect("install queued"));
+    let i = installed(&c, ALPHA).expect("installed");
+    let dir = PathBuf::from(&i.path);
+    assert_eq!(read(&dir, "game"), game);
+    let redist_dir = dir.parent().unwrap().join("Redist");
+    assert_eq!(read(&redist_dir, "vcredist"), vcredist);
+
+    // A new manifest in Redist's info alone is an update for Alpha.
+    let vcredist2 = data(3, 100);
+    cm.publish(&depot(SHARED, 3002, &[("vcredist", &vcredist2)]), 32);
+    cm.app_section(REDIST, "depots", shared_depots(3002));
+    wait_until("the update to be known", || {
+        installed(&c, ALPHA).is_some_and(|i| i.update_available)
+    });
+    let jobs = c.update(&[ALPHA], false).expect("update queued");
+    done(&c, jobs.into_iter().next().unwrap());
+    assert_eq!(read(&redist_dir, "vcredist"), vcredist2);
+    assert!(!installed(&c, ALPHA).expect("installed").update_available);
+}
+
+#[test]
 fn library_folders_and_job_controls() {
     let cdn = Arc::new(FakeCdn::new());
     let cm = steam(&cdn);

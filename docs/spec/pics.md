@@ -157,7 +157,12 @@ When a license list arrives, the daemon:
    the full info of every package that is not cached or whose cached
    change number differs;
 3. collects the apps those packages grant, requests their access tokens
-   (§2), and does the same check and fetch for the apps.
+   (§2), and does the same check and fetch for the apps;
+4. collects the apps named by `depotfromapp` in those apps' depots that
+   are not granted apps themselves, and does step 3 for them. Installs
+   read the shared depots' manifests from their info (`content.md` §6,
+   rule 7), and update detection their changes. They are not added to the
+   library (§7).
 
 Checking metadata at every logon, rather than trusting the change number
 saved by an earlier run, keeps entries correct even when they were cached

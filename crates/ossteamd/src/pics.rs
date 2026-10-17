@@ -119,6 +119,8 @@ struct AppEntry {
     change_number: u32,
     missing_token: bool,
     summary: AppSummary,
+    /// The apps its depots are shared from (`depotfromapp`).
+    depot_sources: Vec<AppId>,
 }
 
 /// What the cache holds for an id, as far as the worker has looked.
@@ -376,6 +378,36 @@ impl Worker {
             .filter_map(|p| self.packages.get(p).and_then(Option::as_ref))
             .flat_map(|e| e.apps.iter().copied())
             .collect();
+        self.update_apps(requester, &apps, changes)?;
+        // Apps whose depots the library's apps share (`content.md` §6,
+        // rule 7). They are not in the library, but installs read their
+        // manifests, and update detection their changes.
+        let sources: BTreeSet<AppId> = apps
+            .iter()
+            .filter_map(|a| self.apps.get(a).and_then(Option::as_ref))
+            .flat_map(|e| e.depot_sources.iter().copied())
+            .filter(|a| !apps.contains(a))
+            .collect();
+        if !sources.is_empty() {
+            self.update_apps(requester, &sources, changes)?;
+        }
+
+        self.change_number = current;
+        if let Err(e) = self.cache.set_change_number(current) {
+            tracing::warn!("cannot save the PICS change number: {e}");
+        }
+        Ok(())
+    }
+
+    /// Requests access tokens for `apps` not asked about yet, then fetches
+    /// the info of those that are missing from the cache or stale, as
+    /// [`Self::bring_up_to_date`] does for packages.
+    fn update_apps(
+        &mut self,
+        requester: &Requester,
+        apps: &BTreeSet<AppId>,
+        changes: Option<&Changes>,
+    ) -> Result<(), RequestError> {
         let new: Vec<AppId> = apps
             .iter()
             .filter(|a| !self.tokens_asked.contains(a))
@@ -390,7 +422,7 @@ impl Worker {
                 .extend(t.tokens.into_iter().filter(|&(_, token)| token != 0));
             self.tokens_asked.extend(new);
         }
-        for &a in &apps {
+        for &a in apps {
             self.load_app(a);
         }
         let check_all = changes.is_none_or(|c| c.full_apps);
@@ -416,11 +448,6 @@ impl Worker {
             tracing::info!(count = stale.len(), "fetching app info");
             let fetched = request::product_info(requester, &stale, &[], false, &self.stop)?;
             self.take_apps(fetched);
-        }
-
-        self.change_number = current;
-        if let Err(e) = self.cache.set_change_number(current) {
-            tracing::warn!("cannot save the PICS change number: {e}");
         }
         Ok(())
     }
@@ -612,5 +639,11 @@ fn app_entry(info: &Info) -> AppEntry {
         change_number: info.change_number,
         missing_token: info.missing_token,
         summary: AppInfo(&info.data).summary(),
+        depot_sources: AppInfo(&info.data)
+            .depots()
+            .into_iter()
+            .filter_map(|d| d.from_app)
+            .filter(|a| a.0 != 0)
+            .collect(),
     }
 }

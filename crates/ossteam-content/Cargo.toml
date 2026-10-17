@@ -1,0 +1,33 @@
+[package]
+name = "ossteam-content"
+description = "Steam content: CDN servers, depot keys, manifests, chunks and the install engine"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+ossteam-types.workspace = true
+ossteam-proto.workspace = true
+ossteam-net.workspace = true
+aes.workspace = true
+base64.workspace = true
+cbc.workspace = true
+crc32fast.workspace = true
+flate2.workspace = true
+lzma-rs.workspace = true
+prost.workspace = true
+sha1.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+ureq.workspace = true
+zeroize.workspace = true
+zstd.workspace = true
+
+# Encoders for test fixtures and the daemon's fake CDN (FAITH-4). Only
+# dev-dependencies turn this on, so release builds never contain them.
+[features]
+testing = []
+
+[lints]
+workspace = true

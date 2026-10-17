@@ -13,6 +13,7 @@ Unlicense); they keep whatever notices they carry upstream.
 
 ## Files
 
+- `content_manifest.proto`
 - `encrypted_app_ticket.proto`
 - `enums.proto`
 - `enums_clientserver.proto`
@@ -24,6 +25,7 @@ Unlicense); they keep whatever notices they carry upstream.
 - `steammessages_clientserver_appinfo.proto`
 - `steammessages_clientserver_friends.proto`
 - `steammessages_clientserver_login.proto`
+- `steammessages_contentsystem.steamclient.proto`
 - `steammessages_unified_base.steamclient.proto`
 
 ## Patches

@@ -7,6 +7,7 @@ members = [
     "crates/ossteam-net",
     "crates/ossteam-auth",
     "crates/ossteam-pics",
+    "crates/ossteam-content",
     "crates/ossteam-ipc",
     "crates/ossteamd",
     "crates/ossteam-cli",
@@ -20,6 +21,7 @@ default-members = [
     "crates/ossteam-net",
     "crates/ossteam-auth",
     "crates/ossteam-pics",
+    "crates/ossteam-content",
     "crates/ossteam-ipc",
     "crates/ossteamd",
     "crates/ossteam-cli",
@@ -39,16 +41,21 @@ ossteam-proto = { path = "crates/ossteam-proto" }
 ossteam-net = { path = "crates/ossteam-net" }
 ossteam-auth = { path = "crates/ossteam-auth" }
 ossteam-pics = { path = "crates/ossteam-pics" }
+ossteam-content = { path = "crates/ossteam-content" }
 ossteam-ipc = { path = "crates/ossteam-ipc" }
 
+aes = "0.8.4"
 anyhow = "1.0.104"
 base64 = "0.23.1"
+cbc = { version = "0.1.2", features = ["alloc"] }
 clap = { version = "4.6.7", features = ["derive", "wrap_help"] }
 clap_complete = "4.6.11"
+crc32fast = "1.5.2"
 crossbeam-channel = "0.5.17"
 directories = "6.0.0"
 flate2 = "1.1.10"
 interprocess = "2.4.6"
+lzma-rs = "0.3.0"
 polling = "3.11.0"
 prost = "0.14.4"
 prost-build = "0.14.4"
@@ -62,6 +69,7 @@ rustls = { version = "0.23.46", default-features = false, features = ["ring", "s
 rustls-platform-verifier = "0.7.1"
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.154"
+sha1 = "0.11.0"
 socket2 = "0.6.5"
 thiserror = "2.0.21"
 toml = "1.1.8"
@@ -72,6 +80,7 @@ tungstenite = { version = "0.30.0", default-features = false, features = ["hands
 ureq = { version = "3.4.2", default-features = false, features = ["rustls-no-provider", "platform-verifier", "gzip"] }
 windows-sys = "0.61.2"
 zeroize = "1.9.1"
+zstd = { version = "0.14.3", default-features = false }
 
 # gpui is pinned to one zed revision; bump deliberately (SPEC §23). The
 # toolchain in rust-toolchain.toml follows that revision's requirement.

@@ -30,17 +30,22 @@ pub fn client_config() -> Result<Arc<ClientConfig>, rustls::Error> {
     Ok(CONFIG.get_or_init(|| Arc::new(config)).clone())
 }
 
+/// An agent configuration with the TLS policy set, for callers that need
+/// their own timeouts or pool sizes.
+pub fn agent_config() -> ureq::config::ConfigBuilder<ureq::typestate::AgentScope> {
+    use ureq::tls::{RootCerts, TlsConfig, TlsProvider};
+    ureq::Agent::config_builder().tls_config(
+        TlsConfig::builder()
+            .provider(TlsProvider::Rustls)
+            .unversioned_rustls_crypto_provider(provider())
+            .root_certs(RootCerts::PlatformVerifier)
+            .build(),
+    )
+}
+
 /// An HTTP agent for WebAPI requests, with the same TLS policy.
 pub fn http_agent() -> ureq::Agent {
-    use ureq::tls::{RootCerts, TlsConfig, TlsProvider};
-    ureq::Agent::config_builder()
-        .tls_config(
-            TlsConfig::builder()
-                .provider(TlsProvider::Rustls)
-                .unversioned_rustls_crypto_provider(provider())
-                .root_certs(RootCerts::PlatformVerifier)
-                .build(),
-        )
+    agent_config()
         .timeout_global(Some(std::time::Duration::from_secs(30)))
         .build()
         .new_agent()

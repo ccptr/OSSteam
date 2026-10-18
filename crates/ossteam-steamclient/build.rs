@@ -73,7 +73,7 @@ fn main() {
     println!("cargo::rerun-if-changed={}", table.display());
     println!("cargo::rerun-if-changed={}", implemented.display());
 
-    let versions = parse_table(&table);
+    let mut versions = parse_table(&table);
     let mut impls = parse_implemented(&implemented);
     let os = std::env::var("CARGO_CFG_TARGET_OS").expect("set by cargo");
     let arch = std::env::var("CARGO_CFG_TARGET_ARCH").expect("set by cargo");
@@ -81,6 +81,11 @@ fn main() {
         windows: os == "windows",
         thiscall: os == "windows" && arch == "x86",
     };
+    if !target.windows {
+        for v in &mut versions {
+            declaration_order(&mut v.slots);
+        }
+    }
     let code = generate(&versions, &mut impls, &target);
     for i in &impls {
         if !i.used {
@@ -146,6 +151,30 @@ fn parse_table(path: &Path) -> Vec<Version> {
         });
     }
     versions
+}
+
+/// The table lists overloads as MSVC lays them out: next to each other,
+/// the last declared first. Proton names the n-th declared overload
+/// `<Method>_<n>` from the second on. The Itanium C++ ABI (Linux, macOS)
+/// keeps declaration order, so each run of overloads is reversed there
+/// (`steamworks-abi.md` §2.4).
+fn declaration_order(slots: &mut [Slot]) {
+    fn base(method: &str) -> &str {
+        match method.rsplit_once('_') {
+            Some((b, n)) if !n.is_empty() && n.bytes().all(|c| c.is_ascii_digit()) => b,
+            _ => method,
+        }
+    }
+    let mut start = 0;
+    while start < slots.len() {
+        let name = base(&slots[start].method).to_owned();
+        let mut end = start + 1;
+        while end < slots.len() && base(&slots[end].method) == name {
+            end += 1;
+        }
+        slots[start..end].reverse();
+        start = end;
+    }
 }
 
 fn parse_implemented(path: &Path) -> Vec<Implemented> {

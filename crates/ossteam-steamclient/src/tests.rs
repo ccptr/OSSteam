@@ -215,6 +215,23 @@ fn str_at<'a>(p: *const c_char) -> &'a str {
     unsafe { CStr::from_ptr(p) }.to_str().unwrap()
 }
 
+/// Overloads keep their declaration order outside Windows (§2.4).
+#[test]
+fn overloads_in_declaration_order() {
+    let v = &VERSIONS[find_version(b"STEAMUSERSTATS_INTERFACE_VERSION013").unwrap()];
+    let methods: Vec<&str> = (0..4).map(|i| SLOTS[v.first_slot + i].method).collect();
+    assert_eq!(methods, ["GetStat", "GetStat_2", "SetStat", "SetStat_2"]);
+    let v = &VERSIONS[find_version(b"STEAMINVENTORY_INTERFACE_V003").unwrap()];
+    let at = (0..v.vtable.len())
+        .find(|&i| SLOTS[v.first_slot + i].method == "SetProperty")
+        .unwrap();
+    let methods: Vec<&str> = (at..at + 4).map(|i| SLOTS[v.first_slot + i].method).collect();
+    assert_eq!(
+        methods,
+        ["SetProperty", "SetProperty_2", "SetProperty_3", "SetProperty_4"]
+    );
+}
+
 #[test]
 fn a_game_session() {
     let base = std::env::temp_dir().join(format!("ossteam-shim-{}", std::process::id()));

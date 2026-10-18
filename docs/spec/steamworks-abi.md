@@ -263,6 +263,19 @@ Each line after it is one slot: `<slot> <Method>(<name>: <type>, ...) ->
 | `InputMotionData_t`, `ControllerMotionData_t` | 40 bytes: ten `f32` |
 | `SteamPartyBeaconLocation_t`, `RemoteStorageUpdatePublishedFileRequest_t` | structures passed by value, 12 and 40 bytes on 32-bit Windows; never implemented in M1 |
 
+**Overloads.** A few interfaces declare one method name more than once
+(`ISteamUserStats::GetStat` for `int32` and for `float`, and others).
+Proton names the second declaration `<Method>_2`, the third
+`<Method>_3`, and lists the slots as MSVC lays them out: next to each
+other, the last declaration first. The Itanium C++ ABI that GCC and
+Clang follow on Linux and macOS keeps the declaration order. So on those
+targets each run of overloads is reversed: `GetStat` (`int32`) takes the
+first slot of its pair and `GetStat_2` (`float`) the second, where
+Windows has them the other way round. Every overloaded method in the
+table has its declarations next to each other, so reversing each run is
+the whole difference. *Unverified* against a native game until the
+acceptance runs; a swapped pair would read an `int32` stat as a `float`.
+
 The table has 212 versions of 38 interfaces, 6555 slots. The official
 client also answers versions that no published SDK declares
 (`SteamClient022`, `SteamFriends016`, `SteamUtils001` and others found

@@ -4,7 +4,7 @@
 |---|---|
 | Status | Draft for M1d. §1 to §4 observed in the official Linux client's app-info cache and logs; §5 and §6 follow Valve's published compat-tool interface; the rest is ossteam's design, partly unverified |
 | Requirements | SPEC §11.2 (COMPAT-1 to COMPAT-3), PLAT-2, LAUNCH-4, LAUNCH-5, FAITH-1, DIRS-1, RE-2 |
-| Code | tool list, mappings, manifests and chains in `crates/ossteam-launch/src/compat/`; the daemon's side in `crates/ossteamd/src/compat.rs` |
+| Code | tool list, mappings, manifests and chains in `crates/ossteam-launch/src/compat/`; the daemon's side in `crates/ossteamd/src/core/compat.rs` |
 
 A compatibility tool is a program that ossteam puts in front of a game's
 command line. Valve ships two kinds as Steam apps: the Steam Linux Runtime

@@ -14,7 +14,7 @@ use crate::content::script::{Key, ScriptFile, ValueRef};
 pub const FILE_NAME: &str = "state.db";
 
 /// The schema version this build writes, kept in `PRAGMA user_version`.
-const SCHEMA_VERSION: i64 = 5;
+const SCHEMA_VERSION: i64 = 6;
 
 const SCHEMA_V1: &str = "
     CREATE TABLE accounts (
@@ -106,6 +106,13 @@ const SCHEMA_V5: &str = "
     );
 ";
 
+/// The platform an app's depots were chosen for (`compat-tools.md` §4):
+/// `windows` for an app run by Proton on Linux. Empty is the host's, which
+/// every install before this column had.
+const SCHEMA_V6: &str = "
+    ALTER TABLE installed_apps ADD COLUMN platform TEXT NOT NULL DEFAULT '';
+";
+
 /// The persona state a user chose (`pics.md` §8). The numbers are stored
 /// and must not change.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -167,7 +174,7 @@ impl Db {
         conn.pragma_update(None, "foreign_keys", true)?;
         let version: i64 = conn.pragma_query_value(None, "user_version", |r| r.get(0))?;
         match version {
-            0..=4 => {
+            0..=5 => {
                 let tx = conn.unchecked_transaction()?;
                 for (from, schema) in [
                     (0, SCHEMA_V1),
@@ -175,6 +182,7 @@ impl Db {
                     (2, SCHEMA_V3),
                     (3, SCHEMA_V4),
                     (4, SCHEMA_V5),
+                    (5, SCHEMA_V6),
                 ] {
                     if version <= from {
                         tx.execute_batch(schema)?;
@@ -361,6 +369,8 @@ pub struct InstalledApp {
     pub build_id: u32,
     pub size: u64,
     pub update_available: bool,
+    /// What the depots were chosen for: `windows`, `macos` or `linux`.
+    pub platform: String,
     pub depots: Vec<InstalledDepot>,
     pub scripts: Vec<ScriptFile>,
     /// What the scripts wrote, for verify and uninstall to remove.
@@ -419,7 +429,8 @@ impl Db {
 
     pub fn installed_apps(&self) -> anyhow::Result<Vec<InstalledApp>> {
         let mut stmt = self.conn.prepare(
-            "SELECT app_id, folder_id, install_dir, branch, build_id, size, update_available
+            "SELECT app_id, folder_id, install_dir, branch, build_id, size, update_available,
+                    platform
              FROM installed_apps ORDER BY app_id",
         )?;
         let mut apps: Vec<InstalledApp> = stmt
@@ -432,6 +443,7 @@ impl Db {
                     build_id: r.get(4)?,
                     size: r.get::<_, i64>(5)? as u64,
                     update_available: r.get(6)?,
+                    platform: r.get(7)?,
                     depots: Vec::new(),
                     scripts: Vec::new(),
                     script_values: Vec::new(),
@@ -512,8 +524,9 @@ impl Db {
         )?;
         tx.execute(
             "INSERT INTO installed_apps
-                 (app_id, folder_id, install_dir, branch, build_id, size, update_available)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+                 (app_id, folder_id, install_dir, branch, build_id, size, update_available,
+                  platform)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
             params![
                 app.app_id.0,
                 app.folder_id,
@@ -521,7 +534,8 @@ impl Db {
                 app.branch,
                 app.build_id,
                 app.size as i64,
-                app.update_available
+                app.update_available,
+                app.platform
             ],
         )?;
         for d in &app.depots {
@@ -790,6 +804,7 @@ mod tests {
             build_id: 7,
             size: 1 << 40,
             update_available: false,
+            platform: "linux".into(),
             depots: vec![InstalledDepot {
                 depot: DepotId(481),
                 manifest: ManifestId(u64::MAX - 1),

@@ -23,6 +23,7 @@ use crate::session::{self, Cmd, ReplyTo, Report};
 use crate::tickets as auth;
 use crate::{assets, content, launch, library, pics, stats};
 
+mod compat;
 mod games;
 mod jobs;
 mod shim;
@@ -662,14 +663,17 @@ impl Core {
         } else {
             Some(def.parse(&req.value).map_err(invalid)?)
         };
-        let stored = value.map(|v| v.to_string());
+        if let Some(config::Value::Text(name)) = &value {
+            self.check_tool_setting(def.key, name)?;
+        }
+        let stored = value.as_ref().map(ToString::to_string);
         self.db
-            .set_setting_override(def.key, stored.as_deref())
+            .set_setting_override(&config::canonical(key), stored.as_deref())
             .map_err(|e| internal(&e))?;
-        let before = self.config.proto(def);
-        self.config.set_override(def, value);
-        let after = self.config.proto(def);
-        tracing::info!(key = def.key, value = %after.value, reset = req.reset, "setting changed");
+        let before = self.config.proto(key);
+        self.config.set_override(key, value);
+        let after = self.config.proto(key);
+        tracing::info!(key = %after.key, value = %after.value, reset = req.reset, "setting changed");
         self.apply_settings();
         self.update_shims();
         if after != before {

@@ -50,6 +50,8 @@ pub struct Spec {
     pub owned: HashSet<AppId>,
     pub low_violence: bool,
     pub language: String,
+    /// The platform whose depots the install takes (`compat-tools.md` §4).
+    pub host: Host,
     /// What is installed now.
     pub installed: Option<InstalledApp>,
     /// Every other installed app, for uninstalling shared depots.
@@ -467,7 +469,7 @@ impl Runner<'_> {
             branch: &spec.branch,
             language: &spec.language,
             low_violence: spec.low_violence,
-            host: Host::this(),
+            host: spec.host,
             owns: &owns,
         };
         let chosen = depots::choose(&spec.info, &others, &want)?;
@@ -476,8 +478,7 @@ impl Runner<'_> {
                 ErrorCode::Unsupported,
                 format!(
                     "the app has no depots for {} on branch {:?}",
-                    Host::this().os,
-                    spec.branch
+                    spec.host.os, spec.branch
                 ),
             ));
         }
@@ -561,6 +562,7 @@ impl Runner<'_> {
             build_id: build_id(&spec.info, &spec.branch),
             size: job.depots.iter().map(|w| w.manifest.original_size).sum(),
             update_available: false,
+            platform: spec.host.os.to_owned(),
             depots: recorded,
             // Nothing runs yet (`install-scripts.md` §3).
             scripts: job

@@ -9,9 +9,14 @@ use std::collections::BTreeMap;
 use std::path::Path;
 
 use ossteam_ipc::v1;
+use ossteam_types::AppId;
 
 pub const FILE_NAME: &str = "ossteamd.toml";
 
+pub const COMPAT_DEFAULT_TOOL: &str = "compat.default_tool";
+/// The family `compat.tool.<app id>` (`compat-tools.md` §8).
+pub const COMPAT_TOOL: &str = "compat.tool.<app id>";
+const COMPAT_TOOL_PREFIX: &str = "compat.tool.";
 pub const SECRETS_FILE_FALLBACK: &str = "secrets.file_fallback";
 pub const CONTENT_AUTO_UPDATE: &str = "content.auto_update";
 pub const CONTENT_BANDWIDTH_LIMIT: &str = "content.bandwidth_limit";
@@ -29,14 +34,17 @@ pub enum Kind {
     },
     /// One of a fixed list of words.
     Choice(&'static [&'static str]),
+    /// Any text, trimmed; what it may name is checked where it is used.
+    Text,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Value {
     Bool(bool),
     Int(i64),
     /// One of a [`Kind::Choice`]'s words.
     Word(&'static str),
+    Text(String),
 }
 
 /// The languages Steam names depots by (`content.md` §6, §13).
@@ -92,6 +100,7 @@ impl Kind {
                 .find(|w| **w == text.trim())
                 .map(|w| Value::Word(w))
                 .ok_or_else(|| self.expected()),
+            Self::Text => Ok(Value::Text(text.trim().to_owned())),
         }
     }
 
@@ -107,6 +116,7 @@ impl Kind {
             Self::Bool => "must be true or false".into(),
             Self::Integer { min, max } => format!("must be a whole number from {min} to {max}"),
             Self::Choice(words) => format!("must be one of {}", words.join(", ")),
+            Self::Text => "must be text".into(),
         }
     }
 
@@ -114,7 +124,7 @@ impl Kind {
         match (self, value) {
             (Self::Bool, toml::Value::Boolean(b)) => Ok(Value::Bool(*b)),
             (Self::Integer { .. }, toml::Value::Integer(n)) => self.int(*n),
-            (Self::Choice(_), toml::Value::String(s)) => self.parse(s),
+            (Self::Choice(_) | Self::Text, toml::Value::String(s)) => self.parse(s),
             _ => Err(self.expected()),
         }
     }
@@ -123,7 +133,7 @@ impl Kind {
         match self {
             Self::Bool => v1::SettingKind::Bool,
             Self::Integer { .. } => v1::SettingKind::Integer,
-            Self::Choice(_) => v1::SettingKind::String,
+            Self::Choice(_) | Self::Text => v1::SettingKind::String,
         }
     }
 }
@@ -134,11 +144,13 @@ impl std::fmt::Display for Value {
             Self::Bool(b) => write!(f, "{b}"),
             Self::Int(n) => write!(f, "{n}"),
             Self::Word(w) => f.write_str(w),
+            Self::Text(t) => f.write_str(t),
         }
     }
 }
 
 pub struct Def {
+    /// For a family, the key with `<app id>` where the app id goes.
     pub key: &'static str,
     pub kind: Kind,
     pub default: Value,
@@ -147,6 +159,20 @@ pub struct Def {
 
 /// Every setting this build knows, sorted by key.
 pub const DEFS: &[Def] = &[
+    Def {
+        key: COMPAT_DEFAULT_TOOL,
+        kind: Kind::Text,
+        default: Value::Word("proton_experimental"),
+        description: "Linux: the compatibility tool for apps without a Linux version that no \
+                      other mapping covers, by name; empty for none.",
+    },
+    Def {
+        key: COMPAT_TOOL,
+        kind: Kind::Text,
+        default: Value::Word(""),
+        description: "Linux: the compatibility tool for one app, by name or selectable alias; \
+                      empty for Valve's mapping.",
+    },
     Def {
         key: CONTENT_AUTO_UPDATE,
         kind: Kind::Choice(&["always", "never"]),
@@ -190,8 +216,26 @@ pub const DEFS: &[Def] = &[
     },
 ];
 
+/// The setting `key` names: one of [`DEFS`], or a member of a family
+/// such as `compat.tool.570`.
 pub fn def(key: &str) -> Option<&'static Def> {
-    DEFS.iter().find(|d| d.key == key)
+    if family_app(key).is_some() {
+        return DEFS.iter().find(|d| d.key == COMPAT_TOOL);
+    }
+    DEFS.iter().find(|d| d.key == key && !d.is_family())
+}
+
+/// The app of a `compat.tool.<app id>` key.
+fn family_app(key: &str) -> Option<AppId> {
+    let id = key.strip_prefix(COMPAT_TOOL_PREFIX)?;
+    (!id.is_empty() && id.bytes().all(|b| b.is_ascii_digit()))
+        .then(|| id.parse().ok().map(AppId))
+        .flatten()
+}
+
+/// The key of `app`'s `compat.tool` setting.
+pub fn compat_tool_key(app: AppId) -> String {
+    format!("{COMPAT_TOOL_PREFIX}{}", app.0)
 }
 
 impl Def {
@@ -200,6 +244,19 @@ impl Def {
         self.kind
             .parse(text)
             .map_err(|e| format!("{} {e}", self.key))
+    }
+
+    pub fn is_family(&self) -> bool {
+        self.key.contains('<')
+    }
+}
+
+/// A key as stored: a family member's own key (`compat.tool.570`) or a
+/// plain one. `key` must be one [`def`] accepts.
+pub fn canonical(key: &str) -> String {
+    match family_app(key) {
+        Some(app) => compat_tool_key(app),
+        None => key.to_owned(),
     }
 }
 
@@ -212,8 +269,9 @@ pub enum Source {
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Config {
-    file: BTreeMap<&'static str, Value>,
-    overrides: BTreeMap<&'static str, Value>,
+    /// Keyed as [`canonical`] writes them.
+    file: BTreeMap<String, Value>,
+    overrides: BTreeMap<String, Value>,
 }
 
 impl Config {
@@ -240,7 +298,7 @@ impl Config {
 
     /// Parses the file's text. Returns its values and the dotted names of
     /// keys this build does not know.
-    fn parse(text: &str) -> Result<(BTreeMap<&'static str, Value>, Vec<String>), String> {
+    fn parse(text: &str) -> Result<(BTreeMap<String, Value>, Vec<String>), String> {
         let table: toml::Table = text.parse().map_err(|e: toml::de::Error| e.to_string())?;
         let mut values = BTreeMap::new();
         let mut unknown = Vec::new();
@@ -252,11 +310,11 @@ impl Config {
     /// not understand is warned about and skipped; it stays stored.
     pub fn apply_overrides(&mut self, rows: Vec<(String, String)>) {
         for (key, text) in rows {
-            match def(&key).map(|d| (d, d.parse(&text))) {
-                Some((d, Ok(v))) => {
-                    self.overrides.insert(d.key, v);
+            match def(&key).map(|d| d.parse(&text)) {
+                Some(Ok(v)) => {
+                    self.overrides.insert(canonical(&key), v);
                 }
-                Some((_, Err(e))) => {
+                Some(Err(e)) => {
                     tracing::warn!("stored override {text:?} ignored: {e}");
                 }
                 None => tracing::warn!("stored override for unknown setting {key:?} ignored"),
@@ -264,37 +322,40 @@ impl Config {
         }
     }
 
-    pub fn set_override(&mut self, d: &'static Def, value: Option<Value>) {
+    /// Sets or removes `key`'s override; `key` is one [`def`] accepts.
+    pub fn set_override(&mut self, key: &str, value: Option<Value>) {
         match value {
-            Some(v) => self.overrides.insert(d.key, v),
-            None => self.overrides.remove(d.key),
+            Some(v) => self.overrides.insert(canonical(key), v),
+            None => self.overrides.remove(&canonical(key)),
         };
     }
 
-    fn get(&self, d: &'static Def) -> (Value, Source) {
-        if let Some(v) = self.overrides.get(d.key) {
-            (*v, Source::Override)
-        } else if let Some(v) = self.file.get(d.key) {
-            (*v, Source::File)
+    fn get(&self, key: &str) -> (&Value, Source) {
+        let d = def(key).expect("a known key");
+        let key = canonical(key);
+        if let Some(v) = self.overrides.get(&key) {
+            (v, Source::Override)
+        } else if let Some(v) = self.file.get(&key) {
+            (v, Source::File)
         } else {
-            (d.default, Source::Default)
+            (&d.default, Source::Default)
         }
     }
 
-    fn value(&self, key: &str) -> Value {
-        self.get(def(key).expect("a key from DEFS")).0
+    fn value(&self, key: &str) -> &Value {
+        self.get(key).0
     }
 
     fn bool(&self, key: &str) -> bool {
         match self.value(key) {
-            Value::Bool(b) => b,
+            Value::Bool(b) => *b,
             v => unreachable!("{key} is {v:?}"),
         }
     }
 
     fn int(&self, key: &str) -> i64 {
         match self.value(key) {
-            Value::Int(n) => n,
+            Value::Int(n) => *n,
             v => unreachable!("{key} is {v:?}"),
         }
     }
@@ -304,6 +365,24 @@ impl Config {
             Value::Word(w) => w,
             v => unreachable!("{key} is {v:?}"),
         }
+    }
+
+    fn text(&self, key: &str) -> &str {
+        match self.value(key) {
+            Value::Text(t) => t,
+            Value::Word(w) => w,
+            v => unreachable!("{key} is {v:?}"),
+        }
+    }
+
+    /// `compat.default_tool`; empty for none.
+    pub fn default_tool(&self) -> &str {
+        self.text(COMPAT_DEFAULT_TOOL)
+    }
+
+    /// `compat.tool.<app>`; empty for Valve's mapping.
+    pub fn app_tool(&self, app: AppId) -> &str {
+        self.text(&compat_tool_key(app))
     }
 
     /// `content.auto_update` is `always`.
@@ -333,11 +412,13 @@ impl Config {
         self.bool(SECRETS_FILE_FALLBACK)
     }
 
-    /// One setting as clients see it.
-    pub fn proto(&self, d: &'static Def) -> v1::Setting {
-        let (value, source) = self.get(d);
+    /// One setting as clients see it; `key` is one [`def`] accepts.
+    pub fn proto(&self, key: &str) -> v1::Setting {
+        let d = def(key).expect("a known key");
+        let key = canonical(key);
+        let (value, source) = self.get(&key);
         v1::Setting {
-            key: d.key.into(),
+            key: key.clone(),
             kind: d.kind.proto() as i32,
             value: value.to_string(),
             source: match source {
@@ -348,15 +429,28 @@ impl Config {
             default_value: d.default.to_string(),
             file_value: self
                 .file
-                .get(d.key)
+                .get(&key)
                 .map(Value::to_string)
                 .unwrap_or_default(),
             description: d.description.into(),
         }
     }
 
+    /// Every plain setting, and the members of families that the file
+    /// or an override sets, sorted by key.
     pub fn all(&self) -> Vec<v1::Setting> {
-        DEFS.iter().map(|d| self.proto(d)).collect()
+        let mut keys: Vec<String> = DEFS
+            .iter()
+            .filter(|d| !d.is_family())
+            .map(|d| d.key.to_owned())
+            .collect();
+        for k in self.file.keys().chain(self.overrides.keys()) {
+            if family_app(k).is_some() && !keys.contains(k) {
+                keys.push(k.clone());
+            }
+        }
+        keys.sort();
+        keys.iter().map(|k| self.proto(k)).collect()
     }
 }
 
@@ -364,7 +458,7 @@ impl Config {
 fn walk(
     table: &toml::Table,
     prefix: &str,
-    values: &mut BTreeMap<&'static str, Value>,
+    values: &mut BTreeMap<String, Value>,
     unknown: &mut Vec<String>,
 ) -> Result<(), String> {
     for (name, value) in table {
@@ -376,7 +470,7 @@ fn walk(
         match (def(&key), value) {
             (Some(d), v) => {
                 let v = d.kind.read_toml(v).map_err(|e| format!("{key} {e}"))?;
-                values.insert(d.key, v);
+                values.insert(canonical(&key), v);
             }
             (None, toml::Value::Table(t)) => walk(t, &key, values, unknown)?,
             (None, _) => unknown.push(key),
@@ -418,6 +512,8 @@ mod tests {
     #[test]
     fn defs_are_sorted_and_unique() {
         assert!(DEFS.windows(2).all(|w| w[0].key < w[1].key));
+        // Each family member's key sorts after the plain keys before it.
+        assert!(def(COMPAT_DEFAULT_TOOL).is_some_and(|d| !d.is_family()));
     }
 
     #[test]
@@ -426,7 +522,7 @@ mod tests {
         assert!(values.is_empty() && unknown.is_empty());
         let c = Config::default();
         assert!(!c.file_fallback());
-        let s = c.proto(fallback());
+        let s = c.proto(SECRETS_FILE_FALLBACK);
         assert_eq!(s.source, v1::SettingSource::Default as i32);
         assert_eq!((s.value.as_str(), s.file_value.as_str()), ("false", ""));
     }
@@ -457,18 +553,21 @@ mod tests {
             overrides: BTreeMap::new(),
         };
         assert!(c.file_fallback());
-        assert_eq!(c.proto(fallback()).source, v1::SettingSource::File as i32);
+        assert_eq!(
+            c.proto(SECRETS_FILE_FALLBACK).source,
+            v1::SettingSource::File as i32
+        );
 
         c.apply_overrides(vec![
             (SECRETS_FILE_FALLBACK.into(), "false".into()),
             ("no.such".into(), "1".into()),
         ]);
         assert!(!c.file_fallback());
-        let s = c.proto(fallback());
+        let s = c.proto(SECRETS_FILE_FALLBACK);
         assert_eq!(s.source, v1::SettingSource::Override as i32);
         assert_eq!(s.file_value, "true");
 
-        c.set_override(fallback(), None);
+        c.set_override(SECRETS_FILE_FALLBACK, None);
         assert!(c.file_fallback());
     }
 
@@ -480,6 +579,44 @@ mod tests {
             Err("secrets.file_fallback must be true or false".into())
         );
         assert!(def("secrets").is_none());
+    }
+
+    #[test]
+    fn compat_tool_family() {
+        let (file, unknown) =
+            Config::parse("[compat]\ndefault_tool = \"\"\n[compat.tool]\n570 = \"proton_9\"\n")
+                .unwrap();
+        assert!(unknown.is_empty());
+        let mut c = Config {
+            file,
+            overrides: BTreeMap::new(),
+        };
+        assert_eq!(c.default_tool(), "");
+        assert_eq!(c.app_tool(AppId(570)), "proton_9");
+        assert_eq!(c.app_tool(AppId(730)), "");
+        assert_eq!(Config::default().default_tool(), "proton_experimental");
+
+        c.apply_overrides(vec![("compat.tool.730".into(), " sniper ".into())]);
+        assert_eq!(c.app_tool(AppId(730)), "sniper");
+        let keys: Vec<String> = c.all().into_iter().map(|s| s.key).collect();
+        assert!(keys.windows(2).all(|w| w[0] < w[1]));
+        assert!(keys.contains(&"compat.tool.570".to_owned()));
+        assert!(keys.contains(&"compat.tool.730".to_owned()));
+        assert!(!keys.iter().any(|k| k.contains('<')));
+        let s = c.proto("compat.tool.730");
+        assert_eq!(s.source, v1::SettingSource::Override as i32);
+
+        // Leading zeros name the same app.
+        c.set_override("compat.tool.0730", None);
+        assert_eq!(c.app_tool(AppId(730)), "");
+        for bad in [
+            "compat.tool.",
+            "compat.tool.x",
+            "compat.tool.99999999999",
+            COMPAT_TOOL,
+        ] {
+            assert!(def(bad).is_none(), "{bad}");
+        }
     }
 
     #[test]

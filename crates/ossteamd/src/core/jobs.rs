@@ -775,6 +775,12 @@ impl Core {
             .unwrap_or_default();
         let low_violence = snapshot.is_some_and(|s| s.low_violence.contains(&app));
         let journal = self.db.job_journal(job_id).map_err(|e| internal(&e))?;
+        // An install or update takes the depots of the app's tool's
+        // platform; verify repairs what is there (`compat-tools.md` §4).
+        let host = match (kind, &installed) {
+            (Kind::Verify | Kind::Uninstall, Some(a)) => installed_host(a),
+            _ => self.install_host(app, &info),
+        };
         Ok(Spec {
             job_id,
             kind,
@@ -787,6 +793,7 @@ impl Core {
             owned,
             low_violence,
             language: self.config.language().to_owned(),
+            host,
             installed,
             other_installs: self
                 .content
@@ -919,7 +926,7 @@ impl Core {
             branch: &a.branch,
             language: self.config.language(),
             low_violence: snapshot.low_violence.contains(&a.app_id),
-            host: Host::this(),
+            host: self.install_host(a.app_id, &info),
             owns: &owns,
         };
         let chosen = depots::choose(&info, &lookup, &want).ok()?;
@@ -996,4 +1003,14 @@ fn state_name(s: v1::JobState) -> &'static str {
         v1::JobState::Failed => "failed",
         v1::JobState::Cancelled => "cancelled",
     }
+}
+
+/// The platform an install's depots were chosen for; empty is the host's.
+fn installed_host(a: &InstalledApp) -> Host {
+    let host = Host::this();
+    let os = ["windows", "macos", "linux"]
+        .into_iter()
+        .find(|p| *p == a.platform)
+        .unwrap_or(host.os);
+    Host { os, ..host }
 }

@@ -14,6 +14,7 @@ mod callbacks;
 mod client;
 mod friends;
 mod guard;
+mod images;
 mod log;
 mod object;
 pub mod pipe;
@@ -22,6 +23,7 @@ mod report;
 #[cfg(all(test, unix))]
 mod tests;
 mod user;
+mod userstats;
 mod utils;
 
 #[allow(clippy::all)]

@@ -108,3 +108,34 @@ ISteamFriends.GetPersonaState() -> u32 = friends::persona_state
 
 ISteamRemoteStorage.IsCloudEnabledForAccount() -> bool = remote_storage::cloud_enabled
 ISteamRemoteStorage.IsCloudEnabledForApp() -> bool = remote_storage::cloud_enabled
+
+ISteamUtils.GetImageSize(i32, ptr, ptr) -> bool = utils::image_size
+ISteamUtils.GetImageRGBA(i32, ptr, i32) -> bool = utils::image_rgba
+
+ISteamUserStats.RequestCurrentStats() -> bool = userstats::request_current_stats
+ISteamUserStats.GetStat(ptr, ptr) -> bool = userstats::get_stat_int
+ISteamUserStats.GetStat_2(ptr, ptr) -> bool = userstats::get_stat_float
+ISteamUserStats.SetStat(ptr, i32) -> bool = userstats::set_stat_int
+ISteamUserStats.SetStat_2(ptr, f32) -> bool = userstats::set_stat_float
+ISteamUserStats.GetAchievement(ptr, ptr) -> bool = userstats::get_achievement
+ISteamUserStats.GetAchievementAndUnlockTime(ptr, ptr, ptr) -> bool = userstats::get_achievement_and_unlock_time
+ISteamUserStats.SetAchievement(ptr) -> bool = userstats::set_achievement
+ISteamUserStats.ClearAchievement(ptr) -> bool = userstats::clear_achievement
+ISteamUserStats.StoreStats() -> bool = userstats::store_stats
+ISteamUserStats.ResetAllStats(bool) -> bool = userstats::reset_all_stats
+ISteamUserStats.IndicateAchievementProgress(ptr, u32, u32) -> bool = userstats::indicate_achievement_progress
+ISteamUserStats.GetNumAchievements() -> u32 = userstats::num_achievements
+ISteamUserStats.GetAchievementName(u32) -> str = userstats::achievement_name
+ISteamUserStats.GetAchievementDisplayAttribute(ptr, ptr) -> str = userstats::achievement_display_attribute
+ISteamUserStats.GetAchievementIcon(ptr) -> i32 = userstats::achievement_icon
+ISteamUserStats.GetAchievementProgressLimits(ptr, ptr, ptr) -> bool = userstats::progress_limits_int
+ISteamUserStats.GetAchievementProgressLimits_2(ptr, ptr, ptr) -> bool = userstats::progress_limits_float
+ISteamUserStats.RequestUserStats(CSteamID) -> u64 = userstats::request_user_stats
+ISteamUserStats.GetUserStat(CSteamID, ptr, ptr) -> bool = userstats::get_user_stat_int
+ISteamUserStats.GetUserStat_2(CSteamID, ptr, ptr) -> bool = userstats::get_user_stat_float
+ISteamUserStats.GetUserAchievement(CSteamID, ptr, ptr) -> bool = userstats::get_user_achievement
+ISteamUserStats.GetUserAchievementAndUnlockTime(CSteamID, ptr, ptr, ptr) -> bool = userstats::get_user_achievement_and_unlock_time
+ISteamUserStats.RequestGlobalAchievementPercentages() -> u64 = userstats::request_global_achievement_percentages
+ISteamUserStats.GetMostAchievedAchievementInfo(ptr, u32, ptr, ptr) -> i32 = userstats::most_achieved_achievement_info
+ISteamUserStats.GetNextMostAchievedAchievementInfo(i32, ptr, u32, ptr, ptr) -> i32 = userstats::next_most_achieved_achievement_info
+ISteamUserStats.GetAchievementAchievedPercent(ptr, ptr) -> bool = userstats::achievement_achieved_percent

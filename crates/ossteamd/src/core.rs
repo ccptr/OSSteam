@@ -20,7 +20,7 @@ use ossteam_types::{Secret, SteamId};
 use crate::config::{self, Config};
 use crate::db::{Db, PersonaState};
 use crate::session::{self, Cmd, ReplyTo, Report};
-use crate::{assets, content, launch, library, pics};
+use crate::{assets, content, launch, library, pics, stats};
 
 mod games;
 mod jobs;
@@ -68,6 +68,8 @@ pub enum Command {
     Game(launch::Exited),
     /// From a game endpoint connection.
     Shim(crate::gameipc::Event),
+    /// From the stats worker: the answer to a game's request.
+    Stats(stats::Done),
     /// A game's connections had their time to close (`steamworks-abi.md`
     /// §3.5).
     GameExitWait(ossteam_types::AppId),
@@ -120,6 +122,8 @@ pub struct Core {
     games: games::Games,
     /// Game endpoint connections and their reports.
     shims: shim::Shims,
+    /// Games' stats requests.
+    stats: stats::Handle,
 }
 
 /// What a `Core` is made of.
@@ -131,6 +135,7 @@ pub struct Parts {
     pub pics_cache: Cache,
     pub assets: assets::Handle,
     pub assets_dir: PathBuf,
+    pub stats: stats::Handle,
     pub content_jobs: content::Handle,
     /// `<data>/library`.
     pub default_folder: PathBuf,
@@ -165,6 +170,7 @@ impl Core {
             content_jobs: p.content_jobs,
             games: games::Games::new(p.launch, &p.data_dir, &p.state_dir, p.commands),
             shims: shim::Shims::new(&p.data_dir),
+            stats: p.stats,
         }
         .loaded()
     }
@@ -234,6 +240,7 @@ impl Core {
                 Command::Content(report) => self.on_content(report),
                 Command::Game(exited) => self.on_game(exited),
                 Command::Shim(e) => self.on_shim(e),
+                Command::Stats(done) => self.on_stats(done),
                 Command::GameExitWait(app) => self.exit_wait_over(app),
             }
         };
@@ -251,6 +258,7 @@ impl Core {
         self.remove_discovery();
         self.pics.shutdown();
         self.assets.shutdown();
+        self.stats.shutdown();
         self.broadcast(
             Topic::Daemon,
             event::Kind::DaemonStopping(v1::DaemonStopping {}),

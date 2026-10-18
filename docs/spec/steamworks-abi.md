@@ -432,7 +432,7 @@ the shim sends `Request`s and `Report`s, and the daemon sends
 
 ### 3.4 Messages
 
-Protocol version 1.
+Protocol version 2.
 
 | Tag | Message | Direction | Fields |
 |---|---|---|---|
@@ -489,6 +489,7 @@ one of them is installed.
 | Tag | Request | Response |
 |---|---|---|
 | 1 | `AppState{app_id: u32}` | `AppState{owned: bool, installed: bool, install_dir: string, build_id: u32, depots: list<u32>}` |
+| 2 to 5 | the stats requests of `steamworks/isteamuserstats.md` §2 | their responses |
 | 255 | — | `Error{message: string}`: the request could not be answered |
 
 `Call`: `interface: string` (a version string), `method: string`,
@@ -522,8 +523,8 @@ The messages in §3.4 are everything the game endpoint understands. None
 of them logs in or out, installs, uninstalls, verifies, changes a
 setting, or reads tokens, credentials or other accounts. `AppState`
 tells a game about another app only what Steam's own `ISteamApps` tells
-any game. Requests that change something, such as storing stats (M1c),
-act only on the connection's own app id.
+any game. The stats requests act only on the connection's own app id,
+and only for an app the account owns.
 
 ### 3.7 The daemon's side
 
@@ -592,7 +593,7 @@ getter and fails under ABI-3.
 | `ISteamUtils` | `isteamutils.md` | app id, country, server time, API-call plumbing, overlay state |
 | `ISteamFriends` | `isteamfriends.md` | own persona name and state |
 | `ISteamRemoteStorage` | `isteamremotestorage.md` | cloud state; local files follow |
-| `ISteamUserStats` | follows | stats and achievements |
+| `ISteamUserStats` | `isteamuserstats.md` | stats, achievements, schema, icons, global achievement percentages |
 
 ## 6. Verification against the official client
 
@@ -607,3 +608,4 @@ getter and fails under ABI-3.
 | The empty string for unimplemented `const char *` methods (§2.4) | unverified |
 | `SteamServersConnected_t` and `SteamServersDisconnected_t` timing (§3.7) | unverified |
 | Play sessions of games not started by the client (§3.5) | unverified |
+| Overloads in declaration order on Linux and macOS (§2.4) | the Itanium C++ ABI; to be checked against a native game |

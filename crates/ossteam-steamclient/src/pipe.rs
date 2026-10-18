@@ -64,12 +64,24 @@ struct Done {
     reason: i32,
 }
 
-/// An API call waiting for the daemon.
-struct Pending {
-    call: u64,
-    callback: i32,
-    size: usize,
-    decode: fn(&ResponseBody) -> Option<Vec<u8>>,
+/// Makes an API call's result structure from the daemon's answer, or
+/// `None` when the call failed.
+pub type Decode = Box<dyn FnOnce(&Pipe, &ResponseBody) -> Option<Vec<u8>> + Send>;
+
+/// Runs when the daemon answers a request, or with `None` when the
+/// connection closed first.
+pub type Then = Box<dyn FnOnce(&Pipe, Option<&ResponseBody>) + Send>;
+
+/// A request waiting for the daemon.
+enum Pending {
+    /// An API call (§2.5).
+    Call {
+        call: u64,
+        callback: i32,
+        size: usize,
+        decode: Decode,
+    },
+    Then(Then),
 }
 
 #[derive(Default)]
@@ -90,8 +102,10 @@ pub struct Pipe {
     queue: Mutex<Queue>,
     next_request: AtomicU32,
     waiters: Mutex<HashMap<u32, mpsc::Sender<ResponseBody>>>,
-    /// API calls by request id.
+    /// API calls and other requests answered later, by request id.
     pending: Mutex<HashMap<u32, Pending>>,
+    /// `ISteamUserStats` (`isteamuserstats.md` §3).
+    pub stats: Mutex<crate::userstats::Stats>,
 }
 
 static PIPES: Mutex<Vec<Arc<Pipe>>> = Mutex::new(Vec::new());
@@ -230,6 +244,7 @@ pub fn create() -> i32 {
         next_request: AtomicU32::new(1),
         waiters: Mutex::new(HashMap::new()),
         pending: Mutex::new(HashMap::new()),
+        stats: Mutex::new(crate::userstats::Stats::default()),
     });
     lock(&PIPES).push(Arc::clone(&pipe));
     let _ = pipe_tx.send(Arc::clone(&pipe));
@@ -245,7 +260,7 @@ pub fn release(handle: i32) -> bool {
     };
     send_report(true);
     lock(&PIPES).retain(|p| p.handle != handle);
-    pipe.close();
+    pipe.close(true);
     true
 }
 
@@ -335,35 +350,51 @@ impl Pipe {
     /// Starts an API call (§2.5) whose result is `callback`, `size` bytes,
     /// made from the daemon's answer by `decode`. Returns its handle, or 0
     /// (`k_uAPICallInvalid`) when the pipe is closed.
-    #[allow(dead_code)]
-    pub fn begin_call(
-        &self,
-        body: RequestBody,
-        callback: i32,
-        size: usize,
-        decode: fn(&ResponseBody) -> Option<Vec<u8>>,
-    ) -> u64 {
+    pub fn begin_call(&self, body: RequestBody, callback: i32, size: usize, decode: Decode) -> u64 {
         if self.is_closed() {
             return 0;
         }
         let call = NEXT_CALL.fetch_add(1, Ordering::Relaxed);
-        let id = self.next_request.fetch_add(1, Ordering::Relaxed);
-        lock(&self.pending).insert(
-            id,
-            Pending {
-                call,
-                callback,
-                size,
-                decode,
-            },
-        );
-        IPC_CALLS.fetch_add(1, Ordering::Relaxed);
-        if !self.send(&Message::Request(Request { id, body }))
-            && let Some(p) = lock(&self.pending).remove(&id)
+        let pending = Pending::Call {
+            call,
+            callback,
+            size,
+            decode,
+        };
+        if let Some(Pending::Call {
+            call,
+            callback,
+            size,
+            ..
+        }) = self.send_pending(body, pending)
         {
-            self.complete(p.call, p.callback, vec![0; p.size], FAILURE_STEAM_GONE);
+            self.complete(call, callback, vec![0; size], FAILURE_STEAM_GONE);
         }
         call
+    }
+
+    /// Sends a request whose answer goes to `then`, on the pipe's reader
+    /// thread. Returns false, without calling `then`, when the request
+    /// could not be sent.
+    pub fn send_then(&self, body: RequestBody, then: Then) -> bool {
+        self.send_pending(body, Pending::Then(then)).is_none()
+    }
+
+    /// Sends a request answered later. Returns `pending` when it was not
+    /// sent.
+    fn send_pending(&self, body: RequestBody, pending: Pending) -> Option<Pending> {
+        if self.is_closed() {
+            return Some(pending);
+        }
+        let id = self.next_request.fetch_add(1, Ordering::Relaxed);
+        lock(&self.pending).insert(id, pending);
+        IPC_CALLS.fetch_add(1, Ordering::Relaxed);
+        log!(Debug, "pipe {}: request {id}: {body:?}", self.handle);
+        if self.send(&Message::Request(Request { id, body })) {
+            None
+        } else {
+            lock(&self.pending).remove(&id)
+        }
     }
 
     /// Stores a call's result and queues callback 703.
@@ -451,13 +482,20 @@ impl Pipe {
         if let Some(d) = lock(&self.queue).results.get(&call) {
             return d.reason;
         }
-        if lock(&self.pending).values().any(|p| p.call == call) {
+        if lock(&self.pending)
+            .values()
+            .any(|p| matches!(p, Pending::Call { call: c, .. } if *c == call))
+        {
             return FAILURE_NONE;
         }
         FAILURE_INVALID_HANDLE
     }
 
-    fn close(&self) {
+    /// Closes the connection. A released pipe drops its callbacks and
+    /// results. When the connection is lost instead, pending calls fail
+    /// with `SteamGone` and everything stays for the game to collect
+    /// (§2.5).
+    fn close(&self, released: bool) {
         if self.closed.swap(true, Ordering::AcqRel) {
             return;
         }
@@ -466,31 +504,33 @@ impl Pipe {
         *lock(&self.writer) = Box::new(std::io::sink());
         lock(&self.waiters).clear();
         let pending: Vec<Pending> = lock(&self.pending).drain().map(|(_, p)| p).collect();
-        for p in pending {
-            self.complete(p.call, p.callback, vec![0; p.size], FAILURE_STEAM_GONE);
+        if released {
+            let mut q = lock(&self.queue);
+            q.items.clear();
+            q.handed = false;
+            q.results.clear();
+            return;
         }
-        let mut q = lock(&self.queue);
-        q.items.clear();
-        q.handed = false;
-        q.results.clear();
+        for p in pending {
+            match p {
+                Pending::Call {
+                    call,
+                    callback,
+                    size,
+                    ..
+                } => self.complete(call, callback, vec![0; size], FAILURE_STEAM_GONE),
+                Pending::Then(then) => then(self, None),
+            }
+        }
     }
 
     fn read_loop(&self, mut reader: &mut dyn std::io::Read) {
         loop {
             match read_message(&mut reader) {
                 Ok(Message::Response(r)) => {
-                    if let Some(p) = lock(&self.pending).remove(&r.id) {
-                        match (p.decode)(&r.body) {
-                            Some(data) if data.len() == p.size => {
-                                self.complete(p.call, p.callback, data, FAILURE_NONE)
-                            }
-                            _ => self.complete(
-                                p.call,
-                                p.callback,
-                                vec![0; p.size],
-                                FAILURE_STEAM_GONE,
-                            ),
-                        }
+                    let pending = lock(&self.pending).remove(&r.id);
+                    if let Some(p) = pending {
+                        self.answered(p, &r.body);
                     } else if let Some(tx) = lock(&self.waiters).remove(&r.id) {
                         let _ = tx.send(r.body);
                     }
@@ -515,13 +555,31 @@ impl Pipe {
         if !self.is_closed() {
             log!(Info, "the daemon closed pipe {}", self.handle);
             let was = self.logged_on();
-            self.close();
+            self.close(false);
             if was {
                 self.push(
                     callbacks::SERVERS_DISCONNECTED,
                     callbacks::servers_disconnected(callbacks::E_RESULT_NO_CONNECTION),
                 );
             }
+        }
+    }
+
+    /// The daemon answered a request that was waiting in `pending`.
+    fn answered(&self, p: Pending, body: &ResponseBody) {
+        match p {
+            Pending::Call {
+                call,
+                callback,
+                size,
+                decode,
+            } => match decode(self, body) {
+                Some(data) if data.len() == size => {
+                    self.complete(call, callback, data, FAILURE_NONE)
+                }
+                _ => self.complete(call, callback, vec![0; size], FAILURE_STEAM_GONE),
+            },
+            Pending::Then(then) => then(self, Some(body)),
         }
     }
 
@@ -535,6 +593,7 @@ impl Pipe {
         let now = self.logged_on();
         if now && !was {
             self.push(callbacks::SERVERS_CONNECTED, callbacks::servers_connected());
+            crate::userstats::logged_on(self);
         } else if was && !now {
             self.push(
                 callbacks::SERVERS_DISCONNECTED,

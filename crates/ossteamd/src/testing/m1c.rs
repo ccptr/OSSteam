@@ -664,3 +664,172 @@ fn launch_reports_what_the_game_used() {
     assert_eq!(r.unimplemented[0].count, 2);
     d.stop();
 }
+
+/// Stats through the game endpoint (`isteamuserstats.md` §1, §2): the
+/// schema, a store, a stale crc, global percentages and an icon; and
+/// what a game that does not own its app gets.
+#[cfg(unix)]
+#[test]
+fn games_keep_their_stats() {
+    use ossteam_gameipc::{
+        AchievementIconRequest, GlobalAchievementsRequest, Message, Request, RequestBody,
+        ResponseBody, StatValue, StoreStatsRequest, UserStatsRequest,
+    };
+
+    use super::fake_cm::FakeStats;
+
+    let cdn = Arc::new(FakeCdn::new());
+    let (os, _) = oses();
+    let cm = steam(&cdn, &[("bin/game.sh", os)])
+        .stats_schema(GAME, crate::stats::tests::spacewar_schema());
+    let me = ossteam_types::SteamId::individual(ACCOUNT_ID);
+    let friend = ossteam_types::SteamId::individual(ACCOUNT_ID + 1);
+    cm.set_stats(
+        me,
+        GAME,
+        FakeStats {
+            crc: 40,
+            values: [(1, 0b10), (2, 7)].into(),
+            unlocks: [((1, 1), 1_700_000_000)].into(),
+        },
+    );
+    cm.set_stats(
+        friend,
+        GAME,
+        FakeStats {
+            crc: 3,
+            values: [(2, 99)].into(),
+            ..Default::default()
+        },
+    );
+    cm.achievement_percentages(
+        GAME,
+        &[("ACH_WIN_ONE_GAME", "61.2"), ("ACH_TRAVEL_FAR_ACCUM", "x")],
+    );
+    let root = Root::new();
+    let addr = root.game_address();
+    let d = TestDaemon::start_with_cdn(&root, &cm, POLL, cdn.clone());
+
+    // Before a login there is no account, so nothing is owned.
+    let ask = |conn: &mut ossteam_gameipc::endpoint::Connection, id: u32, body: RequestBody| {
+        let req = Message::Request(Request { id, body });
+        ossteam_gameipc::write_message(&mut conn.writer, &req).unwrap();
+        loop {
+            match ossteam_gameipc::read_message(&mut conn.reader).unwrap() {
+                Message::Response(r) if r.id == id => break r.body,
+                _ => {}
+            }
+        }
+    };
+    let own = || RequestBody::UserStats(UserStatsRequest { steam_id: 0 });
+    let (mut conn, _) = shim_connect(&addr, hello(GAME));
+    assert!(matches!(ask(&mut conn, 1, own()), ResponseBody::Error(_)));
+
+    login(&d);
+    let (mut conn, _) = shim_connect(&addr, hello(GAME));
+    let ResponseBody::UserStats(s) = ask(&mut conn, 1, own()) else {
+        panic!()
+    };
+    assert_eq!(s.result, 1);
+    assert_eq!(s.steam_id, me.0);
+    assert_eq!(s.crc, 40);
+    assert_eq!(s.schema.version, 20);
+    assert_eq!(s.schema.stats.len(), 4);
+    assert_eq!(s.schema.stats[0].achievements[0].display_name, "Winner");
+    assert_eq!(
+        s.values,
+        [
+            StatValue { id: 1, value: 0b10 },
+            StatValue { id: 2, value: 7 }
+        ]
+    );
+    assert_eq!(s.unlocks.len(), 1);
+    assert_eq!(
+        (s.unlocks[0].stat, s.unlocks[0].bit, s.unlocks[0].time),
+        (1, 1, 1_700_000_000)
+    );
+    let ResponseBody::UserStats(f) = ask(
+        &mut conn,
+        2,
+        RequestBody::UserStats(UserStatsRequest { steam_id: friend.0 }),
+    ) else {
+        panic!()
+    };
+    assert_eq!((f.result, f.steam_id, f.values.len()), (1, friend.0, 1));
+
+    // A store, then one with the stale crc.
+    let store = |crc| {
+        RequestBody::StoreStats(StoreStatsRequest {
+            crc,
+            values: vec![
+                StatValue { id: 1, value: 0b11 },
+                StatValue { id: 2, value: 8 },
+            ],
+            reset: false,
+        })
+    };
+    let ResponseBody::StoreStats(r) = ask(&mut conn, 3, store(40)) else {
+        panic!()
+    };
+    assert_eq!((r.result, r.crc, r.out_of_date), (1, 41, false));
+    let kept = cm.stats(me, GAME);
+    assert_eq!(kept.values[&2], 8);
+    assert_eq!(kept.unlocks[&(1, 0)], super::fake_cm::FAKE_SERVER_TIME);
+    let sent = cm.stores();
+    assert_eq!(sent.len(), 1);
+    assert_eq!(sent[0].game_id(), u64::from(GAME));
+    assert!(!sent[0].explicit_reset());
+    let ResponseBody::StoreStats(r) = ask(&mut conn, 4, store(40)) else {
+        panic!()
+    };
+    assert!(r.out_of_date);
+    assert_ne!(r.result, 1);
+
+    // Global percentages: one does not parse and is left out.
+    let ResponseBody::GlobalAchievements(g) = ask(
+        &mut conn,
+        5,
+        RequestBody::GlobalAchievements(GlobalAchievementsRequest {}),
+    ) else {
+        panic!()
+    };
+    assert_eq!(g.result, 1);
+    assert_eq!(g.achievements.len(), 1);
+    assert_eq!(g.achievements[0].name, "ACH_WIN_ONE_GAME");
+    assert_eq!(f32::from_bits(g.achievements[0].percent), 61.2);
+
+    // An icon from the cache, and a name that is not a file name.
+    let icons = root
+        .path()
+        .join("cache/achievement-icons")
+        .join(GAME.to_string());
+    std::fs::create_dir_all(&icons).unwrap();
+    std::fs::write(
+        icons.join("win.jpg"),
+        include_bytes!("../../testdata/icon.jpg"),
+    )
+    .unwrap();
+    let icon =
+        |file: &str| RequestBody::AchievementIcon(AchievementIconRequest { file: file.into() });
+    let ResponseBody::Image(i) = ask(&mut conn, 6, icon("win.jpg")) else {
+        panic!()
+    };
+    assert_eq!((i.result, i.width, i.height, i.rgba.len()), (1, 4, 2, 32));
+    let ResponseBody::Image(i) = ask(&mut conn, 7, icon("../win.jpg")) else {
+        panic!()
+    };
+    assert_eq!(i.result, 2);
+
+    // An app the account does not own gets nothing.
+    let (mut other, _) = shim_connect(&addr, hello(999));
+    assert!(
+        matches!(ask(&mut other, 1, own()), ResponseBody::Error(e) if e.message.contains("999"))
+    );
+    // An owned app without stats: Steam's refusal is passed on.
+    let (mut no_stats, _) = shim_connect(&addr, hello(OTHER));
+    let ResponseBody::UserStats(s) = ask(&mut no_stats, 1, own()) else {
+        panic!()
+    };
+    assert_eq!(s.result, 2);
+    d.stop();
+}

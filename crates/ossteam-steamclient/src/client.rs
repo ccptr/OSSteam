@@ -118,7 +118,11 @@ unsafe fn hand_out(
         );
         return null_mut();
     };
-    object::get(v, pipe, user).cast()
+    let obj = object::get(v, pipe, user);
+    if iface == "ISteamUserStats" {
+        crate::userstats::handed_out(&p, v);
+    }
+    obj.cast()
 }
 
 macro_rules! getters {

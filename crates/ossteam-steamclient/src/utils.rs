@@ -146,6 +146,30 @@ pub unsafe fn api_call_result(
     }
 }
 
+pub fn image_size(_: &Object, handle: i32, width: *mut c_void, height: *mut c_void) -> bool {
+    let Some(image) = crate::images::get(handle) else {
+        return false;
+    };
+    // SAFETY: the SDK declares two `uint32 *`.
+    unsafe {
+        put(width, image.width);
+        put(height, image.height);
+    }
+    true
+}
+
+pub fn image_rgba(_: &Object, handle: i32, buf: *mut c_void, size: i32) -> bool {
+    let Some(image) = crate::images::get(handle) else {
+        return false;
+    };
+    if buf.is_null() || usize::try_from(size).map_or(true, |n| n < image.rgba.len()) {
+        return false;
+    }
+    // SAFETY: the SDK declares a buffer of `size` bytes, which is enough.
+    unsafe { std::ptr::copy_nonoverlapping(image.rgba.as_ptr(), buf.cast(), image.rgba.len()) };
+    true
+}
+
 pub fn run_frame(_: &Object) {}
 
 pub fn ipc_call_count(_: &Object) -> u32 {

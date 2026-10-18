@@ -25,7 +25,9 @@ Unlicense); they keep whatever notices they carry upstream.
 - `steammessages_clientserver_appinfo.proto`
 - `steammessages_clientserver_friends.proto`
 - `steammessages_clientserver_login.proto`
+- `steammessages_clientserver_userstats.proto`
 - `steammessages_contentsystem.steamclient.proto`
+- `steammessages_player.steamclient.proto`
 - `steammessages_unified_base.steamclient.proto`
 
 ## Patches

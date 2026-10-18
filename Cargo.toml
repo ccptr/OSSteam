@@ -90,6 +90,8 @@ ureq = { version = "3.4.2", default-features = false, features = ["rustls-no-pro
 windows-sys = "0.61.2"
 zeroize = "1.9.1"
 zstd = { version = "0.14.3", default-features = false }
+zune-core = "0.5.3"
+zune-jpeg = "0.5.15"
 
 # gpui is pinned to one zed revision; bump deliberately (SPEC §23). The
 # toolchain in rust-toolchain.toml follows that revision's requirement.

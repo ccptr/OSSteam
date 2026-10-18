@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| Status | Implemented for M1c, except images, text filtering and the gamepad text input |
+| Status | Implemented for M1c, except text filtering and the gamepad text input |
 | Requirements | SPEC §12.3, GIPC-3, FAITH-2 |
 | Versions | `SteamUtils002` to `SteamUtils011` (`vtables.txt`) |
 | Code | `crates/ossteam-steamclient/src/utils.rs` |
@@ -27,10 +27,9 @@
 | `IsOverlayEnabled`, `BOverlayNeedsPresent` | False: there is no overlay. |
 | `IsSteamRunningInVR`, `IsSteamInBigPictureMode`, `IsSteamChinaLauncher` | False. |
 | `IsSteamRunningOnSteamDeck` | False: ossteam is not the Steam Deck's session (`launch-env.md` §2). |
+| `GetImageSize`, `GetImageRGBA` | The achievement icons' images (`isteamuserstats.md` §4). |
 
 Everything else fails under ABI-3: `GetSecondsSinceAppActive` and
-`GetSecondsSinceComputerActive` (no idle tracking), `GetImageSize` and
-`GetImageRGBA` (no images yet, so every image handle is invalid),
-`GetCSERIPPort`, `CheckFileSignature`, the gamepad text input methods,
+`GetSecondsSinceComputerActive` (no idle tracking), `GetCSERIPPort`, `CheckFileSignature`, the gamepad text input methods,
 the VR methods that change something, `InitFilterText`, `FilterText`,
 `GetIPv6ConnectivityState` and `SetGameLauncherMode`.

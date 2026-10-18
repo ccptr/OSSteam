@@ -17,7 +17,7 @@ use wire::{DecodeError, Reader, Wire};
 
 /// The protocol version (`steamworks-abi.md` §3.4). Both sides must
 /// agree exactly.
-pub const PROTOCOL: u32 = 1;
+pub const PROTOCOL: u32 = 2;
 
 /// The largest frame either side accepts.
 pub const MAX_FRAME_LEN: usize = 16 * 1024 * 1024;
@@ -177,6 +177,82 @@ mod tests {
                 message: "x".into(),
             }),
         }));
+        let schema = StatsSchema {
+            version: 3,
+            stats: vec![
+                StatDef {
+                    id: 1,
+                    name: "NumGames".into(),
+                    kind: 1,
+                    default: 0,
+                    achievements: vec![],
+                },
+                StatDef {
+                    id: 2,
+                    kind: 4,
+                    achievements: vec![AchievementDef {
+                        bit: 0,
+                        name: "ACH_WIN_ONE_GAME".into(),
+                        display_name: "Winner".into(),
+                        hidden: true,
+                        icon: "a.jpg".into(),
+                        progress_stat: "NumGames".into(),
+                        progress_max: 10,
+                        ..Default::default()
+                    }],
+                    ..Default::default()
+                },
+            ],
+        };
+        for body in [
+            RequestBody::UserStats(UserStatsRequest { steam_id: 5 }),
+            RequestBody::StoreStats(StoreStatsRequest {
+                crc: 9,
+                values: vec![StatValue { id: 1, value: 2 }],
+                reset: true,
+            }),
+            RequestBody::GlobalAchievements(GlobalAchievementsRequest {}),
+            RequestBody::AchievementIcon(AchievementIconRequest {
+                file: "a.jpg".into(),
+            }),
+        ] {
+            round_trip(Message::Request(Request { id: 1, body }));
+        }
+        for body in [
+            ResponseBody::UserStats(UserStats {
+                result: 1,
+                steam_id: 5,
+                crc: 9,
+                schema,
+                values: vec![StatValue { id: 2, value: 1 }],
+                unlocks: vec![Unlock {
+                    stat: 2,
+                    bit: 0,
+                    time: 7,
+                }],
+            }),
+            ResponseBody::StoreStats(StoreStats {
+                result: 1,
+                crc: 10,
+                reverted: vec![StatValue { id: 1, value: 0 }],
+                out_of_date: false,
+            }),
+            ResponseBody::GlobalAchievements(GlobalAchievements {
+                result: 1,
+                achievements: vec![AchievementPercent {
+                    name: "ACH_WIN_ONE_GAME".into(),
+                    percent: 12.5f32.to_bits(),
+                }],
+            }),
+            ResponseBody::Image(Image {
+                result: 1,
+                width: 1,
+                height: 1,
+                rgba: vec![1, 2, 3, 255],
+            }),
+        ] {
+            round_trip(Message::Response(Response { id: 2, body }));
+        }
         round_trip(Message::SessionUpdate(session));
         round_trip(Message::AppUpdate(app));
         round_trip(Message::Report(Report {

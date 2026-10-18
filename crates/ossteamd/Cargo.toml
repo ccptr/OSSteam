@@ -36,6 +36,8 @@ tracing-appender.workspace = true
 tracing-subscriber.workspace = true
 ureq.workspace = true
 zeroize.workspace = true
+zune-core.workspace = true
+zune-jpeg.workspace = true
 
 [target.'cfg(unix)'.dependencies]
 rustix = { workspace = true, features = ["fs", "process", "system"] }

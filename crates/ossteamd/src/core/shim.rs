@@ -9,7 +9,8 @@ use std::time::{Duration, Instant};
 
 use crossbeam_channel::{Sender, TrySendError};
 use ossteam_gameipc::{
-    App, AppState, Dlc, ErrorReply, Message, RequestBody, Response, ResponseBody, Session, Welcome,
+    App, AppState, Dlc, ErrorReply, GlobalAchievements, Image, Message, RequestBody, Response,
+    ResponseBody, Session, StoreStats, UserStats, Welcome,
 };
 use ossteam_ipc::v1::{self, Topic, event};
 use ossteam_pics::AppInfo;
@@ -19,6 +20,7 @@ use super::{Command, Core};
 use crate::content::folders::Layout;
 use crate::gameipc::{ConnId, Event};
 use crate::launch::Exited;
+use crate::stats;
 
 /// How long a launched game's end waits for its connections to close
 /// (§3.5).
@@ -114,8 +116,9 @@ impl Core {
             Event::Connected { conn, hello, out } => self.shim_connected(conn, hello, out),
             Event::Message { conn, msg } => match *msg {
                 Message::Request(r) => {
-                    let body = self.shim_request(conn, r.body);
-                    self.shim_send(conn, Message::Response(Response { id: r.id, body }));
+                    if let Some(body) = self.shim_request(conn, r.id, r.body) {
+                        self.shim_send(conn, Message::Response(Response { id: r.id, body }));
+                    }
                 }
                 Message::Report(r) => {
                     if let Some(c) = self.shims.conns.get(&conn) {
@@ -205,24 +208,89 @@ impl Core {
         }
     }
 
-    /// GIPC-1: only what §3.4 lists.
-    fn shim_request(&self, conn: ConnId, body: RequestBody) -> ResponseBody {
-        if !self.shims.conns.contains_key(&conn) {
-            return error("the connection is closing");
-        }
-        match body {
+    /// GIPC-1: only what §3.4 lists. `None` when the stats worker
+    /// answers later.
+    fn shim_request(&self, conn: ConnId, id: u32, body: RequestBody) -> Option<ResponseBody> {
+        let Some(c) = self.shims.conns.get(&conn) else {
+            return Some(error("the connection is closing"));
+        };
+        let ask = match body {
             RequestBody::AppState(r) => {
                 let app = AppId(r.app_id);
                 let a = self.shim_app(app, false);
-                ResponseBody::AppState(AppState {
+                return Some(ResponseBody::AppState(AppState {
                     owned: a.owned,
                     installed: a.installed,
                     install_dir: a.install_dir,
                     build_id: a.build_id,
                     depots: a.depots,
-                })
+                }));
             }
-        }
+            RequestBody::UserStats(r) => stats::Ask::UserStats {
+                user: SteamId(r.steam_id),
+            },
+            RequestBody::StoreStats(r) => stats::Ask::Store {
+                crc: r.crc,
+                values: r.values,
+                reset: r.reset,
+            },
+            RequestBody::GlobalAchievements(_) => stats::Ask::Global,
+            RequestBody::AchievementIcon(r) => stats::Ask::Icon { file: r.file },
+        };
+        // The stats requests (`isteamuserstats.md` §2): the connection's
+        // own app, which the account owns.
+        let app = c.app;
+        let account = self
+            .session_state
+            .account
+            .as_ref()
+            .map(|a| SteamId(a.steam_id));
+        let owned = self
+            .library
+            .as_ref()
+            .filter(|s| Some(s.steam_id) == account)
+            .is_some_and(|s| s.library.find(app).is_some());
+        let Some(account) = account.filter(|_| owned) else {
+            return Some(error(&format!("the account does not own app {app}")));
+        };
+        let requester = self
+            .content
+            .requester
+            .clone()
+            .filter(|_| self.session_state.logged_on);
+        let requester = match (requester, &ask) {
+            (Some(r), _) => Some(r),
+            // Icons come from the web, not the CM.
+            (None, stats::Ask::Icon { .. }) => None,
+            (None, _) => return Some(not_connected(&ask)),
+        };
+        let ask = match ask {
+            stats::Ask::UserStats { user } if user.0 == 0 => {
+                stats::Ask::UserStats { user: account }
+            }
+            other => other,
+        };
+        self.stats.send(stats::Job {
+            conn,
+            id,
+            app,
+            account,
+            language: self.config.language().to_owned(),
+            requester,
+            ask,
+        });
+        None
+    }
+
+    /// The stats worker answered a game's request.
+    pub(super) fn on_stats(&mut self, done: stats::Done) {
+        self.shim_send(
+            done.conn,
+            Message::Response(Response {
+                id: done.id,
+                body: done.body,
+            }),
+        );
     }
 
     /// The session for the shim, with the clock's base (§3.4).
@@ -456,6 +524,29 @@ impl Core {
             self.broadcast(Topic::Games, event::Kind::ShimReport(report));
         }
         self.announce_exit(exited, running, seconds);
+    }
+}
+
+/// The answer to a stats request while the account is not logged on.
+fn not_connected(ask: &stats::Ask) -> ResponseBody {
+    let result = ossteam_types::EResult::NO_CONNECTION.0 as u32;
+    match ask {
+        stats::Ask::UserStats { .. } => ResponseBody::UserStats(UserStats {
+            result,
+            ..Default::default()
+        }),
+        stats::Ask::Store { .. } => ResponseBody::StoreStats(StoreStats {
+            result,
+            ..Default::default()
+        }),
+        stats::Ask::Global => ResponseBody::GlobalAchievements(GlobalAchievements {
+            result,
+            ..Default::default()
+        }),
+        stats::Ask::Icon { .. } => ResponseBody::Image(Image {
+            result,
+            ..Default::default()
+        }),
     }
 }
 

@@ -16,14 +16,17 @@ use std::time::{Duration, Instant};
 
 use ossteam_gameipc::endpoint::Address;
 use ossteam_gameipc::{
-    App, AppState, Dlc, ErrorReply, Hello, Message, Report, RequestBody, Response, ResponseBody,
-    Session, Welcome, read_message, write_message,
+    AchievementDef, AchievementPercent, App, AppState, Dlc, ErrorReply, GlobalAchievements, Hello,
+    Image, Message, Report, RequestBody, Response, ResponseBody, Session, StatDef, StatValue,
+    StatsSchema, StoreStats, Unlock, UserStats, Welcome, read_message, write_message,
 };
 
 use crate::abi::{CSteamID, CallbackMsg, find_version};
 use crate::vtables::{SLOTS, VERSIONS};
 
 const STEAM_ID: u64 = 76561197960287930;
+/// Another user, whose stats a game may ask for.
+const OTHER: u64 = 76561197960287931;
 
 enum Event {
     Hello(Hello),
@@ -126,6 +129,7 @@ fn serve(
                     RequestBody::AppState(_) => ResponseBody::Error(ErrorReply {
                         message: "unknown app".into(),
                     }),
+                    other => stats_answer(other),
                 };
                 let _ = tx.send(Event::Request(r.body));
                 let _ = write_message(&mut writer, &Message::Response(Response { id: r.id, body }));
@@ -134,6 +138,119 @@ fn serve(
         }
     }
     let _ = tx.send(Event::Closed);
+}
+
+fn schema() -> StatsSchema {
+    StatsSchema {
+        version: 20,
+        stats: vec![
+            StatDef {
+                id: 1,
+                kind: 4,
+                achievements: vec![
+                    AchievementDef {
+                        bit: 0,
+                        name: "ACH_WIN_ONE_GAME".into(),
+                        display_name: "Winner".into(),
+                        description: "Win one game.".into(),
+                        icon: "win.jpg".into(),
+                        icon_gray: "win_gray.jpg".into(),
+                        ..Default::default()
+                    },
+                    AchievementDef {
+                        bit: 1,
+                        name: "ACH_TRAVEL_FAR".into(),
+                        hidden: true,
+                        icon_gray: "far_gray.jpg".into(),
+                        progress_stat: "FeetTraveled".into(),
+                        progress_min: 0f32.to_bits(),
+                        progress_max: 5280f32.to_bits(),
+                        ..Default::default()
+                    },
+                ],
+                ..Default::default()
+            },
+            StatDef {
+                id: 2,
+                name: "NumGames".into(),
+                kind: 1,
+                ..Default::default()
+            },
+            StatDef {
+                id: 3,
+                name: "FeetTraveled".into(),
+                kind: 2,
+                default: 1.5f32.to_bits(),
+                ..Default::default()
+            },
+        ],
+    }
+}
+
+/// What the fake daemon answers to the stats requests
+/// (`isteamuserstats.md` §2). A store reverts `NumGames` above 100, as
+/// Steam would for a stat whose `max` is 100.
+fn stats_answer(body: &RequestBody) -> ResponseBody {
+    match body {
+        RequestBody::UserStats(r) if r.steam_id == 0 => ResponseBody::UserStats(UserStats {
+            result: 1,
+            steam_id: STEAM_ID,
+            crc: 7,
+            schema: schema(),
+            values: vec![StatValue { id: 2, value: 5 }],
+            unlocks: vec![],
+        }),
+        RequestBody::UserStats(r) => ResponseBody::UserStats(UserStats {
+            result: 1,
+            steam_id: r.steam_id,
+            crc: 3,
+            schema: schema(),
+            values: vec![StatValue { id: 1, value: 1 }, StatValue { id: 2, value: 9 }],
+            unlocks: vec![Unlock {
+                stat: 1,
+                bit: 0,
+                time: 1234,
+            }],
+        }),
+        RequestBody::StoreStats(r) => ResponseBody::StoreStats(StoreStats {
+            result: 1,
+            crc: r.crc + 1,
+            reverted: r
+                .values
+                .iter()
+                .filter(|v| v.id == 2 && v.value > 100)
+                .map(|v| StatValue {
+                    id: v.id,
+                    value: 100,
+                })
+                .collect(),
+            out_of_date: false,
+        }),
+        RequestBody::GlobalAchievements(_) => {
+            ResponseBody::GlobalAchievements(GlobalAchievements {
+                result: 1,
+                achievements: vec![
+                    AchievementPercent {
+                        name: "ACH_TRAVEL_FAR".into(),
+                        percent: 50f32.to_bits(),
+                    },
+                    AchievementPercent {
+                        name: "ACH_WIN_ONE_GAME".into(),
+                        percent: 75.5f32.to_bits(),
+                    },
+                ],
+            })
+        }
+        RequestBody::AchievementIcon(r) if r.file == "win.jpg" => ResponseBody::Image(Image {
+            result: 1,
+            width: 2,
+            height: 1,
+            rgba: vec![1, 2, 3, 255, 4, 5, 6, 255],
+        }),
+        _ => ResponseBody::Error(ErrorReply {
+            message: "unexpected".into(),
+        }),
+    }
 }
 
 /// The slot of `method` in `version`'s vtable.
@@ -225,10 +342,17 @@ fn overloads_in_declaration_order() {
     let at = (0..v.vtable.len())
         .find(|&i| SLOTS[v.first_slot + i].method == "SetProperty")
         .unwrap();
-    let methods: Vec<&str> = (at..at + 4).map(|i| SLOTS[v.first_slot + i].method).collect();
+    let methods: Vec<&str> = (at..at + 4)
+        .map(|i| SLOTS[v.first_slot + i].method)
+        .collect();
     assert_eq!(
         methods,
-        ["SetProperty", "SetProperty_2", "SetProperty_3", "SetProperty_4"]
+        [
+            "SetProperty",
+            "SetProperty_2",
+            "SetProperty_3",
+            "SetProperty_4"
+        ]
     );
 }
 
@@ -596,6 +720,8 @@ fn a_game_session() {
         1
     );
 
+    stats_session(&fake, client, user, pipe, utils);
+
     // A stub returns its failure value and is reported, with the
     // interfaces handed out.
     assert_eq!(
@@ -668,17 +794,17 @@ fn a_game_session() {
 
     // An API call, and what happens to one pending when the daemon goes.
     let p = crate::pipe::get(pipe).unwrap();
-    fn decode(b: &ResponseBody) -> Option<Vec<u8>> {
+    fn decode(_: &crate::pipe::Pipe, b: &ResponseBody) -> Option<Vec<u8>> {
         match b {
             ResponseBody::AppState(s) => Some(s.build_id.to_le_bytes().to_vec()),
-            ResponseBody::Error(_) => None,
+            _ => None,
         }
     }
     let call = p.begin_call(
         RequestBody::AppState(ossteam_gameipc::AppStateRequest { app_id: 10 }),
         1234,
         4,
-        decode,
+        Box::new(decode),
     );
     assert_ne!(call, 0);
     let done = wait_callback(pipe, 703);
@@ -750,7 +876,7 @@ fn a_game_session() {
         RequestBody::AppState(ossteam_gameipc::AppStateRequest { app_id: 10 }),
         1234,
         4,
-        decode,
+        Box::new(decode),
     );
     assert_eq!(call, 0);
     drop(p);
@@ -824,4 +950,489 @@ fn a_game_session() {
 
     let _ = std::io::stderr().flush();
     let _ = std::fs::remove_dir_all(&base);
+}
+
+fn next_request(fake: &Fake) -> RequestBody {
+    loop {
+        if let Event::Request(r) = fake.next() {
+            return r;
+        }
+    }
+}
+
+fn u32_at(b: &[u8], at: usize) -> u32 {
+    u32::from_le_bytes(b[at..at + 4].try_into().unwrap())
+}
+
+/// `ISteamUserStats` and the images of `ISteamUtils`
+/// (`isteamuserstats.md`).
+fn stats_session(fake: &Fake, client: *mut c_void, user: i32, pipe: i32, utils: *mut c_void) {
+    let stats = call!(
+        client,
+        "SteamClient020",
+        "GetISteamUserStats",
+        fn(i32, i32, *const c_char) -> *mut c_void,
+        user,
+        pipe,
+        c"STEAMUSERSTATS_INTERFACE_VERSION013".as_ptr()
+    );
+    assert!(!stats.is_null());
+    macro_rules! us {
+        ($method:literal, fn($($t:ty),*) -> $r:ty $(, $arg:expr)*) => {
+            call!(stats, "STEAMUSERSTATS_INTERFACE_VERSION013", $method, fn($($t),*) -> $r $(, $arg)*)
+        };
+    }
+
+    // Version 013 fetches without being asked.
+    assert!(matches!(next_request(fake), RequestBody::UserStats(r) if r.steam_id == 0));
+    let received = wait_callback(pipe, 1101);
+    assert_eq!(received.len(), 20);
+    assert_eq!(received[..8], 480u64.to_le_bytes());
+    assert_eq!(u32_at(&received, 8), 1);
+    assert_eq!(received[12..20], STEAM_ID.to_le_bytes());
+
+    // Stats.
+    let mut n = 0i32;
+    assert_eq!(
+        us!(
+            "GetStat",
+            fn(*const c_char, *mut i32) -> u8,
+            c"NumGames".as_ptr(),
+            &mut n
+        ),
+        1
+    );
+    assert_eq!(n, 5);
+    let mut f = 0f32;
+    assert_eq!(
+        us!(
+            "GetStat_2",
+            fn(*const c_char, *mut f32) -> u8,
+            c"NumGames".as_ptr(),
+            &mut f
+        ),
+        0
+    );
+    assert_eq!(
+        us!(
+            "GetStat_2",
+            fn(*const c_char, *mut f32) -> u8,
+            c"FeetTraveled".as_ptr(),
+            &mut f
+        ),
+        1
+    );
+    assert_eq!(f, 1.5);
+    assert_eq!(
+        us!(
+            "GetStat",
+            fn(*const c_char, *mut i32) -> u8,
+            c"Nope".as_ptr(),
+            &mut n
+        ),
+        0
+    );
+    assert_eq!(
+        us!(
+            "SetStat",
+            fn(*const c_char, i32) -> u8,
+            c"NumGames".as_ptr(),
+            150
+        ),
+        1
+    );
+    assert_eq!(
+        us!(
+            "SetStat_2",
+            fn(*const c_char, f32) -> u8,
+            c"NumGames".as_ptr(),
+            2.0
+        ),
+        0
+    );
+    assert_eq!(
+        us!(
+            "SetStat_2",
+            fn(*const c_char, f32) -> u8,
+            c"FeetTraveled".as_ptr(),
+            2.5
+        ),
+        1
+    );
+
+    // Achievements and the schema.
+    let (mut got, mut time) = (9u8, 9u32);
+    let win = c"ACH_WIN_ONE_GAME".as_ptr();
+    let far = c"ACH_TRAVEL_FAR".as_ptr();
+    assert_eq!(
+        us!(
+            "GetAchievement",
+            fn(*const c_char, *mut u8) -> u8,
+            win,
+            &mut got
+        ),
+        1
+    );
+    assert_eq!(got, 0);
+    assert_eq!(us!("SetAchievement", fn(*const c_char) -> u8, win), 1);
+    assert_eq!(
+        us!(
+            "GetAchievementAndUnlockTime",
+            fn(*const c_char, *mut u8, *mut u32) -> u8,
+            win,
+            &mut got,
+            &mut time
+        ),
+        1
+    );
+    assert_eq!(got, 1);
+    assert!(time >= 1_790_000_000);
+    assert_eq!(us!("GetNumAchievements", fn() -> u32), 2);
+    assert_eq!(
+        str_at(us!("GetAchievementName", fn(u32) -> *const c_char, 1)),
+        "ACH_TRAVEL_FAR"
+    );
+    assert_eq!(
+        str_at(us!("GetAchievementName", fn(u32) -> *const c_char, 2)),
+        ""
+    );
+    let attr = |a: *const c_char, k: &CStr| {
+        str_at(us!(
+            "GetAchievementDisplayAttribute",
+            fn(*const c_char, *const c_char) -> *const c_char,
+            a,
+            k.as_ptr()
+        ))
+    };
+    assert_eq!(attr(win, c"name"), "Winner");
+    assert_eq!(attr(win, c"desc"), "Win one game.");
+    assert_eq!(attr(win, c"hidden"), "0");
+    assert_eq!(attr(far, c"hidden"), "1");
+    assert_eq!(attr(far, c"icon"), "");
+    let (mut lo, mut hi) = (1f32, 1f32);
+    assert_eq!(
+        us!(
+            "GetAchievementProgressLimits_2",
+            fn(*const c_char, *mut f32, *mut f32) -> u8,
+            far,
+            &mut lo,
+            &mut hi
+        ),
+        1
+    );
+    assert_eq!((lo, hi), (0.0, 5280.0));
+    let (mut ilo, mut ihi) = (1i32, 1i32);
+    assert_eq!(
+        us!(
+            "GetAchievementProgressLimits",
+            fn(*const c_char, *mut i32, *mut i32) -> u8,
+            far,
+            &mut ilo,
+            &mut ihi
+        ),
+        0
+    );
+    assert_eq!(
+        us!(
+            "IndicateAchievementProgress",
+            fn(*const c_char, u32, u32) -> u8,
+            far,
+            10,
+            100
+        ),
+        1
+    );
+    let progress = wait_callback(pipe, 1103);
+    assert_eq!(progress.len(), 148);
+    assert_eq!(read_c(&progress[9..137]), "ACH_TRAVEL_FAR");
+    assert_eq!((u32_at(&progress, 140), u32_at(&progress, 144)), (10, 100));
+    assert_eq!(
+        us!(
+            "IndicateAchievementProgress",
+            fn(*const c_char, u32, u32) -> u8,
+            win,
+            1,
+            2
+        ),
+        0
+    );
+
+    // Storing: Steam reverts NumGames; the achievement is announced.
+    assert_eq!(us!("StoreStats", fn() -> u8), 1);
+    let RequestBody::StoreStats(sent) = next_request(fake) else {
+        panic!("no store")
+    };
+    assert_eq!(sent.crc, 7);
+    assert!(!sent.reset);
+    assert_eq!(
+        sent.values,
+        [
+            StatValue { id: 1, value: 1 },
+            StatValue { id: 2, value: 150 },
+            StatValue {
+                id: 3,
+                value: 2.5f32.to_bits()
+            },
+        ]
+    );
+    let unlocked = wait_callback(pipe, 1103);
+    assert_eq!(read_c(&unlocked[9..137]), "ACH_WIN_ONE_GAME");
+    assert_eq!((u32_at(&unlocked, 140), u32_at(&unlocked, 144)), (0, 0));
+    let stored = next_callback(pipe).expect("UserStatsStored_t");
+    assert_eq!(stored.0, 1102);
+    assert_eq!(stored.1.len(), 12);
+    assert_eq!(u32_at(&stored.1, 8), 8);
+    assert_eq!(
+        us!(
+            "GetStat",
+            fn(*const c_char, *mut i32) -> u8,
+            c"NumGames".as_ptr(),
+            &mut n
+        ),
+        1
+    );
+    assert_eq!(n, 100);
+    // Nothing changed since: still sent, with the new crc.
+    assert_eq!(us!("StoreStats", fn() -> u8), 1);
+    let RequestBody::StoreStats(sent) = next_request(fake) else {
+        panic!("no store")
+    };
+    assert_eq!((sent.crc, sent.values.len()), (8, 0));
+    assert_eq!(u32_at(&wait_callback(pipe, 1102), 8), 1);
+
+    // Icons.
+    assert_eq!(us!("GetAchievementIcon", fn(*const c_char) -> i32, win), 0);
+    assert!(matches!(next_request(fake), RequestBody::AchievementIcon(r) if r.file == "win.jpg"));
+    let fetched = wait_callback(pipe, 1109);
+    assert_eq!(fetched.len(), 144);
+    assert_eq!(read_c(&fetched[8..136]), "ACH_WIN_ONE_GAME");
+    assert_eq!(fetched[136], 1);
+    let handle = u32_at(&fetched, 140) as i32;
+    assert!(handle > 0);
+    assert_eq!(
+        us!("GetAchievementIcon", fn(*const c_char) -> i32, win),
+        handle
+    );
+    let (mut w, mut h) = (0u32, 0u32);
+    assert_eq!(
+        call!(
+            utils,
+            "SteamUtils010",
+            "GetImageSize",
+            fn(i32, *mut u32, *mut u32) -> u8,
+            handle,
+            &mut w,
+            &mut h
+        ),
+        1
+    );
+    assert_eq!((w, h), (2, 1));
+    let mut rgba = [0u8; 8];
+    assert_eq!(
+        call!(
+            utils,
+            "SteamUtils010",
+            "GetImageRGBA",
+            fn(i32, *mut u8, i32) -> u8,
+            handle,
+            rgba.as_mut_ptr(),
+            4
+        ),
+        0
+    );
+    assert_eq!(
+        call!(
+            utils,
+            "SteamUtils010",
+            "GetImageRGBA",
+            fn(i32, *mut u8, i32) -> u8,
+            handle,
+            rgba.as_mut_ptr(),
+            8
+        ),
+        1
+    );
+    assert_eq!(rgba, [1, 2, 3, 255, 4, 5, 6, 255]);
+    assert_eq!(
+        call!(
+            utils,
+            "SteamUtils010",
+            "GetImageSize",
+            fn(i32, *mut u32, *mut u32) -> u8,
+            999,
+            &mut w,
+            &mut h
+        ),
+        0
+    );
+    // An icon the daemon cannot give: handle 0, and asked again later.
+    assert_eq!(us!("GetAchievementIcon", fn(*const c_char) -> i32, far), 0);
+    assert!(matches!(
+        next_request(fake),
+        RequestBody::AchievementIcon(_)
+    ));
+    assert_eq!(u32_at(&wait_callback(pipe, 1109), 140), 0);
+
+    // Another user's stats.
+    let call = us!("RequestUserStats", fn(u64) -> u64, OTHER);
+    assert_ne!(call, 0);
+    assert!(matches!(next_request(fake), RequestBody::UserStats(r) if r.steam_id == OTHER));
+    let done = wait_callback(pipe, 703);
+    assert_eq!(done[..8], call.to_le_bytes());
+    let mut result = [0u8; 20];
+    let mut failed = true;
+    // SAFETY: `result` holds 20 bytes.
+    assert!(unsafe {
+        crate::Steam_GetAPICallResult(
+            pipe,
+            call,
+            result.as_mut_ptr().cast(),
+            20,
+            1101,
+            &mut failed,
+        )
+    });
+    assert!(!failed);
+    assert_eq!(
+        (u32_at(&result, 8), &result[12..20]),
+        (1, &OTHER.to_le_bytes()[..])
+    );
+    assert_eq!(
+        us!(
+            "GetUserStat",
+            fn(u64, *const c_char, *mut i32) -> u8,
+            OTHER,
+            c"NumGames".as_ptr(),
+            &mut n
+        ),
+        1
+    );
+    assert_eq!(n, 9);
+    assert_eq!(
+        us!(
+            "GetUserAchievementAndUnlockTime",
+            fn(u64, *const c_char, *mut u8, *mut u32) -> u8,
+            OTHER,
+            win,
+            &mut got,
+            &mut time
+        ),
+        1
+    );
+    assert_eq!((got, time), (1, 1234));
+    assert_eq!(
+        us!(
+            "GetUserStat",
+            fn(u64, *const c_char, *mut i32) -> u8,
+            5,
+            c"NumGames".as_ptr(),
+            &mut n
+        ),
+        0
+    );
+
+    // Global achievement percentages.
+    let mut name = [0u8; 64];
+    let mut pct = 0f32;
+    assert_eq!(
+        us!(
+            "GetMostAchievedAchievementInfo",
+            fn(*mut u8, u32, *mut f32, *mut u8) -> i32,
+            name.as_mut_ptr(),
+            64,
+            &mut pct,
+            &mut got
+        ),
+        -1
+    );
+    let call = us!("RequestGlobalAchievementPercentages", fn() -> u64);
+    assert!(matches!(
+        next_request(fake),
+        RequestBody::GlobalAchievements(_)
+    ));
+    let done = wait_callback(pipe, 703);
+    assert_eq!(done[..8], call.to_le_bytes());
+    assert_eq!(u32_at(&done, 8), 1110);
+    let mut ready = [0u8; 12];
+    // SAFETY: `ready` holds 12 bytes.
+    assert!(unsafe {
+        crate::Steam_GetAPICallResult(pipe, call, ready.as_mut_ptr().cast(), 12, 1110, &mut failed)
+    });
+    assert_eq!(u32_at(&ready, 8), 1);
+    assert_eq!(
+        us!(
+            "GetMostAchievedAchievementInfo",
+            fn(*mut u8, u32, *mut f32, *mut u8) -> i32,
+            name.as_mut_ptr(),
+            64,
+            &mut pct,
+            &mut got
+        ),
+        0
+    );
+    assert_eq!((read_c(&name), pct, got), ("ACH_WIN_ONE_GAME", 75.5, 1));
+    assert_eq!(
+        us!(
+            "GetNextMostAchievedAchievementInfo",
+            fn(i32, *mut u8, u32, *mut f32, *mut u8) -> i32,
+            0,
+            name.as_mut_ptr(),
+            64,
+            &mut pct,
+            &mut got
+        ),
+        1
+    );
+    assert_eq!((read_c(&name), pct, got), ("ACH_TRAVEL_FAR", 50.0, 0));
+    assert_eq!(
+        us!(
+            "GetNextMostAchievedAchievementInfo",
+            fn(i32, *mut u8, u32, *mut f32, *mut u8) -> i32,
+            1,
+            name.as_mut_ptr(),
+            64,
+            &mut pct,
+            &mut got
+        ),
+        -1
+    );
+    assert_eq!(
+        us!(
+            "GetAchievementAchievedPercent",
+            fn(*const c_char, *mut f32) -> u8,
+            far,
+            &mut pct
+        ),
+        1
+    );
+    assert_eq!(pct, 50.0);
+
+    // Resetting stores the defaults.
+    assert_eq!(us!("ResetAllStats", fn(u8) -> u8, 1), 1);
+    let RequestBody::StoreStats(sent) = next_request(fake) else {
+        panic!("no store")
+    };
+    assert!(sent.reset);
+    assert_eq!(
+        sent.values,
+        [
+            StatValue { id: 1, value: 0 },
+            StatValue { id: 2, value: 0 },
+            StatValue {
+                id: 3,
+                value: 1.5f32.to_bits()
+            },
+        ]
+    );
+    assert_eq!(u32_at(&wait_callback(pipe, 1102), 8), 1);
+    assert_eq!(
+        us!(
+            "GetAchievement",
+            fn(*const c_char, *mut u8) -> u8,
+            win,
+            &mut got
+        ),
+        1
+    );
+    assert_eq!(got, 0);
 }

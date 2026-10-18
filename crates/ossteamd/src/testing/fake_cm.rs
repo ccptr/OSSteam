@@ -6,7 +6,7 @@
 //! `pics.md`, `content.md` and `launch.md` describe them: the sign-in
 //! service methods, logon and logoff, the license list, PICS, persona
 //! state, depot keys, manifest request codes, the content server list, CDN
-//! auth tokens and play sessions. It checks what the daemon sends
+//! auth tokens, play sessions, and games' stats. It checks what the daemon sends
 //! (the password is decrypted, codes and tokens are compared) so a test
 //! fails when the daemon gets the protocol wrong. Where those pages mark a
 //! server behaviour as unverified, the fake picks one reading; the
@@ -39,13 +39,17 @@ use ossteam_proto::steam::{
     CContentServerDirectoryGetServersForSteamPipeResponse, CContentServerDirectoryServerInfo,
     CMsgClientAccountInfo, CMsgClientChangeStatus, CMsgClientGamesPlayed,
     CMsgClientGetDepotDecryptionKey, CMsgClientGetDepotDecryptionKeyResponse,
-    CMsgClientLicenseList, CMsgClientLoggedOff, CMsgClientLogon, CMsgClientLogonResponse,
+    CMsgClientGetUserStats, CMsgClientGetUserStatsResponse, CMsgClientLicenseList,
+    CMsgClientLoggedOff, CMsgClientLogon, CMsgClientLogonResponse,
     CMsgClientPicsAccessTokenRequest, CMsgClientPicsAccessTokenResponse,
     CMsgClientPicsChangesSinceRequest, CMsgClientPicsChangesSinceResponse,
-    CMsgClientPicsProductInfoRequest, CMsgClientPicsProductInfoResponse, EAuthSessionGuardType,
-    EMsg, authentication, c_msg_client_license_list, c_msg_client_pics_access_token_response,
-    c_msg_client_pics_changes_since_response, c_msg_client_pics_product_info_response,
-    content_server_directory as csd,
+    CMsgClientPicsProductInfoRequest, CMsgClientPicsProductInfoResponse, CMsgClientStoreUserStats2,
+    CMsgClientStoreUserStatsResponse, CPlayerGetGameAchievementsRequest,
+    CPlayerGetGameAchievementsResponse, EAuthSessionGuardType, EMsg, authentication,
+    c_msg_client_get_user_stats_response, c_msg_client_license_list,
+    c_msg_client_pics_access_token_response, c_msg_client_pics_changes_since_response,
+    c_msg_client_pics_product_info_response, c_player_get_game_achievements_response,
+    content_server_directory as csd, player,
 };
 use ossteam_types::{CancelToken, EResult, SteamId};
 use ossteam_vdf::{Object, Value, binary, text};
@@ -162,6 +166,23 @@ struct State {
     /// Manifest request codes, by depot and manifest.
     request_codes: HashMap<(u32, u64), u64>,
     cdn: Option<Arc<FakeCdn>>,
+    /// Stats schemas by app, as `ClientGetUserStatsResponse` carries them.
+    schemas: HashMap<u32, Vec<u8>>,
+    /// Users' stats by (Steam id, app).
+    stats: HashMap<(u64, u32), FakeStats>,
+    /// `ClientStoreUserStats2` messages, in arrival order.
+    stores: Vec<CMsgClientStoreUserStats2>,
+    /// Global achievement percentages by app, as Steam's strings.
+    percentages: HashMap<u32, Vec<(String, String)>>,
+}
+
+/// One user's stats for one app.
+#[derive(Clone, Debug, Default)]
+pub struct FakeStats {
+    pub crc: u32,
+    pub values: BTreeMap<u32, u32>,
+    /// By (stat, bit).
+    pub unlocks: BTreeMap<(u32, u32), u32>,
 }
 
 struct Shared {
@@ -295,6 +316,40 @@ impl FakeCm {
     /// the account does not own.
     pub fn refuse_key(&self, depot: u32) {
         self.state().depot_keys.remove(&depot);
+    }
+
+    /// Gives `app` a stats schema (binary KeyValues).
+    pub fn stats_schema(self, app: u32, schema: Vec<u8>) -> Self {
+        self.state().schemas.insert(app, schema);
+        self
+    }
+
+    /// Sets a user's stats for `app`.
+    pub fn set_stats(&self, user: SteamId, app: u32, stats: FakeStats) {
+        self.state().stats.insert((user.0, app), stats);
+    }
+
+    pub fn stats(&self, user: SteamId, app: u32) -> FakeStats {
+        self.state()
+            .stats
+            .get(&(user.0, app))
+            .cloned()
+            .unwrap_or_default()
+    }
+
+    /// The `ClientStoreUserStats2` messages so far.
+    pub fn stores(&self) -> Vec<CMsgClientStoreUserStats2> {
+        self.state().stores.clone()
+    }
+
+    /// Sets `app`'s global achievement percentages.
+    pub fn achievement_percentages(&self, app: u32, list: &[(&str, &str)]) {
+        self.state().percentages.insert(
+            app,
+            list.iter()
+                .map(|(n, p)| ((*n).to_owned(), (*p).to_owned()))
+                .collect(),
+        );
     }
 
     /// Approves the pending sign-in of `account` in the "mobile app": a
@@ -496,8 +551,109 @@ impl FakeCm {
                     &r,
                 )]
             }
+            EMsg::KEMsgClientGetUserStats => {
+                assert!(conn.logged_on.is_some(), "stats before logon");
+                vec![self.get_user_stats(p)]
+            }
+            EMsg::KEMsgClientStoreUserStats2 => {
+                let steam_id = conn.logged_on.expect("stats before logon");
+                vec![self.store_user_stats(steam_id, p)]
+            }
             other => panic!("the fake CM does not handle {other:?}"),
         }
+    }
+
+    /// `isteamuserstats.md` §1.1. An app without a schema has no stats,
+    /// which the fake answers with `k_EResultFail` (the real server's
+    /// answer is unverified).
+    fn get_user_stats(&self, p: &Packet) -> Packet {
+        let body: CMsgClientGetUserStats = decode(p);
+        assert_eq!(body.schema_local_version(), -1);
+        let app = u32::try_from(body.game_id()).expect("an app's game id");
+        let s = self.state();
+        let r = match s.schemas.get(&app) {
+            None => CMsgClientGetUserStatsResponse {
+                game_id: body.game_id,
+                eresult: Some(EResult::FAIL.0),
+                ..Default::default()
+            },
+            Some(schema) => {
+                let stats = s
+                    .stats
+                    .get(&(body.steam_id_for_user(), app))
+                    .cloned()
+                    .unwrap_or_default();
+                let mut blocks: BTreeMap<u32, Vec<u32>> = BTreeMap::new();
+                for (&(stat, bit), &time) in &stats.unlocks {
+                    blocks.entry(stat).or_insert_with(|| vec![0; 32])[bit as usize] = time;
+                }
+                CMsgClientGetUserStatsResponse {
+                    game_id: body.game_id,
+                    eresult: Some(EResult::OK.0),
+                    crc_stats: Some(stats.crc),
+                    schema: Some(schema.clone()),
+                    stats: stats
+                        .values
+                        .iter()
+                        .map(|(&id, &v)| c_msg_client_get_user_stats_response::Stats {
+                            stat_id: Some(id),
+                            stat_value: Some(v),
+                        })
+                        .collect(),
+                    achievement_blocks: blocks
+                        .into_iter()
+                        .map(|(id, unlock_time)| {
+                            c_msg_client_get_user_stats_response::AchievementBlocks {
+                                achievement_id: Some(id),
+                                unlock_time,
+                            }
+                        })
+                        .collect(),
+                }
+            }
+        };
+        reply_to(p, EMsg::KEMsgClientGetUserStatsResponse, &r)
+    }
+
+    /// A store with a stale crc is out of date and refused, which is the
+    /// fake's reading of `stats_out_of_date`. Otherwise the values are
+    /// taken, a bit newly set gets the fake's clock as its unlock time,
+    /// and the crc moves on.
+    fn store_user_stats(&self, steam_id: SteamId, p: &Packet) -> Packet {
+        let body: CMsgClientStoreUserStats2 = decode(p);
+        assert_eq!(body.settor_steam_id(), steam_id.0);
+        assert_eq!(body.settee_steam_id(), steam_id.0);
+        let app = u32::try_from(body.game_id()).expect("an app's game id");
+        let mut s = self.state();
+        s.stores.push(body.clone());
+        let stats = s.stats.entry((steam_id.0, app)).or_default();
+        let r = if body.crc_stats() != stats.crc {
+            CMsgClientStoreUserStatsResponse {
+                game_id: body.game_id,
+                eresult: Some(EResult::FAIL.0),
+                crc_stats: Some(stats.crc),
+                stats_out_of_date: Some(true),
+                ..Default::default()
+            }
+        } else {
+            for v in &body.stats {
+                let old = stats.values.get(&v.stat_id()).copied().unwrap_or(0);
+                for bit in 0..32 {
+                    if v.stat_value() & !old & (1 << bit) != 0 {
+                        stats.unlocks.insert((v.stat_id(), bit), FAKE_SERVER_TIME);
+                    }
+                }
+                stats.values.insert(v.stat_id(), v.stat_value());
+            }
+            stats.crc += 1;
+            CMsgClientStoreUserStatsResponse {
+                game_id: body.game_id,
+                eresult: Some(EResult::OK.0),
+                crc_stats: Some(stats.crc),
+                ..Default::default()
+            }
+        };
+        reply_to(p, EMsg::KEMsgClientStoreUserStatsResponse, &r)
     }
 
     fn service(&self, p: &Packet) -> Packet {
@@ -600,6 +756,26 @@ impl FakeCm {
                     token: Some(token),
                     expiration_time: Some(until.min(u64::from(u32::MAX)) as u32),
                 }),
+            )
+        } else if is::<player::GetGameAchievements>(&name) {
+            let body: CPlayerGetGameAchievementsRequest = decode(p);
+            let list = self.state().percentages.get(&body.appid()).cloned();
+            service_reply(
+                p,
+                list.ok_or(EResult::FAIL)
+                    .map(|list| CPlayerGetGameAchievementsResponse {
+                        achievements: list
+                            .into_iter()
+                            .map(
+                                |(n, pct)| c_player_get_game_achievements_response::Achievement {
+                                    internal_name: Some(n),
+                                    player_percent_unlocked: Some(pct),
+                                    ..Default::default()
+                                },
+                            )
+                            .collect(),
+                        ..Default::default()
+                    }),
             )
         } else {
             panic!("the fake CM does not handle {name}");

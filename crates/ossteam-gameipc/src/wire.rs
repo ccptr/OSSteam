@@ -117,6 +117,8 @@ macro_rules! record {
         #[derive(Debug, Clone, PartialEq, Eq, Default)]
         pub struct $name { $($(#[$fmeta])* pub $field: $ty,)* }
 
+        // A record without fields reads and writes nothing.
+        #[allow(unused_variables)]
         impl $crate::wire::Wire for $name {
             fn put(&self, out: &mut Vec<u8>) {
                 $($crate::wire::Wire::put(&self.$field, out);)*

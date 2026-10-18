@@ -26,6 +26,10 @@ fn app_state(o: &Object, app_id: u32) -> Option<AppState> {
             crate::log::log!(Warn, "AppState for {app_id}: {}", e.message);
             None
         }
+        other => {
+            crate::log::log!(Warn, "AppState for {app_id}: the daemon sent {other:?}");
+            None
+        }
     }
 }
 

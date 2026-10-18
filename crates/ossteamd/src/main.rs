@@ -15,6 +15,7 @@ mod pics;
 mod secrets;
 mod server;
 mod session;
+mod stats;
 #[cfg(test)]
 mod testing;
 
@@ -243,6 +244,8 @@ fn serve(
     .context("starting the session worker")?;
 
     let assets = assets::Handle::spawn(cmd_tx.clone()).context("starting the image downloader")?;
+    let stats = stats::Handle::spawn(cmd_tx.clone(), paths.cache.join("achievement-icons"))
+        .context("starting the stats worker")?;
     let content_jobs = match content_fetch {
         None => content::Handle::new(cmd_tx.clone(), config.bandwidth_limit(), scripts),
         Some(fetch) => content::Handle::with_fetch(
@@ -265,6 +268,7 @@ fn serve(
         pics_cache: Cache::new(pics_dir),
         assets,
         assets_dir: paths.cache.join("assets"),
+        stats,
         content_jobs,
         default_folder: paths.data.join("library"),
         launch,

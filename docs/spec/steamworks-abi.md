@@ -332,7 +332,8 @@ msg)`, which `steam_api` calls when the game pumps callbacks
   freeing returns the same callback.
 
 `Steam_BGetCallback` never waits for the daemon. When the queue is
-empty, it locks one mutex and checks one queue (§20: at most 5 µs).
+empty, it only looks the pipe up and checks its queue (§20: at most
+5 µs; `ossteam-steamclient/tests/pump.rs` measures it).
 
 **API calls.** A method that returns `SteamAPICall_t` sends its request
 to the daemon and returns a handle at once. Handles count up from 1 and

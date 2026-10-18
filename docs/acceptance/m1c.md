@@ -32,16 +32,18 @@ date and the build.
 | `ISteamUser` tickets, auth sessions and encrypted app tickets | built 2026-10-18; daemon test against the fake CM; message layout from SteamKit2 and node-steam-user, unverified |
 | CLI: `launch`, `running`, `stop` | built 2026-10-17 |
 | Install scripts before the first start (`install-scripts.md` §3) | ⏳ waits on the §2.6 decision |
-| The 32-bit client library built and installed as `lib32/` | ⏳ needs an i686 target in the build |
-| §20 shim callback-pump overhead measured | ⏳ needs a benchmark |
+| The 32-bit client library built and installed as `lib32/` (`cargo xtask build-steamclient`) | built 2026-10-18; Linux i686 and Windows i686 (cross, mingw) libraries export the entry points; never loaded by a game |
+| §20 shim callback-pump overhead (`ossteam-steamclient/tests/pump.rs`) | built 2026-10-18; on the development machine, not the reference hardware: about 30 ns per empty `Steam_BGetCallback` optimised, on x86_64 and i686 Linux; Windows not run (the test needs a Unix socket) |
 | Captures of the official client's play-session and ticket messages | ⏳ needs a capture setup |
 
 ## Setup
 
-- Build the daemon and the client library, and put the library next to
-  the daemon (`steamworks-abi.md` §1.3), or point
-  `OSSTEAM_STEAMCLIENT_DIR` at it. Without it every launch fails with
-  exit code 7.
+- Build the daemon, then the client libraries with `cargo xtask
+  build-steamclient --release`, which puts the 64-bit library next to
+  the daemon and the 32-bit one in `lib32/` (`steamworks-abi.md` §1.3).
+  `OSSTEAM_STEAMCLIENT_DIR` can point elsewhere. Without the 64-bit
+  library every launch fails with exit code 7; without `lib32/` a
+  32-bit game finds no client.
 - On a machine where the official client is installed, run the
   conflict check first, then quit the official client and remove its
   `~/.steam/sdk32`, `~/.steam/sdk64` and `~/.steam/steam.pid` (Linux),
@@ -76,6 +78,11 @@ date and the build.
 | A game started while the connection is down runs logged off, and its play session is reported after the reconnect | ⏳ | ⏳ |
 | `launch` refuses an app with an update pending unless `--allow-stale`, and an app with a job working on it | ⏳ | ⏳ |
 | §20: shim callback-pump overhead ≤ 5 µs per `RunCallbacks` with nothing pending | ⏳ | ⏳ |
+
+The §20 check runs `cargo test --release -p ossteam-steamclient --test
+pump -- --nocapture` on the reference hardware and records the median it
+prints. `docs/acceptance/reference-hw.md`, which defines that hardware,
+is not written yet.
 
 `ConnectToGlobalUser` refuses an app the account does not own
 (`steamworks-abi.md` §2.3, *unverified*). If the test account has no

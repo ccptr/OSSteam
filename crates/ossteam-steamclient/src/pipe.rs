@@ -373,6 +373,14 @@ impl Pipe {
         call
     }
 
+    /// Starts an API call that the shim completes itself, at once. `make`
+    /// makes its result, `callback`, from the call's handle.
+    pub fn local_call(&self, callback: i32, make: impl FnOnce(u64) -> Vec<u8>) -> u64 {
+        let call = NEXT_CALL.fetch_add(1, Ordering::Relaxed);
+        self.complete(call, callback, make(call), FAILURE_NONE);
+        call
+    }
+
     /// Sends a request whose answer goes to `then`, on the pipe's reader
     /// thread. Returns false, without calling `then`, when the request
     /// could not be sent.

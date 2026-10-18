@@ -17,7 +17,7 @@ use wire::{DecodeError, Reader, Wire};
 
 /// The protocol version (`steamworks-abi.md` §3.4). Both sides must
 /// agree exactly.
-pub const PROTOCOL: u32 = 2;
+pub const PROTOCOL: u32 = 3;
 
 /// The largest frame either side accepts.
 pub const MAX_FRAME_LEN: usize = 16 * 1024 * 1024;
@@ -148,6 +148,8 @@ mod tests {
                 available: true,
                 name: "Pieterw test DLC".into(),
             }],
+            cloud_quota: 1 << 33,
+            cloud_max_files: 500,
             ..Default::default()
         };
         round_trip(Message::Welcome(Welcome {

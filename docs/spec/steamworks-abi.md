@@ -432,7 +432,7 @@ the shim sends `Request`s and `Report`s, and the daemon sends
 
 ### 3.4 Messages
 
-Protocol version 2.
+Protocol version 3.
 
 | Tag | Message | Direction | Fields |
 |---|---|---|---|
@@ -477,6 +477,8 @@ Protocol version 2.
 | `user_dir` | `string` | `<data>/userdata/<account id>/<app id>`; empty when no account is active |
 | `owner` | `u64` | the Steam id of the license owner: the active account in M1 |
 | `low_violence` | `bool` | the license that grants the app carries the low-violence flag (`content.md` §6) |
+| `cloud_quota` | `u64` | `ufs/quota` of the app's info (`pics.md`): its Steam Cloud bytes, 0 when it has none |
+| `cloud_max_files` | `u32` | `ufs/maxnumfiles`: how many files it may keep there, 0 for no limit |
 
 `Dlc`: `app_id: u32`, `owned: bool`, `installed: bool`, `available:
 bool` (its info says it is released), `name: string` (empty when its
@@ -592,7 +594,7 @@ getter and fails under ABI-3.
 | `ISteamApps` | `isteamapps.md` | ownership, DLC, branch, build, install directory, languages |
 | `ISteamUtils` | `isteamutils.md` | app id, country, server time, API-call plumbing, overlay state |
 | `ISteamFriends` | `isteamfriends.md` | own persona name and state |
-| `ISteamRemoteStorage` | `isteamremotestorage.md` | cloud state; local files follow |
+| `ISteamRemoteStorage` | `isteamremotestorage.md` | local files, nothing synced |
 | `ISteamUserStats` | `isteamuserstats.md` | stats, achievements, schema, icons, global achievement percentages |
 
 ## 6. Verification against the official client

@@ -312,6 +312,24 @@ impl AppInfo<'_> {
         str_at(self.0, &["common", "releasestate"])
     }
 
+    /// The Steam Cloud quota in bytes (`ufs/quota`), 0 when the app has
+    /// none.
+    pub fn cloud_quota(&self) -> u64 {
+        self.0
+            .get_path(&["ufs", "quota"])
+            .and_then(Value::as_u64)
+            .unwrap_or(0)
+    }
+
+    /// The most files the app may keep in Steam Cloud (`ufs/maxnumfiles`),
+    /// 0 when the info gives no limit.
+    pub fn cloud_max_files(&self) -> u32 {
+        self.0
+            .get_path(&["ufs", "maxnumfiles"])
+            .and_then(Value::as_u64)
+            .map_or(0, |n| n.min(u64::from(u32::MAX)) as u32)
+    }
+
     /// The depots, in the order the info lists them. Other keys under
     /// `depots`, such as `branches`, are not depots and are skipped.
     pub fn depots(&self) -> Vec<Depot> {
@@ -489,6 +507,17 @@ mod tests {
         let buf = b"\"appinfo\" { \"common\" { \"supported_languages\" { \"english\" { \"supported\" \"true\" } \"polish\" { \"supported\" \"false\" } } } }\0";
         let o = parse_app_buffer(buf).unwrap();
         assert_eq!(AppInfo(&o).languages(), ["english"]);
+    }
+
+    #[test]
+    fn reads_the_cloud_quota() {
+        let buf = b"\"appinfo\" { \"ufs\" { \"quota\" \"100000000\" \"maxnumfiles\" \"500\" } }\0";
+        let o = parse_app_buffer(buf).unwrap();
+        assert_eq!(AppInfo(&o).cloud_quota(), 100_000_000);
+        assert_eq!(AppInfo(&o).cloud_max_files(), 500);
+        let o = parse_app_buffer(&app_buffer()).unwrap();
+        assert_eq!(AppInfo(&o).cloud_quota(), 0);
+        assert_eq!(AppInfo(&o).cloud_max_files(), 0);
     }
 
     #[test]

@@ -117,6 +117,7 @@ its children are `appid` and the sections `common`, `extended`,
 | `config/launch/<n>` | launch options: `executable`, `arguments`, `description`, `type`, and `config/oslist`, `config/osarch`, `config/betakey` |
 | `depots/<id>` | one depot: `name`, `config/oslist`, `config/osarch`, `config/language`, `dlcappid`, `depotfromapp`, `sharedinstall`, `maxsize` |
 | `depots/branches/<name>` | one branch: `buildid`, `description`, `pwdrequired`, `timeupdated` |
+| `ufs/quota`, `ufs/maxnumfiles` | the app's Steam Cloud quota in bytes and its most files (`steamworks/isteamremotestorage.md`) |
 
 **Package buffers** start with a 4-byte little-endian field that ossteam
 skips (*its meaning is unverified*), followed by binary KeyValues

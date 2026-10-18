@@ -408,6 +408,8 @@ impl Core {
                 0
             },
             low_violence: library.is_some_and(|s| s.low_violence.contains(&app)),
+            cloud_quota: view.map_or(0, |v| v.cloud_quota()),
+            cloud_max_files: view.map_or(0, |v| v.cloud_max_files()),
         }
     }
 

@@ -68,6 +68,10 @@ record! {
         pub user_dir: String,
         pub owner: u64,
         pub low_violence: bool,
+        /// `ufs/quota` of the app's info: Steam Cloud bytes, 0 for none.
+        pub cloud_quota: u64,
+        /// `ufs/maxnumfiles`: 0 for no limit.
+        pub cloud_max_files: u32,
     }
 }
 

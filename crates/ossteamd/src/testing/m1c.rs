@@ -115,6 +115,11 @@ fn steam(cdn: &Arc<FakeCdn>, options: &[(&str, &str)]) -> FakeCm {
         .cdn(cdn.clone())
         .account(Account::new("alice", ACCOUNT_ID).license(200, 0));
     cm.app_section(GAME, "config", config(options));
+    cm.app_section(
+        GAME,
+        "ufs",
+        section(r#""quota" "100000000" "maxnumfiles" "500""#),
+    );
     let depot = game_depot(1, &steamstub_image());
     cm.publish(&depot, 1);
     cm.app_section(GAME, "depots", depots_section(1));
@@ -497,6 +502,7 @@ fn games_talk_to_the_game_endpoint() {
     assert_eq!(a.depots, [GAME_DEPOT]);
     assert!(a.branch.is_empty());
     assert_eq!(a.owner, s.steam_id);
+    assert_eq!((a.cloud_quota, a.cloud_max_files), (100_000_000, 500));
     assert_eq!(
         PathBuf::from(&a.user_dir),
         root.path()

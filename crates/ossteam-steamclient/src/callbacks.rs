@@ -110,6 +110,29 @@ pub fn user_achievement_icon_fetched(game: u64, name: &str, achieved: bool, icon
     out
 }
 
+/// `RemoteStorageFileWriteAsyncComplete_t { EResult m_eResult; }`
+/// (`isteamremotestorage.md` §2).
+pub const FILE_WRITE_ASYNC_COMPLETE: i32 = 1331;
+/// `RemoteStorageFileReadAsyncComplete_t`.
+pub const FILE_READ_ASYNC_COMPLETE: i32 = 1332;
+
+pub fn file_write_async_complete(result: i32) -> Vec<u8> {
+    result.to_le_bytes().to_vec()
+}
+
+/// `RemoteStorageFileReadAsyncComplete_t { SteamAPICall_t
+/// m_hFileReadAsync; EResult m_eResult; uint32 m_nOffset; uint32
+/// m_cubRead; }`.
+pub fn file_read_async_complete(call: u64, result: i32, offset: u32, read: u32) -> Vec<u8> {
+    let mut out = Vec::with_capacity(24);
+    out.extend_from_slice(&call.to_le_bytes());
+    out.extend_from_slice(&result.to_le_bytes());
+    out.extend_from_slice(&offset.to_le_bytes());
+    out.extend_from_slice(&read.to_le_bytes());
+    pad(&mut out, 8);
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -126,6 +149,9 @@ mod tests {
         assert_eq!(game_result(1, 1).len(), short);
         assert_eq!(user_achievement_stored(1, "a", 1, 2).len(), stored);
         assert_eq!(user_achievement_icon_fetched(1, "a", true, 3).len(), icon);
+        assert_eq!(file_write_async_complete(1).len(), 4);
+        let read = if cfg!(windows) { 24 } else { 20 };
+        assert_eq!(file_read_async_complete(1, 1, 0, 0).len(), read);
         // A name too long is cut, with its NUL.
         let long = "x".repeat(200);
         let b = user_achievement_stored(1, &long, 0, 0);

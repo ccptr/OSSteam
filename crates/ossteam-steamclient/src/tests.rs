@@ -6,10 +6,11 @@
 //! everything in order.
 
 use std::ffi::{CStr, c_char, c_int, c_void};
+use std::fs;
 use std::io::Write;
 use std::os::unix::fs::PermissionsExt;
 use std::os::unix::net::{UnixListener, UnixStream};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::mpsc;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
@@ -402,6 +403,8 @@ fn a_game_session() {
         user_dir: user_dir.to_string_lossy().into_owned(),
         owner: STEAM_ID,
         low_violence: false,
+        cloud_quota: 1000,
+        cloud_max_files: 3,
     };
     let fake = Fake::start(base.join("run"), app);
     crate::pipe::override_endpoint(Address::in_dir(&fake.dir));
@@ -721,6 +724,7 @@ fn a_game_session() {
     );
 
     stats_session(&fake, client, user, pipe, utils);
+    remote_storage_session(client, user, pipe, &user_dir);
 
     // A stub returns its failure value and is reported, with the
     // interfaces handed out.
@@ -1435,4 +1439,278 @@ fn stats_session(fake: &Fake, client: *mut c_void, user: i32, pipe: i32, utils: 
         1
     );
     assert_eq!(got, 0);
+}
+
+/// `ISteamRemoteStorage`'s local files (`isteamremotestorage.md`), with
+/// the quota of 1000 bytes and 3 files the fake app has.
+fn remote_storage_session(client: *mut c_void, user: i32, pipe: i32, user_dir: &Path) {
+    let get = |version: &CStr| {
+        call!(
+            client,
+            "SteamClient020",
+            "GetISteamRemoteStorage",
+            fn(i32, i32, *const c_char) -> *mut c_void,
+            user,
+            pipe,
+            version.as_ptr()
+        )
+    };
+    let rs = get(c"STEAMREMOTESTORAGE_INTERFACE_VERSION016");
+    assert!(!rs.is_null());
+    macro_rules! rs {
+        ($method:literal, fn($($t:ty),*) -> $r:ty $(, $arg:expr)*) => {
+            call!(rs, "STEAMREMOTESTORAGE_INTERFACE_VERSION016", $method, fn($($t),*) -> $r $(, $arg)*)
+        };
+    }
+    let write = |name: &CStr, data: &[u8]| {
+        rs!(
+            "FileWrite",
+            fn(*const c_char, *const u8, i32) -> u8,
+            name.as_ptr(),
+            data.as_ptr(),
+            data.len() as i32
+        ) == 1
+    };
+
+    assert!(write(c"save\\one.dat", b"0123456789"));
+    assert_eq!(
+        fs::read(user_dir.join("remote/save/one.dat")).unwrap(),
+        b"0123456789"
+    );
+    assert!(!write(c"../escape", b"x"));
+    assert!(!write(c"/abs", b"x"));
+    assert_eq!(
+        rs!(
+            "FileExists",
+            fn(*const c_char) -> u8,
+            c"save/one.dat".as_ptr()
+        ),
+        1
+    );
+    assert_eq!(
+        rs!(
+            "GetFileSize",
+            fn(*const c_char) -> i32,
+            c"save/one.dat".as_ptr()
+        ),
+        10
+    );
+    assert!(
+        rs!(
+            "GetFileTimestamp",
+            fn(*const c_char) -> i64,
+            c"save/one.dat".as_ptr()
+        ) > 0
+    );
+    let mut buf = [0u8; 4];
+    assert_eq!(
+        rs!(
+            "FileRead",
+            fn(*const c_char, *mut u8, i32) -> i32,
+            c"save/one.dat".as_ptr(),
+            buf.as_mut_ptr(),
+            4
+        ),
+        4
+    );
+    assert_eq!(&buf, b"0123");
+    assert_eq!(
+        rs!(
+            "FileRead",
+            fn(*const c_char, *mut u8, i32) -> i32,
+            c"missing".as_ptr(),
+            buf.as_mut_ptr(),
+            4
+        ),
+        0
+    );
+
+    // The asynchronous methods complete at once.
+    let call = rs!(
+        "FileWriteAsync",
+        fn(*const c_char, *const u8, u32) -> u64,
+        c"two".as_ptr(),
+        b"abc".as_ptr(),
+        3
+    );
+    assert_ne!(call, 0);
+    assert_eq!(wait_callback(pipe, 703)[..8], call.to_le_bytes());
+    let mut result = [0u8; 20];
+    let mut failed = true;
+    // SAFETY: `result` holds 20 bytes.
+    assert!(unsafe {
+        crate::Steam_GetAPICallResult(pipe, call, result.as_mut_ptr().cast(), 4, 1331, &mut failed)
+    });
+    assert!(!failed);
+    assert_eq!(u32_at(&result, 0), 1);
+    let call = rs!(
+        "FileReadAsync",
+        fn(*const c_char, u32, u32) -> u64,
+        c"save/one.dat".as_ptr(),
+        2,
+        5
+    );
+    assert_ne!(call, 0);
+    assert_eq!(wait_callback(pipe, 703)[..8], call.to_le_bytes());
+    // SAFETY: `result` holds 20 bytes.
+    assert!(unsafe {
+        crate::Steam_GetAPICallResult(
+            pipe,
+            call,
+            result.as_mut_ptr().cast(),
+            20,
+            1332,
+            &mut failed,
+        )
+    });
+    assert_eq!(result[..8], call.to_le_bytes());
+    assert_eq!(
+        (u32_at(&result, 8), u32_at(&result, 12), u32_at(&result, 16)),
+        (1, 2, 5)
+    );
+    let mut five = [0u8; 5];
+    assert_eq!(
+        rs!(
+            "FileReadAsyncComplete",
+            fn(u64, *mut u8, u32) -> u8,
+            call,
+            five.as_mut_ptr(),
+            5
+        ),
+        1
+    );
+    assert_eq!(&five, b"23456");
+    assert_eq!(
+        rs!(
+            "FileReadAsyncComplete",
+            fn(u64, *mut u8, u32) -> u8,
+            call,
+            five.as_mut_ptr(),
+            5
+        ),
+        0
+    );
+    assert_eq!(
+        rs!(
+            "FileReadAsync",
+            fn(*const c_char, u32, u32) -> u64,
+            c"save/one.dat".as_ptr(),
+            8,
+            5
+        ),
+        0
+    );
+
+    // A stream, and one cancelled.
+    let stream = rs!(
+        "FileWriteStreamOpen",
+        fn(*const c_char) -> u64,
+        c"three".as_ptr()
+    );
+    assert_ne!(stream, u64::MAX);
+    for chunk in [&b"de"[..], b"f"] {
+        assert_eq!(
+            rs!(
+                "FileWriteStreamWriteChunk",
+                fn(u64, *const u8, i32) -> u8,
+                stream,
+                chunk.as_ptr(),
+                chunk.len() as i32
+            ),
+            1
+        );
+    }
+    assert_eq!(
+        rs!("FileExists", fn(*const c_char) -> u8, c"three".as_ptr()),
+        0
+    );
+    assert_eq!(rs!("FileWriteStreamClose", fn(u64) -> u8, stream), 1);
+    assert_eq!(fs::read(user_dir.join("remote/three")).unwrap(), b"def");
+    let cancelled = rs!(
+        "FileWriteStreamOpen",
+        fn(*const c_char) -> u64,
+        c"two".as_ptr()
+    );
+    assert_eq!(rs!("FileWriteStreamCancel", fn(u64) -> u8, cancelled), 1);
+    assert_eq!(rs!("FileWriteStreamClose", fn(u64) -> u8, cancelled), 0);
+
+    // The quota: bytes, then files.
+    assert!(!write(c"two", &[0; 1000]));
+    assert!(!write(c"four", b"x"));
+    assert!(write(c"two", &[0; 900]));
+
+    // The listing, sorted, without temporary files.
+    assert_eq!(rs!("GetFileCount", fn() -> i32), 3);
+    let mut size = 0i32;
+    let names: Vec<(String, i32)> = (0..4)
+        .map(|i| {
+            size = -1;
+            let n = str_at(rs!(
+                "GetFileNameAndSize",
+                fn(i32, *mut i32) -> *const c_char,
+                i,
+                &mut size
+            ));
+            (n.to_owned(), size)
+        })
+        .collect();
+    assert_eq!(
+        names,
+        [
+            ("save/one.dat".to_owned(), 10),
+            ("three".to_owned(), 3),
+            ("two".to_owned(), 900),
+            (String::new(), -1)
+        ]
+    );
+    let (mut total, mut available) = (0u64, 0u64);
+    assert_eq!(
+        rs!(
+            "GetQuota",
+            fn(*mut u64, *mut u64) -> u8,
+            &mut total,
+            &mut available
+        ),
+        1
+    );
+    assert_eq!((total, available), (1000, 87));
+    let old = get(c"STEAMREMOTESTORAGE_INTERFACE_VERSION013");
+    let (mut total, mut available) = ([0i32; 2], [0i32; 2]);
+    call!(
+        old,
+        "STEAMREMOTESTORAGE_INTERFACE_VERSION013",
+        "GetQuota",
+        fn(*mut i32, *mut i32) -> u8,
+        total.as_mut_ptr(),
+        available.as_mut_ptr()
+    );
+    assert_eq!((total, available), ([1000, 0], [87, 0]));
+
+    assert_eq!(
+        rs!("FileDelete", fn(*const c_char) -> u8, c"two".as_ptr()),
+        1
+    );
+    assert_eq!(
+        rs!("FileDelete", fn(*const c_char) -> u8, c"two".as_ptr()),
+        0
+    );
+    assert_eq!(
+        rs!("FilePersisted", fn(*const c_char) -> u8, c"three".as_ptr()),
+        0
+    );
+    assert_eq!(
+        rs!("FileForget", fn(*const c_char) -> u8, c"three".as_ptr()),
+        1
+    );
+    assert_eq!(rs!("IsCloudEnabledForApp", fn() -> u8), 0);
+    assert_eq!(rs!("BeginFileWriteBatch", fn() -> u8), 1);
+    assert_eq!(rs!("BeginFileWriteBatch", fn() -> u8), 0);
+    assert_eq!(rs!("EndFileWriteBatch", fn() -> u8), 1);
+    assert_eq!(rs!("EndFileWriteBatch", fn() -> u8), 0);
+    let mut leftovers = Vec::new();
+    for e in fs::read_dir(user_dir.join("remote")).unwrap() {
+        leftovers.push(e.unwrap().file_name().into_string().unwrap());
+    }
+    leftovers.sort();
+    assert_eq!(leftovers, ["save", "three"]);
 }

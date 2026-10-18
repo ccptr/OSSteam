@@ -432,7 +432,7 @@ the shim sends `Request`s and `Report`s, and the daemon sends
 
 ### 3.4 Messages
 
-Protocol version 3.
+Protocol version 4.
 
 | Tag | Message | Direction | Fields |
 |---|---|---|---|
@@ -444,6 +444,7 @@ Protocol version 3.
 | 6 | `SessionUpdate` | daemon → shim | `session: Session` |
 | 7 | `AppUpdate` | daemon → shim | `app: App` |
 | 8 | `Report` | shim → daemon | `interfaces: list<string>`, `unknown: list<string>`, `calls: list<Call>` (§4) |
+| 9 | `Notice` | daemon → shim | `body: NoticeBody`, which starts with its own tag: what Steam said later about a request (`steamworks/isteamuser.md` §3) |
 
 `Session`:
 
@@ -492,6 +493,7 @@ one of them is installed.
 |---|---|---|
 | 1 | `AppState{app_id: u32}` | `AppState{owned: bool, installed: bool, install_dir: string, build_id: u32, depots: list<u32>}` |
 | 2 to 5 | the stats requests of `steamworks/isteamuserstats.md` §2 | their responses |
+| 6 to 11 | the ticket requests of `steamworks/isteamuser.md` §3 | their responses; `Done{}` (tag 7) for the requests that have nothing to say |
 | 255 | — | `Error{message: string}`: the request could not be answered |
 
 `Call`: `interface: string` (a version string), `method: string`,
@@ -525,8 +527,9 @@ The messages in §3.4 are everything the game endpoint understands. None
 of them logs in or out, installs, uninstalls, verifies, changes a
 setting, or reads tokens, credentials or other accounts. `AppState`
 tells a game about another app only what Steam's own `ISteamApps` tells
-any game. The stats requests act only on the connection's own app id,
-and only for an app the account owns.
+any game. The stats and ticket requests act only on the connection's
+own app id, and only for an app the account owns. A connection can
+cancel only the tickets and end only the auth sessions it made.
 
 ### 3.7 The daemon's side
 
@@ -590,7 +593,7 @@ getter and fails under ABI-3.
 | Interface | Page | M1 scope (SPEC §12.3) |
 |---|---|---|
 | `ISteamClient` | `isteamclient.md` | everything except game servers |
-| `ISteamUser` | `isteamuser.md` | logon state and Steam id; tickets follow |
+| `ISteamUser` | `isteamuser.md` | logon state, Steam id, tickets and auth sessions |
 | `ISteamApps` | `isteamapps.md` | ownership, DLC, branch, build, install directory, languages |
 | `ISteamUtils` | `isteamutils.md` | app id, country, server time, API-call plumbing, overlay state |
 | `ISteamFriends` | `isteamfriends.md` | own persona name and state |

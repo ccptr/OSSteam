@@ -536,6 +536,7 @@ impl Worker {
             requester: live.conn.requester(),
             ip_country: ok.ip_country.clone().unwrap_or_default(),
             server_time: ok.server_time,
+            public_ip: ok.public_ip,
         });
         self.logged_on = true;
         self.retry_at = None;
@@ -766,6 +767,11 @@ impl Worker {
                 let steam_id = active.steam_id;
                 self.report(Report::PersonaName { steam_id, name });
             }
+        } else if p.is(EMsg::KEMsgClientGameConnectTokens)
+            || p.is(EMsg::KEMsgClientAuthListAck)
+            || p.is(EMsg::KEMsgClientTicketAuthComplete)
+        {
+            self.report(Report::Tickets(p.clone()));
         } else {
             tracing::trace!(emsg = p.emsg, kind = ?p.kind(), "unhandled CM message");
         }

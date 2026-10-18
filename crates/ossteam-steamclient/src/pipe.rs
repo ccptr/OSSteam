@@ -106,6 +106,8 @@ pub struct Pipe {
     pending: Mutex<HashMap<u32, Pending>>,
     /// `ISteamUserStats` (`isteamuserstats.md` §3).
     pub stats: Mutex<crate::userstats::Stats>,
+    /// `ISteamUser`'s tickets (`isteamuser.md` §4).
+    pub tickets: Mutex<crate::tickets::Tickets>,
 }
 
 static PIPES: Mutex<Vec<Arc<Pipe>>> = Mutex::new(Vec::new());
@@ -245,6 +247,7 @@ pub fn create() -> i32 {
         waiters: Mutex::new(HashMap::new()),
         pending: Mutex::new(HashMap::new()),
         stats: Mutex::new(crate::userstats::Stats::default()),
+        tickets: Mutex::new(crate::tickets::Tickets::default()),
     });
     lock(&PIPES).push(Arc::clone(&pipe));
     let _ = pipe_tx.send(Arc::clone(&pipe));
@@ -547,6 +550,7 @@ impl Pipe {
                 Ok(Message::AppUpdate(a)) => {
                     self.info.write().unwrap_or_else(|e| e.into_inner()).app = a;
                 }
+                Ok(Message::Notice(n)) => crate::tickets::on_notice(self, n),
                 Ok(other) => {
                     log!(Warn, "pipe {}: unexpected {other:?}; closing", self.handle);
                     break;

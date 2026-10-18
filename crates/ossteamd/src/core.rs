@@ -20,11 +20,13 @@ use ossteam_types::{Secret, SteamId};
 use crate::config::{self, Config};
 use crate::db::{Db, PersonaState};
 use crate::session::{self, Cmd, ReplyTo, Report};
+use crate::tickets as auth;
 use crate::{assets, content, launch, library, pics, stats};
 
 mod games;
 mod jobs;
 mod shim;
+mod tickets;
 
 pub use games::app_launch_options;
 
@@ -70,6 +72,8 @@ pub enum Command {
     Shim(crate::gameipc::Event),
     /// From the stats worker: the answer to a game's request.
     Stats(stats::Done),
+    /// About game tickets (`isteamuser.md` §2).
+    Tickets(auth::Event),
     /// A game's connections had their time to close (`steamworks-abi.md`
     /// §3.5).
     GameExitWait(ossteam_types::AppId),
@@ -124,6 +128,8 @@ pub struct Core {
     shims: shim::Shims,
     /// Games' stats requests.
     stats: stats::Handle,
+    /// Games' tickets and auth sessions.
+    tickets: auth::Tickets,
 }
 
 /// What a `Core` is made of.
@@ -171,6 +177,7 @@ impl Core {
             games: games::Games::new(p.launch, &p.data_dir, &p.state_dir, p.commands),
             shims: shim::Shims::new(&p.data_dir),
             stats: p.stats,
+            tickets: auth::Tickets::default(),
         }
         .loaded()
     }
@@ -241,6 +248,7 @@ impl Core {
                 Command::Game(exited) => self.on_game(exited),
                 Command::Shim(e) => self.on_shim(e),
                 Command::Stats(done) => self.on_stats(done),
+                Command::Tickets(e) => self.on_ticket_event(e),
                 Command::GameExitWait(app) => self.exit_wait_over(app),
             }
         };
@@ -259,6 +267,7 @@ impl Core {
         self.pics.shutdown();
         self.assets.shutdown();
         self.stats.shutdown();
+        self.tickets.stop.cancel();
         self.broadcast(
             Topic::Daemon,
             event::Kind::DaemonStopping(v1::DaemonStopping {}),
@@ -460,6 +469,7 @@ impl Core {
                         self.schedule();
                     } else {
                         self.set_requester(None);
+                        self.tickets_logged_off();
                     }
                 }
                 Ok(())
@@ -469,9 +479,11 @@ impl Core {
                 requester,
                 ip_country,
                 server_time,
+                public_ip,
             } => {
                 self.set_requester(Some(requester));
                 self.shim_logged_on(ip_country, server_time);
+                self.tickets_logged_on(public_ip);
                 // The server forgot the play session with the connection.
                 if self.games_running() {
                     self.send_games_played();
@@ -499,6 +511,10 @@ impl Core {
             Report::Active(steam_id) => self.db.set_active_account(steam_id),
             Report::CellId(cell) => self.db.set_cell_id(cell),
             Report::PersonaName { steam_id, name } => self.db.set_persona_name(steam_id, &name),
+            Report::Tickets(p) => {
+                self.on_ticket_message(&p);
+                Ok(())
+            }
         };
         if let Err(e) = stored {
             tracing::error!("updating the state database failed: {e:#}");

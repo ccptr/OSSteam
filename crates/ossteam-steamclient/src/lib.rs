@@ -22,6 +22,7 @@ mod remote_storage;
 mod report;
 #[cfg(all(test, unix))]
 mod tests;
+mod tickets;
 mod user;
 mod userstats;
 mod utils;

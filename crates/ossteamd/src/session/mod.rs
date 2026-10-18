@@ -19,7 +19,7 @@ use std::time::Duration;
 use crossbeam_channel::{Receiver, RecvTimeoutError, Sender};
 use ossteam_ipc::RemoteError;
 use ossteam_ipc::v1::{self, ConnectionState, response};
-use ossteam_net::{CmServer, ConnectError, Connection, Incoming};
+use ossteam_net::{CmServer, ConnectError, Connection, Incoming, Packet};
 use ossteam_types::{CancelToken, Secret, SteamId};
 
 pub use servers::{NoServer, Servers};
@@ -130,7 +130,13 @@ pub enum Report {
         ip_country: String,
         /// Steam's clock in the logon response.
         server_time: Option<u32>,
+        /// The address Steam saw, for tickets (`isteamuser.md` §2.3).
+        public_ip: Option<std::net::IpAddr>,
     },
+    /// A message about game tickets (`isteamuser.md` §2):
+    /// `ClientGameConnectTokens`, `ClientAuthListAck` or
+    /// `ClientTicketAuthComplete`.
+    Tickets(Packet),
     PersonaName {
         steam_id: SteamId,
         name: String,

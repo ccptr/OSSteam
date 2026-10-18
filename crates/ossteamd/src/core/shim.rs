@@ -116,7 +116,12 @@ impl Core {
             Event::Connected { conn, hello, out } => self.shim_connected(conn, hello, out),
             Event::Message { conn, msg } => match *msg {
                 Message::Request(r) => {
-                    if let Some(body) = self.shim_request(conn, r.id, r.body) {
+                    let answer = if super::tickets::is_ticket_request(&r.body) {
+                        self.ticket_request(conn, r.id, r.body)
+                    } else {
+                        self.shim_request(conn, r.id, r.body)
+                    };
+                    if let Some(body) = answer {
                         self.shim_send(conn, Message::Response(Response { id: r.id, body }));
                     }
                 }
@@ -165,6 +170,7 @@ impl Core {
                 app_state,
             },
         );
+        self.ticket_game_connected(app);
     }
 
     fn shim_disconnected(&mut self, conn: ConnId) {
@@ -172,6 +178,7 @@ impl Core {
             return;
         };
         tracing::debug!(conn, pid = c.pid, "a game disconnected");
+        self.ticket_game_disconnected(conn);
         if let Some(p) = self.shims.processes.get_mut(&c.pid) {
             p.conns = p.conns.saturating_sub(1);
             if p.conns == 0 && !p.launched {
@@ -194,7 +201,7 @@ impl Core {
         }
     }
 
-    fn shim_send(&mut self, conn: ConnId, msg: Message) {
+    pub(super) fn shim_send(&mut self, conn: ConnId, msg: Message) {
         let Some(c) = self.shims.conns.get(&conn) else {
             return;
         };
@@ -236,22 +243,14 @@ impl Core {
             },
             RequestBody::GlobalAchievements(_) => stats::Ask::Global,
             RequestBody::AchievementIcon(r) => stats::Ask::Icon { file: r.file },
+            _ => return Some(error("not a stats request")),
         };
         // The stats requests (`isteamuserstats.md` §2): the connection's
         // own app, which the account owns.
         let app = c.app;
-        let account = self
-            .session_state
-            .account
-            .as_ref()
-            .map(|a| SteamId(a.steam_id));
-        let owned = self
-            .library
-            .as_ref()
-            .filter(|s| Some(s.steam_id) == account)
-            .is_some_and(|s| s.library.find(app).is_some());
-        let Some(account) = account.filter(|_| owned) else {
-            return Some(error(&format!("the account does not own app {app}")));
+        let account = match self.shim_owner(app) {
+            Ok(a) => a,
+            Err(e) => return Some(e),
         };
         let requester = self
             .content
@@ -280,6 +279,37 @@ impl Core {
             ask,
         });
         None
+    }
+
+    /// The active account, when it owns `app`; otherwise the `Error` for
+    /// a request about `app` (§3.6).
+    pub(super) fn shim_owner(&self, app: AppId) -> Result<SteamId, ResponseBody> {
+        let account = self
+            .session_state
+            .account
+            .as_ref()
+            .map(|a| SteamId(a.steam_id));
+        let owned = self
+            .library
+            .as_ref()
+            .filter(|s| Some(s.steam_id) == account)
+            .is_some_and(|s| s.library.find(app).is_some());
+        account
+            .filter(|_| owned)
+            .ok_or_else(|| error(&format!("the account does not own app {app}")))
+    }
+
+    /// The app of a game connection.
+    pub(super) fn shim_app_of(&self, conn: ConnId) -> Option<AppId> {
+        self.shims.conns.get(&conn).map(|c| c.app)
+    }
+
+    /// The apps of the open game connections.
+    pub(super) fn shim_apps(&self) -> Vec<AppId> {
+        let mut apps: Vec<AppId> = self.shims.conns.values().map(|c| c.app).collect();
+        apps.sort();
+        apps.dedup();
+        apps
     }
 
     /// The stats worker answered a game's request.
@@ -552,7 +582,7 @@ fn not_connected(ask: &stats::Ask) -> ResponseBody {
     }
 }
 
-fn error(message: &str) -> ResponseBody {
+pub(super) fn error(message: &str) -> ResponseBody {
     ResponseBody::Error(ErrorReply {
         message: message.into(),
     })

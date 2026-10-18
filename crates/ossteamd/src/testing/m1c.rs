@@ -407,6 +407,7 @@ fn launch_supervise_stop_and_play_session() {
 }
 
 /// Connects to the test daemon's game endpoint as the shim does.
+#[cfg_attr(not(unix), allow(dead_code))]
 fn shim_connect(
     addr: &ossteam_gameipc::endpoint::Address,
     hello: ossteam_gameipc::Hello,
@@ -421,6 +422,7 @@ fn shim_connect(
     (conn, answer)
 }
 
+#[cfg_attr(not(unix), allow(dead_code))]
 fn hello(app_id: u32) -> ossteam_gameipc::Hello {
     ossteam_gameipc::Hello {
         protocol: ossteam_gameipc::PROTOCOL,
@@ -431,6 +433,8 @@ fn hello(app_id: u32) -> ossteam_gameipc::Hello {
     }
 }
 
+// Used by the endpoint tests, which run on Unix only.
+#[cfg_attr(not(unix), allow(dead_code))]
 fn shim_report(c: &Client, pid: u32) -> v1::ShimReport {
     wait_event(c, "a shim report", |k| match k {
         ossteam_ipc::v1::event::Kind::ShimReport(r) if r.pid == pid => Some(r.clone()),
@@ -838,4 +842,323 @@ fn games_keep_their_stats() {
     };
     assert_eq!(s.result, 2);
     d.stop();
+}
+
+/// A game connection whose messages are read on a thread, so a test
+/// waits with a timeout.
+#[cfg(unix)]
+struct GameConn {
+    writer: Box<dyn std::io::Write + Send>,
+    closer: Box<dyn Fn() + Send + Sync>,
+    rx: crossbeam_channel::Receiver<ossteam_gameipc::Message>,
+    notices: Vec<ossteam_gameipc::NoticeBody>,
+    next: u32,
+}
+
+#[cfg(unix)]
+impl GameConn {
+    fn open(addr: &ossteam_gameipc::endpoint::Address, app: u32) -> Self {
+        let (conn, answer) = shim_connect(addr, hello(app));
+        assert!(
+            matches!(answer, ossteam_gameipc::Message::Welcome(_)),
+            "{answer:?}"
+        );
+        let (tx, rx) = crossbeam_channel::unbounded();
+        let mut reader = conn.reader;
+        std::thread::spawn(move || {
+            while let Ok(m) = ossteam_gameipc::read_message(&mut reader) {
+                if tx.send(m).is_err() {
+                    break;
+                }
+            }
+        });
+        Self {
+            writer: conn.writer,
+            closer: conn.closer,
+            rx,
+            notices: Vec::new(),
+            next: 1,
+        }
+    }
+
+    fn recv(&mut self) -> ossteam_gameipc::Message {
+        self.rx
+            .recv_timeout(Duration::from_secs(10))
+            .expect("a message from the daemon")
+    }
+
+    fn ask(&mut self, body: ossteam_gameipc::RequestBody) -> ossteam_gameipc::ResponseBody {
+        use ossteam_gameipc::{Message, Request};
+        let id = self.next;
+        self.next += 1;
+        ossteam_gameipc::write_message(&mut self.writer, &Message::Request(Request { id, body }))
+            .unwrap();
+        loop {
+            match self.recv() {
+                Message::Response(r) if r.id == id => return r.body,
+                Message::Notice(n) => self.notices.push(n),
+                _ => {}
+            }
+        }
+    }
+
+    fn notice(&mut self) -> ossteam_gameipc::NoticeBody {
+        if !self.notices.is_empty() {
+            return self.notices.remove(0);
+        }
+        loop {
+            if let ossteam_gameipc::Message::Notice(n) = self.recv() {
+                return n;
+            }
+        }
+    }
+
+    fn close(self) {
+        (self.closer)();
+    }
+}
+
+/// `isteamuser.md` §2, §3 against the fake CM.
+#[cfg(unix)]
+#[test]
+fn games_get_tickets() {
+    use ossteam_gameipc::{
+        AuthTicketRequest, BeginAuthSessionRequest, CancelAuthTicketRequest,
+        EncryptedAppTicketRequest, EndAuthSessionRequest, NoticeBody, RequestBody, ResponseBody,
+        TicketActive, TicketValidated, UserLicenseRequest,
+    };
+    use ossteam_proto::Message as _;
+
+    use super::fake_cm::{FAKE_PUBLIC_IP, FAKE_SERVER_TIME, fake_ownership_ticket};
+    use crate::tickets::{self, tests::ownership_ticket};
+
+    let cdn = Arc::new(FakeCdn::new());
+    let (os, _) = oses();
+    let cm = steam(&cdn, &[("bin/game.sh", os)]);
+    let me = ossteam_types::SteamId::individual(ACCOUNT_ID);
+    let friend = ossteam_types::SteamId::individual(ACCOUNT_ID + 1).0;
+    let root = Root::new();
+    let addr = root.game_address();
+    let d = TestDaemon::start_with_cdn(&root, &cm, POLL, cdn.clone());
+    login(&d);
+    let mut g = GameConn::open(&addr, GAME);
+    let session = |max| {
+        RequestBody::AuthTicket(AuthTicketRequest {
+            kind: tickets::SESSION,
+            identity: String::new(),
+            max,
+        })
+    };
+
+    // A session ticket: a token, the header and the ownership ticket.
+    let ResponseBody::AuthTicket(t) = g.ask(session(1024)) else {
+        panic!()
+    };
+    assert_eq!(t.result, 1);
+    let split = tickets::split(&t.ticket).expect("a well-formed ticket");
+    assert_eq!(split.ownership, &fake_ownership_ticket(me.0, GAME)[..]);
+    assert_eq!(split.auth[..4], 20u32.to_le_bytes());
+    assert_eq!(split.auth[24 + 12..24 + 16], FAKE_PUBLIC_IP.to_le_bytes());
+    assert_eq!(t.crc, tickets::crc(split.auth));
+    let first = t.crc;
+    assert_eq!(
+        g.notice(),
+        NoticeBody::TicketActive(TicketActive {
+            crc: first,
+            result: 1
+        })
+    );
+    let last_list = || cm.auth_lists().last().cloned().expect("an auth list");
+    // The daemon answers before Steam has the list.
+    let wait_list = |what: &str, f: &dyn Fn(&ossteam_proto::steam::CMsgClientAuthList) -> bool| {
+        cm.wait(Duration::from_secs(10), what, |v| {
+            v.auth_lists().last().is_some_and(f)
+        });
+        last_list()
+    };
+    let l = last_list();
+    assert_eq!(l.tickets.len(), 1);
+    let entry = &l.tickets[0];
+    assert_eq!(
+        (
+            entry.estate(),
+            entry.steamid(),
+            entry.gameid(),
+            entry.ticket_crc()
+        ),
+        (0, 0, u64::from(GAME), first)
+    );
+    assert_eq!(entry.ticket(), split.auth);
+    assert_eq!(l.app_ids, [GAME]);
+
+    // A buffer too small, then a Web API ticket.
+    let ResponseBody::AuthTicket(t) = g.ask(session(100)) else {
+        panic!()
+    };
+    assert_eq!(t.result, 2);
+    let ResponseBody::AuthTicket(web) = g.ask(RequestBody::AuthTicket(AuthTicketRequest {
+        kind: tickets::WEB_API,
+        identity: "svc".into(),
+        max: 0,
+    })) else {
+        panic!()
+    };
+    assert_eq!(web.result, 1);
+    assert_eq!(web.ticket[24 + 8..24 + 12], 5u32.to_le_bytes());
+    assert!(matches!(g.notice(), NoticeBody::TicketActive(a) if a.crc == web.crc));
+    let l = last_list();
+    assert_eq!(l.tickets[1].server_secret(), b"str:svc\0");
+
+    // Cancelling one.
+    assert!(matches!(
+        g.ask(RequestBody::CancelAuthTicket(CancelAuthTicketRequest {
+            crc: first
+        })),
+        ResponseBody::Done(_)
+    ));
+    let l = wait_list("the list without the cancelled ticket", &|l| {
+        l.tickets.len() == 1
+    });
+    assert_eq!(l.tickets[0].ticket_crc(), web.crc);
+
+    // Auth sessions with other users.
+    // Each user's client has tokens of its own.
+    let other_ticket = |ownership: &[u8]| {
+        let token = [&ownership[8..16], &[9; 12]].concat();
+        let auth = tickets::auth_ticket(&token, tickets::SESSION, 0, 1, 1);
+        tickets::full_ticket(&auth, ownership)
+    };
+    let begin = |g: &mut GameConn, steam_id: u64, ticket: Vec<u8>| {
+        let ResponseBody::BeginAuthSession(b) =
+            g.ask(RequestBody::BeginAuthSession(BeginAuthSessionRequest {
+                steam_id,
+                ticket,
+            }))
+        else {
+            panic!()
+        };
+        b.result
+    };
+    let friends = other_ticket(&fake_ownership_ticket(friend, GAME));
+    assert_eq!(begin(&mut g, friend, friends.clone()), tickets::BEGIN_OK);
+    assert_eq!(
+        g.notice(),
+        NoticeBody::TicketValidated(TicketValidated {
+            steam_id: friend,
+            owner: friend,
+            response: 0
+        })
+    );
+    assert_eq!(
+        begin(&mut g, friend, friends.clone()),
+        tickets::BEGIN_DUPLICATE
+    );
+    assert_eq!(begin(&mut g, friend + 1, friends), tickets::BEGIN_INVALID);
+    assert_eq!(
+        begin(
+            &mut g,
+            friend,
+            other_ticket(&fake_ownership_ticket(friend, OTHER))
+        ),
+        tickets::BEGIN_GAME_MISMATCH
+    );
+    assert_eq!(
+        begin(
+            &mut g,
+            friend + 2,
+            other_ticket(&ownership_ticket(friend + 2, GAME, FAKE_SERVER_TIME - 10))
+        ),
+        tickets::BEGIN_EXPIRED
+    );
+    assert_eq!(begin(&mut g, friend, vec![1, 2, 3]), tickets::BEGIN_INVALID);
+    let l = wait_list("the friend's ticket", &|l| {
+        l.tickets.iter().any(|t| t.estate() == 1)
+    });
+    let theirs = l.tickets.iter().find(|t| t.estate() == 1).unwrap();
+    assert_eq!(
+        (theirs.steamid(), theirs.gameid()),
+        (friend, u64::from(GAME))
+    );
+
+    // Licenses come from the session's ownership ticket, which lists DLC
+    // 1001.
+    let dlc_owner = friend + 3;
+    let far = FAKE_SERVER_TIME + 1_000_000;
+    cm.set_verdict(5);
+    assert_eq!(
+        begin(
+            &mut g,
+            dlc_owner,
+            other_ticket(&ownership_ticket(dlc_owner, GAME, far))
+        ),
+        tickets::BEGIN_OK
+    );
+    assert_eq!(
+        g.notice(),
+        NoticeBody::TicketValidated(TicketValidated {
+            steam_id: dlc_owner,
+            owner: dlc_owner,
+            response: 5
+        })
+    );
+    let license = |g: &mut GameConn, steam_id: u64, app_id: u32| {
+        let ResponseBody::UserLicense(u) = g.ask(RequestBody::UserLicense(UserLicenseRequest {
+            steam_id,
+            app_id,
+        })) else {
+            panic!()
+        };
+        u.result
+    };
+    // A ticket Steam turned down is gone, with its session.
+    assert_eq!(license(&mut g, dlc_owner, 1001), tickets::LICENSE_NO_AUTH);
+    cm.set_verdict(0);
+    let dlc_owner = friend + 4;
+    assert_eq!(
+        begin(
+            &mut g,
+            dlc_owner,
+            other_ticket(&ownership_ticket(dlc_owner, GAME, far))
+        ),
+        tickets::BEGIN_OK
+    );
+    assert_eq!(license(&mut g, dlc_owner, 1001), tickets::LICENSE_YES);
+    assert_eq!(license(&mut g, dlc_owner, GAME), tickets::LICENSE_YES);
+    assert_eq!(license(&mut g, dlc_owner, 1002), tickets::LICENSE_NO);
+    assert!(matches!(
+        g.ask(RequestBody::EndAuthSession(EndAuthSessionRequest {
+            steam_id: friend
+        })),
+        ResponseBody::Done(_)
+    ));
+    wait_list("the list without the friend", &|l| {
+        !l.tickets.iter().any(|t| t.steamid() == friend)
+    });
+
+    // An encrypted app ticket.
+    let ResponseBody::EncryptedAppTicket(e) =
+        g.ask(RequestBody::EncryptedAppTicket(EncryptedAppTicketRequest {
+            userdata: vec![1, 2, 3],
+        }))
+    else {
+        panic!()
+    };
+    assert_eq!(e.result, 1);
+    let decoded = ossteam_proto::steam::EncryptedAppTicket::decode(&e.ticket[..]).unwrap();
+    assert_eq!(decoded.encrypted_ticket(), [3, 2, 1]);
+
+    // A game that closes takes its tickets with it.
+    let lists = cm.auth_lists().len();
+    g.close();
+    cm.wait(
+        Duration::from_secs(10),
+        "the closed game's auth list",
+        |v| {
+            v.auth_lists().len() > lists
+                && v.auth_lists().last().is_some_and(|l| l.tickets.is_empty())
+        },
+    );
+    let l = last_list();
+    assert_eq!(l.app_ids, [GAME]);
+    drop(d);
 }

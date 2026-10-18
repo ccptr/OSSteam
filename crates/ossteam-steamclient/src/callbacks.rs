@@ -110,6 +110,49 @@ pub fn user_achievement_icon_fetched(game: u64, name: &str, achieved: bool, icon
     out
 }
 
+/// `ValidateAuthTicketResponse_t` (`isteamuser.md` §4.1).
+pub const VALIDATE_AUTH_TICKET_RESPONSE: i32 = 143;
+/// `EncryptedAppTicketResponse_t { EResult m_eResult; }`.
+pub const ENCRYPTED_APP_TICKET_RESPONSE: i32 = 154;
+/// `GetAuthSessionTicketResponse_t`.
+pub const GET_AUTH_SESSION_TICKET_RESPONSE: i32 = 163;
+/// `GetTicketForWebApiResponse_t`.
+pub const GET_TICKET_FOR_WEB_API_RESPONSE: i32 = 168;
+/// `m_rgubTicket` of `GetTicketForWebApiResponse_t`.
+const WEB_API_TICKET: usize = 2560;
+
+/// `{ CSteamID m_SteamID; EAuthSessionResponse m_eAuthSessionResponse;
+/// CSteamID m_OwnerSteamID; }`.
+pub fn validate_auth_ticket_response(steam_id: u64, response: u32, owner: u64) -> Vec<u8> {
+    let mut out = Vec::with_capacity(24);
+    out.extend_from_slice(&steam_id.to_le_bytes());
+    out.extend_from_slice(&response.to_le_bytes());
+    pad(&mut out, 8);
+    out.extend_from_slice(&owner.to_le_bytes());
+    out
+}
+
+/// `{ HAuthTicket m_hAuthTicket; EResult m_eResult; }`.
+pub fn auth_session_ticket_response(handle: u32, result: u32) -> Vec<u8> {
+    let mut out = Vec::with_capacity(8);
+    out.extend_from_slice(&handle.to_le_bytes());
+    out.extend_from_slice(&result.to_le_bytes());
+    out
+}
+
+/// `{ HAuthTicket m_hAuthTicket; EResult m_eResult; int m_cubTicket;
+/// uint8 m_rgubTicket[2560]; }`. A longer ticket is cut.
+pub fn ticket_for_web_api_response(handle: u32, result: u32, ticket: &[u8]) -> Vec<u8> {
+    let n = ticket.len().min(WEB_API_TICKET);
+    let mut out = Vec::with_capacity(12 + WEB_API_TICKET);
+    out.extend_from_slice(&handle.to_le_bytes());
+    out.extend_from_slice(&result.to_le_bytes());
+    out.extend_from_slice(&(n as i32).to_le_bytes());
+    out.extend_from_slice(&ticket[..n]);
+    out.resize(12 + WEB_API_TICKET, 0);
+    out
+}
+
 /// `RemoteStorageFileWriteAsyncComplete_t { EResult m_eResult; }`
 /// (`isteamremotestorage.md` §2).
 pub const FILE_WRITE_ASYNC_COMPLETE: i32 = 1331;
@@ -150,6 +193,10 @@ mod tests {
         assert_eq!(user_achievement_stored(1, "a", 1, 2).len(), stored);
         assert_eq!(user_achievement_icon_fetched(1, "a", true, 3).len(), icon);
         assert_eq!(file_write_async_complete(1).len(), 4);
+        let validated = if cfg!(windows) { 24 } else { 20 };
+        assert_eq!(validate_auth_ticket_response(1, 0, 2).len(), validated);
+        assert_eq!(auth_session_ticket_response(1, 1).len(), 8);
+        assert_eq!(ticket_for_web_api_response(1, 1, &[1; 300]).len(), 2572);
         let read = if cfg!(windows) { 24 } else { 20 };
         assert_eq!(file_read_async_complete(1, 1, 0, 0).len(), read);
         // A name too long is cut, with its NUL.

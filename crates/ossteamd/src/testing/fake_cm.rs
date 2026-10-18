@@ -6,7 +6,7 @@
 //! `pics.md`, `content.md` and `launch.md` describe them: the sign-in
 //! service methods, logon and logoff, the license list, PICS, persona
 //! state, depot keys, manifest request codes, the content server list, CDN
-//! auth tokens, play sessions, and games' stats. It checks what the daemon sends
+//! auth tokens, play sessions, games' stats and tickets. It checks what the daemon sends
 //! (the password is decrypted, codes and tokens are compared) so a test
 //! fails when the daemon gets the protocol wrong. Where those pages mark a
 //! server behaviour as unverified, the fake picks one reading; the
@@ -37,19 +37,22 @@ use ossteam_proto::steam::{
     CContentServerDirectoryGetManifestRequestCodeResponse,
     CContentServerDirectoryGetServersForSteamPipeRequest,
     CContentServerDirectoryGetServersForSteamPipeResponse, CContentServerDirectoryServerInfo,
-    CMsgClientAccountInfo, CMsgClientChangeStatus, CMsgClientGamesPlayed,
-    CMsgClientGetDepotDecryptionKey, CMsgClientGetDepotDecryptionKeyResponse,
-    CMsgClientGetUserStats, CMsgClientGetUserStatsResponse, CMsgClientLicenseList,
-    CMsgClientLoggedOff, CMsgClientLogon, CMsgClientLogonResponse,
-    CMsgClientPicsAccessTokenRequest, CMsgClientPicsAccessTokenResponse,
+    CMsgClientAccountInfo, CMsgClientAuthList, CMsgClientAuthListAck, CMsgClientChangeStatus,
+    CMsgClientGameConnectTokens, CMsgClientGamesPlayed, CMsgClientGetAppOwnershipTicket,
+    CMsgClientGetAppOwnershipTicketResponse, CMsgClientGetDepotDecryptionKey,
+    CMsgClientGetDepotDecryptionKeyResponse, CMsgClientGetUserStats,
+    CMsgClientGetUserStatsResponse, CMsgClientLicenseList, CMsgClientLoggedOff, CMsgClientLogon,
+    CMsgClientLogonResponse, CMsgClientPicsAccessTokenRequest, CMsgClientPicsAccessTokenResponse,
     CMsgClientPicsChangesSinceRequest, CMsgClientPicsChangesSinceResponse,
-    CMsgClientPicsProductInfoRequest, CMsgClientPicsProductInfoResponse, CMsgClientStoreUserStats2,
-    CMsgClientStoreUserStatsResponse, CPlayerGetGameAchievementsRequest,
-    CPlayerGetGameAchievementsResponse, EAuthSessionGuardType, EMsg, authentication,
+    CMsgClientPicsProductInfoRequest, CMsgClientPicsProductInfoResponse,
+    CMsgClientRequestEncryptedAppTicket, CMsgClientRequestEncryptedAppTicketResponse,
+    CMsgClientStoreUserStats2, CMsgClientStoreUserStatsResponse, CMsgClientTicketAuthComplete,
+    CMsgIpAddress, CPlayerGetGameAchievementsRequest, CPlayerGetGameAchievementsResponse,
+    EAuthSessionGuardType, EMsg, EncryptedAppTicket, authentication,
     c_msg_client_get_user_stats_response, c_msg_client_license_list,
     c_msg_client_pics_access_token_response, c_msg_client_pics_changes_since_response,
-    c_msg_client_pics_product_info_response, c_player_get_game_achievements_response,
-    content_server_directory as csd, player,
+    c_msg_client_pics_product_info_response, c_msg_ip_address,
+    c_player_get_game_achievements_response, content_server_directory as csd, player,
 };
 use ossteam_types::{CancelToken, EResult, SteamId};
 use ossteam_vdf::{Object, Value, binary, text};
@@ -61,6 +64,9 @@ use super::loopback::{self, ServerEnd};
 /// What the fake CM's logon response says about the address and the clock.
 pub const FAKE_COUNTRY: &str = "DE";
 pub const FAKE_SERVER_TIME: u32 = 1_790_000_000;
+pub const FAKE_PUBLIC_IP: u32 = 0xc633_6407;
+/// How long the fake's ownership tickets last.
+pub const OWNERSHIP_LIFETIME: u32 = 21 * 24 * 3600;
 use crate::session::{Dialer, NoServer};
 
 /// The fake server's address. Nothing listens there; the dialer connects
@@ -174,6 +180,14 @@ struct State {
     stores: Vec<CMsgClientStoreUserStats2>,
     /// Global achievement percentages by app, as Steam's strings.
     percentages: HashMap<u32, Vec<(String, String)>>,
+    /// `ClientAuthList` messages, in arrival order.
+    auth_lists: Vec<CMsgClientAuthList>,
+    /// Other users' tickets the fake has given its verdict on, by CRC.
+    verdicts_sent: Vec<u32>,
+    /// The `EAuthSessionResponse` for other users' tickets.
+    verdict: u32,
+    /// Game connect tokens handed out so far.
+    tokens_issued: u32,
 }
 
 /// One user's stats for one app.
@@ -319,16 +333,19 @@ impl FakeCm {
     }
 
     /// Gives `app` a stats schema (binary KeyValues).
+    #[cfg_attr(not(unix), allow(dead_code))]
     pub fn stats_schema(self, app: u32, schema: Vec<u8>) -> Self {
         self.state().schemas.insert(app, schema);
         self
     }
 
     /// Sets a user's stats for `app`.
+    #[cfg_attr(not(unix), allow(dead_code))]
     pub fn set_stats(&self, user: SteamId, app: u32, stats: FakeStats) {
         self.state().stats.insert((user.0, app), stats);
     }
 
+    #[cfg_attr(not(unix), allow(dead_code))]
     pub fn stats(&self, user: SteamId, app: u32) -> FakeStats {
         self.state()
             .stats
@@ -338,11 +355,25 @@ impl FakeCm {
     }
 
     /// The `ClientStoreUserStats2` messages so far.
+    #[cfg_attr(not(unix), allow(dead_code))]
     pub fn stores(&self) -> Vec<CMsgClientStoreUserStats2> {
         self.state().stores.clone()
     }
 
+    /// The auth lists the daemon sent, in arrival order.
+    #[cfg_attr(not(unix), allow(dead_code))]
+    pub fn auth_lists(&self) -> Vec<CMsgClientAuthList> {
+        self.state().auth_lists.clone()
+    }
+
+    /// The verdict Steam gives on other users' tickets from now on.
+    #[cfg_attr(not(unix), allow(dead_code))]
+    pub fn set_verdict(&self, response: u32) {
+        self.state().verdict = response;
+    }
+
     /// Sets `app`'s global achievement percentages.
+    #[cfg_attr(not(unix), allow(dead_code))]
     pub fn achievement_percentages(&self, app: u32, list: &[(&str, &str)]) {
         self.state().percentages.insert(
             app,
@@ -436,6 +467,11 @@ pub struct FakeView<'a>(&'a State);
 impl FakeView<'_> {
     pub fn persona_states(&self) -> &[(SteamId, u32)] {
         &self.0.persona_states
+    }
+
+    #[cfg_attr(not(unix), allow(dead_code))]
+    pub fn auth_lists(&self) -> &[CMsgClientAuthList] {
+        &self.0.auth_lists
     }
 
     /// The play sessions the daemon reported, in arrival order.
@@ -559,8 +595,147 @@ impl FakeCm {
                 let steam_id = conn.logged_on.expect("stats before logon");
                 vec![self.store_user_stats(steam_id, p)]
             }
+            EMsg::KEMsgClientGetAppOwnershipTicket => {
+                let steam_id = conn.logged_on.expect("a ticket before logon");
+                vec![self.ownership_ticket(steam_id, p)]
+            }
+            EMsg::KEMsgClientRequestEncryptedAppTicket => {
+                let steam_id = conn.logged_on.expect("a ticket before logon");
+                vec![self.encrypted_app_ticket(steam_id, p)]
+            }
+            EMsg::KEMsgClientAuthList => {
+                let steam_id = conn.logged_on.expect("an auth list before logon");
+                self.auth_list(steam_id, p)
+            }
             other => panic!("the fake CM does not handle {other:?}"),
         }
+    }
+
+    fn owns(s: &State, steam_id: SteamId, app: u32) -> bool {
+        s.accounts
+            .iter()
+            .filter(|a| a.steam_id == steam_id)
+            .flat_map(|a| a.licenses.iter())
+            .any(|(package, _)| {
+                s.packages
+                    .get(package)
+                    .is_some_and(|(apps, _)| apps.contains(&app))
+            })
+    }
+
+    /// `isteamuser.md` §2.2: a ticket of the layout the daemon reads, with
+    /// a signature of junk. An app the account does not own gets
+    /// `k_EResultAccessDenied` (the real answer is unverified).
+    fn ownership_ticket(&self, steam_id: SteamId, p: &Packet) -> Packet {
+        let body: CMsgClientGetAppOwnershipTicket = decode(p);
+        let app = body.app_id();
+        let s = self.state();
+        let r = if Self::owns(&s, steam_id, app) {
+            CMsgClientGetAppOwnershipTicketResponse {
+                eresult: Some(EResult::OK.0 as u32),
+                app_id: Some(app),
+                ticket: Some(fake_ownership_ticket(steam_id.0, app)),
+            }
+        } else {
+            CMsgClientGetAppOwnershipTicketResponse {
+                eresult: Some(EResult::ACCESS_DENIED.0 as u32),
+                app_id: Some(app),
+                ticket: None,
+            }
+        };
+        reply_to(p, EMsg::KEMsgClientGetAppOwnershipTicketResponse, &r)
+    }
+
+    /// `isteamuser.md` §2.7. The "encrypted" ticket is the user data
+    /// reversed, so a test can tell it carried them.
+    fn encrypted_app_ticket(&self, steam_id: SteamId, p: &Packet) -> Packet {
+        let body: CMsgClientRequestEncryptedAppTicket = decode(p);
+        let app = body.app_id();
+        let s = self.state();
+        let r = if Self::owns(&s, steam_id, app) {
+            let mut data = body.userdata().to_vec();
+            data.reverse();
+            CMsgClientRequestEncryptedAppTicketResponse {
+                app_id: Some(app),
+                eresult: Some(EResult::OK.0),
+                encrypted_app_ticket: Some(EncryptedAppTicket {
+                    ticket_version_no: Some(1),
+                    crc_encryptedticket: Some(crc32fast::hash(&data)),
+                    cb_encrypteduserdata: Some(data.len() as u32),
+                    cb_encrypted_appownershipticket: Some(0),
+                    encrypted_ticket: Some(data),
+                }),
+            }
+        } else {
+            CMsgClientRequestEncryptedAppTicketResponse {
+                app_id: Some(app),
+                eresult: Some(EResult::ACCESS_DENIED.0),
+                encrypted_app_ticket: None,
+            }
+        };
+        reply_to(p, EMsg::KEMsgClientRequestEncryptedAppTicketResponse, &r)
+    }
+
+    /// `isteamuser.md` §2.4, §2.5: an ack naming every ticket, a verdict on
+    /// each new ticket of another user, and two more tokens when the
+    /// daemon says it has fewer than two (how Steam tops tokens up is
+    /// unverified).
+    fn auth_list(&self, steam_id: SteamId, p: &Packet) -> Vec<Packet> {
+        let body: CMsgClientAuthList = decode(p);
+        let mut s = self.state();
+        let mut out = vec![reply_to(
+            p,
+            EMsg::KEMsgClientAuthListAck,
+            &CMsgClientAuthListAck {
+                ticket_crc: body.tickets.iter().map(|t| t.ticket_crc()).collect(),
+                app_ids: body.app_ids.clone(),
+                message_sequence: body.message_sequence,
+            },
+        )];
+        for t in body.tickets.iter().filter(|t| t.estate() == 1) {
+            if s.verdicts_sent.contains(&t.ticket_crc()) {
+                continue;
+            }
+            s.verdicts_sent.push(t.ticket_crc());
+            out.push(Packet::proto(
+                EMsg::KEMsgClientTicketAuthComplete,
+                &CMsgClientTicketAuthComplete {
+                    steam_id: t.steamid,
+                    game_id: t.gameid,
+                    estate: Some(1),
+                    eauth_session_response: Some(s.verdict),
+                    ticket_crc: t.ticket_crc,
+                    owner_steam_id: t.steamid,
+                    ..Default::default()
+                },
+            ));
+        }
+        if body.tokens_left() < 2 {
+            out.push(Self::tokens(&mut s, steam_id, 2));
+        }
+        s.auth_lists.push(body);
+        self.notify();
+        out
+    }
+
+    /// `ClientGameConnectTokens` with `n` new tokens of 20 bytes.
+    fn tokens(s: &mut State, steam_id: SteamId, n: u32) -> Packet {
+        let tokens = (0..n)
+            .map(|_| {
+                s.tokens_issued += 1;
+                let mut t = u64::from(s.tokens_issued).to_le_bytes().to_vec();
+                t.extend_from_slice(&steam_id.0.to_le_bytes());
+                t.extend_from_slice(&FAKE_SERVER_TIME.to_le_bytes());
+                t
+            })
+            .collect();
+        Packet::proto(
+            EMsg::KEMsgClientGameConnectTokens,
+            &CMsgClientGameConnectTokens {
+                max_tokens_to_keep: Some(10),
+                tokens,
+            },
+        )
     }
 
     /// `isteamuserstats.md` §1.1. An app without a schema has no stats,
@@ -972,6 +1147,9 @@ impl FakeCm {
                 cell_id: Some(0),
                 ip_country_code: Some(FAKE_COUNTRY.into()),
                 rtime32_server_time: Some(FAKE_SERVER_TIME),
+                public_ip: Some(CMsgIpAddress {
+                    ip: Some(c_msg_ip_address::Ip::V4(FAKE_PUBLIC_IP)),
+                }),
                 ..Default::default()
             },
         );
@@ -1003,6 +1181,7 @@ impl FakeCm {
                 },
             ),
             Packet::proto(EMsg::KEMsgClientLicenseList, &licenses),
+            Self::tokens(&mut s, account.steam_id, 3),
         ]
     }
 
@@ -1094,6 +1273,30 @@ fn jwt(steam_id: SteamId, audience: &[&str], serial: u64) -> String {
     });
     let payload = URL_SAFE_NO_PAD.encode(payload.to_string());
     format!("{header}.{payload}.c2ln")
+}
+
+/// An ownership ticket for `steam_id` and `app` as `isteamuser.md` §2.2
+/// lays it out, with no packages or DLC and 128 bytes of junk for a
+/// signature.
+#[cfg_attr(not(unix), allow(dead_code))]
+pub fn fake_ownership_ticket(steam_id: u64, app: u32) -> Vec<u8> {
+    let mut t = Vec::new();
+    t.extend_from_slice(&0u32.to_le_bytes());
+    t.extend_from_slice(&4u32.to_le_bytes());
+    t.extend_from_slice(&steam_id.to_le_bytes());
+    t.extend_from_slice(&app.to_le_bytes());
+    t.extend_from_slice(&FAKE_PUBLIC_IP.to_le_bytes());
+    t.extend_from_slice(&0u32.to_le_bytes());
+    t.extend_from_slice(&0u32.to_le_bytes());
+    t.extend_from_slice(&FAKE_SERVER_TIME.to_le_bytes());
+    t.extend_from_slice(&(FAKE_SERVER_TIME + OWNERSHIP_LIFETIME).to_le_bytes());
+    t.extend_from_slice(&0u16.to_le_bytes());
+    t.extend_from_slice(&0u16.to_le_bytes());
+    t.extend_from_slice(&0u16.to_le_bytes());
+    let len = t.len() as u32;
+    t[..4].copy_from_slice(&len.to_le_bytes());
+    t.extend_from_slice(&[0x5a; 128]);
+    t
 }
 
 /// App info as text KeyValues with a trailing NUL (`pics.md` §3).

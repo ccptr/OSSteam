@@ -244,6 +244,15 @@ impl Requester {
         Ok(())
     }
 
+    /// Sends `packet` as a new job without waiting for its reply, which
+    /// goes to the event stream like any message nobody waits for.
+    pub fn send_job(&self, mut packet: Packet) -> Result<u64, CallError> {
+        let job = self.shared.next_job.fetch_add(1, Ordering::Relaxed);
+        packet.set_source_job(job);
+        self.send(packet)?;
+        Ok(job)
+    }
+
     /// Sends `packet` as a new job and waits for the reply that targets it.
     pub fn request(
         &self,

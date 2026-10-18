@@ -58,6 +58,15 @@ ISteamClient.Remove_SteamAPI_CPostAPIResultInProcess(ptr) -> void = client::igno
 ISteamClient.DestroyAllInterfaces() -> void = client::destroy_all_interfaces
 
 ISteamUser.GetHSteamUser() -> i32 = user::h_steam_user
+ISteamUser.GetAuthSessionTicket(ptr, i32, ptr) -> u32 = tickets::get_auth_session_ticket
+ISteamUser.GetAuthSessionTicket(ptr, i32, ptr, ptr) -> u32 = tickets::get_auth_session_ticket_for
+ISteamUser.GetAuthTicketForWebApi(ptr) -> u32 = tickets::get_auth_ticket_for_web_api
+ISteamUser.CancelAuthTicket(u32) -> void = tickets::cancel_auth_ticket
+ISteamUser.BeginAuthSession(ptr, i32, CSteamID) -> u32 = tickets::begin_auth_session
+ISteamUser.EndAuthSession(CSteamID) -> void = tickets::end_auth_session
+ISteamUser.UserHasLicenseForApp(CSteamID, u32) -> u32 = tickets::user_has_license_for_app
+ISteamUser.RequestEncryptedAppTicket(ptr, i32) -> u64 = tickets::request_encrypted_app_ticket
+ISteamUser.GetEncryptedAppTicket(ptr, i32, ptr) -> bool = tickets::get_encrypted_app_ticket
 ISteamUser.BLoggedOn() -> bool = user::logged_on
 ISteamUser.GetSteamID() -> steamid = user::steam_id
 ISteamUser.GetUserDataFolder(ptr, i32) -> bool = user::user_data_folder

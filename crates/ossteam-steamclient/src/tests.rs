@@ -17,9 +17,11 @@ use std::time::{Duration, Instant};
 
 use ossteam_gameipc::endpoint::Address;
 use ossteam_gameipc::{
-    AchievementDef, AchievementPercent, App, AppState, Dlc, ErrorReply, GlobalAchievements, Hello,
-    Image, Message, Report, RequestBody, Response, ResponseBody, Session, StatDef, StatValue,
-    StatsSchema, StoreStats, Unlock, UserStats, Welcome, read_message, write_message,
+    AchievementDef, AchievementPercent, App, AppState, AuthTicket, BeginAuthSession, Dlc, Done,
+    EncryptedAppTicket, ErrorReply, GlobalAchievements, Hello, Image, Message, NoticeBody, Report,
+    RequestBody, Response, ResponseBody, Session, StatDef, StatValue, StatsSchema, StoreStats,
+    TicketActive, TicketValidated, Unlock, UserLicense, UserStats, Welcome, read_message,
+    write_message,
 };
 
 use crate::abi::{CSteamID, CallbackMsg, find_version};
@@ -130,10 +132,18 @@ fn serve(
                     RequestBody::AppState(_) => ResponseBody::Error(ErrorReply {
                         message: "unknown app".into(),
                     }),
-                    other => stats_answer(other),
+                    other @ (RequestBody::UserStats(_)
+                    | RequestBody::StoreStats(_)
+                    | RequestBody::GlobalAchievements(_)
+                    | RequestBody::AchievementIcon(_)) => stats_answer(other),
+                    other => ticket_answer(other),
                 };
+                let notice = ticket_notice(&r.body, &body);
                 let _ = tx.send(Event::Request(r.body));
                 let _ = write_message(&mut writer, &Message::Response(Response { id: r.id, body }));
+                if let Some(n) = notice {
+                    let _ = write_message(&mut writer, &Message::Notice(n));
+                }
             }
             _ => break,
         }
@@ -185,6 +195,80 @@ fn schema() -> StatsSchema {
                 ..Default::default()
             },
         ],
+    }
+}
+
+/// What the fake daemon answers to the ticket requests (`isteamuser.md`
+/// §3): a ticket of 40 bytes, its CRC (counting from 1000) then its kind;
+/// sessions
+/// and licenses for [`OTHER`] only; an "encrypted" ticket that is the
+/// user data reversed.
+fn ticket_answer(body: &RequestBody) -> ResponseBody {
+    match body {
+        RequestBody::AuthTicket(r) if r.max != 0 && r.max < 40 => {
+            ResponseBody::AuthTicket(AuthTicket {
+                result: 2,
+                ..Default::default()
+            })
+        }
+        RequestBody::AuthTicket(r) => {
+            static CRC: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(1000);
+            let crc = CRC.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            let mut ticket = vec![r.kind as u8; 40];
+            ticket[..4].copy_from_slice(&crc.to_le_bytes());
+            ResponseBody::AuthTicket(AuthTicket {
+                result: 1,
+                crc,
+                ticket,
+            })
+        }
+        RequestBody::CancelAuthTicket(_) | RequestBody::EndAuthSession(_) => {
+            ResponseBody::Done(Done {})
+        }
+        RequestBody::BeginAuthSession(r) => ResponseBody::BeginAuthSession(BeginAuthSession {
+            result: if r.steam_id == OTHER && !r.ticket.is_empty() {
+                0
+            } else {
+                1
+            },
+        }),
+        RequestBody::UserLicense(r) => ResponseBody::UserLicense(UserLicense {
+            result: if r.steam_id == OTHER && r.app_id == 480 {
+                0
+            } else {
+                2
+            },
+        }),
+        RequestBody::EncryptedAppTicket(r) => {
+            ResponseBody::EncryptedAppTicket(EncryptedAppTicket {
+                result: 1,
+                ticket: r.userdata.iter().rev().copied().collect(),
+            })
+        }
+        _ => ResponseBody::Error(ErrorReply {
+            message: "unexpected".into(),
+        }),
+    }
+}
+
+/// What the fake daemon tells after answering: a ticket is active at
+/// once, and Steam accepts a session.
+fn ticket_notice(request: &RequestBody, answer: &ResponseBody) -> Option<NoticeBody> {
+    match (request, answer) {
+        (_, ResponseBody::AuthTicket(a)) if a.result == 1 => {
+            Some(NoticeBody::TicketActive(TicketActive {
+                crc: a.crc,
+                result: 1,
+            }))
+        }
+        (RequestBody::BeginAuthSession(r), ResponseBody::BeginAuthSession(b)) if b.result == 0 => {
+            Some(NoticeBody::TicketValidated(TicketValidated {
+                steam_id: r.steam_id,
+                owner: r.steam_id,
+                response: 0,
+            }))
+        }
+        _ => None,
     }
 }
 
@@ -725,6 +809,7 @@ fn a_game_session() {
 
     stats_session(&fake, client, user, pipe, utils);
     remote_storage_session(client, user, pipe, &user_dir);
+    tickets_session(&fake, client, user, pipe);
 
     // A stub returns its failure value and is reported, with the
     // interfaces handed out.
@@ -1713,4 +1798,203 @@ fn remote_storage_session(client: *mut c_void, user: i32, pipe: i32, user_dir: &
     }
     leftovers.sort();
     assert_eq!(leftovers, ["save", "three"]);
+}
+
+/// `ISteamUser`'s tickets and auth sessions (`isteamuser.md` §4).
+fn tickets_session(fake: &Fake, client: *mut c_void, user: i32, pipe: i32) {
+    let get = |version: &CStr| {
+        let obj = call!(
+            client,
+            "SteamClient020",
+            "GetISteamUser",
+            fn(i32, i32, *const c_char) -> *mut c_void,
+            user,
+            pipe,
+            version.as_ptr()
+        );
+        assert!(!obj.is_null());
+        obj
+    };
+    let old = get(c"SteamUser021");
+    let new = get(c"SteamUser023");
+    let mut buf = [0u8; 1024];
+    let mut size = 99u32;
+
+    // A session ticket, and its callback once Steam has it.
+    let handle = call!(
+        old,
+        "SteamUser021",
+        "GetAuthSessionTicket",
+        fn(*mut u8, i32, *mut u32) -> u32,
+        buf.as_mut_ptr(),
+        1024,
+        &mut size
+    );
+    assert_ne!(handle, 0);
+    assert_eq!(size, 40);
+    assert_eq!(buf[4..40], [2; 36]);
+    let first_crc = u32_at(&buf, 0);
+    assert!(
+        matches!(next_request(fake), RequestBody::AuthTicket(r) if r.kind == 2 && r.max == 1024)
+    );
+    let ready = wait_callback(pipe, 163);
+    assert_eq!((u32_at(&ready, 0), u32_at(&ready, 4)), (handle, 1));
+
+    // Too small a buffer.
+    assert_eq!(
+        call!(
+            old,
+            "SteamUser021",
+            "GetAuthSessionTicket",
+            fn(*mut u8, i32, *mut u32) -> u32,
+            buf.as_mut_ptr(),
+            10,
+            &mut size
+        ),
+        0
+    );
+    assert_eq!(size, 0);
+    assert!(matches!(next_request(fake), RequestBody::AuthTicket(r) if r.max == 10));
+
+    // Version 023 takes an identity, which is not used.
+    let second = call!(
+        new,
+        "SteamUser023",
+        "GetAuthSessionTicket",
+        fn(*mut u8, i32, *mut u32, *const c_void) -> u32,
+        buf.as_mut_ptr(),
+        1024,
+        &mut size,
+        std::ptr::null()
+    );
+    assert!(second != 0 && second != handle);
+    assert!(matches!(next_request(fake), RequestBody::AuthTicket(_)));
+    assert_eq!(u32_at(&wait_callback(pipe, 163), 0), second);
+
+    // A Web API ticket comes in its callback.
+    let web = call!(
+        new,
+        "SteamUser023",
+        "GetAuthTicketForWebApi",
+        fn(*const c_char) -> u32,
+        c"svc".as_ptr()
+    );
+    assert_ne!(web, 0);
+    assert!(
+        matches!(next_request(fake), RequestBody::AuthTicket(r) if r.kind == 5 && r.identity == "svc")
+    );
+    let w = wait_callback(pipe, 168);
+    assert_eq!(w.len(), 2572);
+    assert_eq!((u32_at(&w, 0), u32_at(&w, 4), u32_at(&w, 8)), (web, 1, 40));
+    assert_eq!(w[16..52], [5; 36]);
+    assert!(w[52..].iter().all(|&b| b == 0));
+
+    // Cancelling tells the daemon which ticket; an unknown handle is
+    // ignored.
+    call!(old, "SteamUser021", "CancelAuthTicket", fn(u32) -> (), 999);
+    call!(
+        old,
+        "SteamUser021",
+        "CancelAuthTicket",
+        fn(u32) -> (),
+        handle
+    );
+    assert!(matches!(next_request(fake), RequestBody::CancelAuthTicket(r) if r.crc == first_crc));
+
+    // A session with another user.
+    let theirs = [7u8; 64];
+    assert_eq!(
+        call!(
+            old,
+            "SteamUser021",
+            "BeginAuthSession",
+            fn(*const u8, i32, u64) -> u32,
+            theirs.as_ptr(),
+            64,
+            OTHER
+        ),
+        0
+    );
+    assert!(matches!(next_request(fake), RequestBody::BeginAuthSession(r) if r.ticket == theirs));
+    let v = wait_callback(pipe, 143);
+    assert_eq!(v.len(), 20);
+    assert_eq!(v[..8], OTHER.to_le_bytes());
+    assert_eq!(u32_at(&v, 8), 0);
+    assert_eq!(v[12..20], OTHER.to_le_bytes());
+    assert_eq!(
+        call!(
+            old,
+            "SteamUser021",
+            "BeginAuthSession",
+            fn(*const u8, i32, u64) -> u32,
+            std::ptr::null(),
+            64,
+            OTHER
+        ),
+        1
+    );
+    assert_eq!(
+        call!(
+            old,
+            "SteamUser021",
+            "UserHasLicenseForApp",
+            fn(u64, u32) -> u32,
+            OTHER,
+            480
+        ),
+        0
+    );
+    assert!(matches!(next_request(fake), RequestBody::UserLicense(_)));
+    call!(old, "SteamUser021", "EndAuthSession", fn(u64) -> (), OTHER);
+    assert!(matches!(next_request(fake), RequestBody::EndAuthSession(r) if r.steam_id == OTHER));
+
+    // An encrypted app ticket: the call's result, then the ticket.
+    assert!(!call!(
+        old,
+        "SteamUser021",
+        "GetEncryptedAppTicket",
+        fn(*mut u8, i32, *mut u32) -> bool,
+        buf.as_mut_ptr(),
+        1024,
+        &mut size
+    ));
+    let data = [1u8, 2, 3];
+    let call = call!(
+        old,
+        "SteamUser021",
+        "RequestEncryptedAppTicket",
+        fn(*const u8, i32) -> u64,
+        data.as_ptr(),
+        3
+    );
+    assert_ne!(call, 0);
+    assert!(matches!(next_request(fake), RequestBody::EncryptedAppTicket(r) if r.userdata == data));
+    assert_eq!(wait_callback(pipe, 703)[..8], call.to_le_bytes());
+    let mut result = [0u8; 4];
+    let mut failed = true;
+    // SAFETY: `result` holds 4 bytes.
+    assert!(unsafe {
+        crate::Steam_GetAPICallResult(pipe, call, result.as_mut_ptr().cast(), 4, 154, &mut failed)
+    });
+    assert!(!failed);
+    assert_eq!(u32::from_le_bytes(result), 1);
+    assert!(call!(
+        old,
+        "SteamUser021",
+        "GetEncryptedAppTicket",
+        fn(*mut u8, i32, *mut u32) -> bool,
+        buf.as_mut_ptr(),
+        1024,
+        &mut size
+    ));
+    assert_eq!((size, &buf[..3]), (3, &[3u8, 2, 1][..]));
+    assert!(!call!(
+        old,
+        "SteamUser021",
+        "GetEncryptedAppTicket",
+        fn(*mut u8, i32, *mut u32) -> bool,
+        buf.as_mut_ptr(),
+        2,
+        &mut size
+    ));
 }

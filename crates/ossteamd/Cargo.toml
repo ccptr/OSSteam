@@ -19,6 +19,7 @@ ossteam-types.workspace = true
 ossteam-vdf.workspace = true
 anyhow.workspace = true
 clap.workspace = true
+crc32fast.workspace = true
 crossbeam-channel.workspace = true
 ctrlc = { version = "3.5.2", features = ["termination"] }
 directories.workspace = true

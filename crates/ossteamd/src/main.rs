@@ -18,6 +18,7 @@ mod session;
 mod stats;
 #[cfg(test)]
 mod testing;
+mod tickets;
 
 use std::fs::{File, OpenOptions, TryLockError};
 use std::io::Write;

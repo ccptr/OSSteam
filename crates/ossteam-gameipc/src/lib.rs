@@ -17,7 +17,7 @@ use wire::{DecodeError, Reader, Wire};
 
 /// The protocol version (`steamworks-abi.md` §3.4). Both sides must
 /// agree exactly.
-pub const PROTOCOL: u32 = 3;
+pub const PROTOCOL: u32 = 4;
 
 /// The largest frame either side accepts.
 pub const MAX_FRAME_LEN: usize = 16 * 1024 * 1024;
@@ -217,6 +217,22 @@ mod tests {
             RequestBody::AchievementIcon(AchievementIconRequest {
                 file: "a.jpg".into(),
             }),
+            RequestBody::AuthTicket(AuthTicketRequest {
+                kind: 5,
+                identity: "svc".into(),
+                max: 1024,
+            }),
+            RequestBody::CancelAuthTicket(CancelAuthTicketRequest { crc: 3 }),
+            RequestBody::BeginAuthSession(BeginAuthSessionRequest {
+                steam_id: 5,
+                ticket: vec![1, 2],
+            }),
+            RequestBody::EndAuthSession(EndAuthSessionRequest { steam_id: 5 }),
+            RequestBody::UserLicense(UserLicenseRequest {
+                steam_id: 5,
+                app_id: 480,
+            }),
+            RequestBody::EncryptedAppTicket(EncryptedAppTicketRequest { userdata: vec![9] }),
         ] {
             round_trip(Message::Request(Request { id: 1, body }));
         }
@@ -252,11 +268,34 @@ mod tests {
                 height: 1,
                 rgba: vec![1, 2, 3, 255],
             }),
+            ResponseBody::AuthTicket(AuthTicket {
+                result: 1,
+                crc: 3,
+                ticket: vec![4, 5],
+            }),
+            ResponseBody::Done(Done {}),
+            ResponseBody::BeginAuthSession(BeginAuthSession { result: 4 }),
+            ResponseBody::UserLicense(UserLicense { result: 2 }),
+            ResponseBody::EncryptedAppTicket(EncryptedAppTicket {
+                result: 1,
+                ticket: vec![8; 3],
+            }),
         ] {
             round_trip(Message::Response(Response { id: 2, body }));
         }
         round_trip(Message::SessionUpdate(session));
         round_trip(Message::AppUpdate(app));
+        round_trip(Message::Notice(NoticeBody::TicketActive(TicketActive {
+            crc: 3,
+            result: 16,
+        })));
+        round_trip(Message::Notice(NoticeBody::TicketValidated(
+            TicketValidated {
+                steam_id: 5,
+                owner: 6,
+                response: 0,
+            },
+        )));
         round_trip(Message::Report(Report {
             interfaces: vec!["SteamUser023".into()],
             unknown: vec!["SteamFoo001".into()],

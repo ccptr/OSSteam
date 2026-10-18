@@ -267,7 +267,7 @@ impl Core {
                 executable.display()
             )));
         }
-        let working_dir = command::working_dir(&app_dir, &option.working_dir, &executable)
+        let working_dir = command::working_dir(&app_dir, &option.working_dir)
             .map_err(|e| invalid(e.to_string()))?;
         match steamstub::is_protected(&executable) {
             Ok(false) => {}

@@ -33,16 +33,10 @@ pub fn under(base: &Path, relative: &str) -> Result<PathBuf, BadPath> {
 }
 
 /// The working directory: `working_dir` under the install directory, or
-/// the executable's directory.
-pub fn working_dir(
-    install_dir: &Path,
-    working_dir: &str,
-    executable: &Path,
-) -> Result<PathBuf, BadPath> {
+/// the install directory itself (`launch.md` §3).
+pub fn working_dir(install_dir: &Path, working_dir: &str) -> Result<PathBuf, BadPath> {
     if working_dir.trim().is_empty() {
-        Ok(executable
-            .parent()
-            .map_or_else(|| install_dir.to_path_buf(), Path::to_path_buf))
+        Ok(install_dir.to_path_buf())
     } else {
         under(install_dir, working_dir)
     }
@@ -150,12 +144,8 @@ mod tests {
     #[test]
     fn working_directory() {
         let base = Path::new("/g");
-        let exe = Path::new("/g/bin/game");
-        assert_eq!(working_dir(base, "", exe).unwrap(), Path::new("/g/bin"));
-        assert_eq!(
-            working_dir(base, "data", exe).unwrap(),
-            Path::new("/g/data")
-        );
+        assert_eq!(working_dir(base, "").unwrap(), Path::new("/g"));
+        assert_eq!(working_dir(base, "data").unwrap(), Path::new("/g/data"));
     }
 
     #[test]

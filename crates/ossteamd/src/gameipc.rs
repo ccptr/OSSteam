@@ -50,36 +50,85 @@ pub fn endpoint(client: &Endpoint, addr: &ossteam_gameipc::endpoint::Address) ->
     }
 }
 
+/// Linux: the listener on the abstract socket that games in a container
+/// reach (`compat-tools.md` §9).
+pub struct Abstract {
+    listener: Listener,
+    name: String,
+}
+
+/// Listens on the abstract socket `name`. It fails when the name is
+/// taken, by an earlier daemon or by another user.
+#[cfg(target_os = "linux")]
+pub fn listen_abstract(name: &str) -> io::Result<Abstract> {
+    use interprocess::local_socket::{GenericNamespaced, ListenerOptions, ToNsName};
+    let listener = ListenerOptions::new()
+        .name(name.to_ns_name::<GenericNamespaced>()?)
+        .create_sync()?;
+    Ok(Abstract {
+        listener,
+        name: name.to_owned(),
+    })
+}
+
+#[cfg(target_os = "linux")]
+fn connect_abstract(name: &str) -> io::Result<Stream> {
+    use interprocess::local_socket::{GenericNamespaced, ToNsName};
+    Stream::connect(name.to_ns_name::<GenericNamespaced>()?)
+}
+
+#[cfg(not(target_os = "linux"))]
+fn connect_abstract(_: &str) -> io::Result<Stream> {
+    Err(io::ErrorKind::Unsupported.into())
+}
+
 pub struct Server {
     stopping: Arc<AtomicBool>,
     endpoint: Endpoint,
-    acceptor: thread::JoinHandle<()>,
+    abstract_name: Option<String>,
+    acceptors: Vec<thread::JoinHandle<()>>,
 }
 
 impl Server {
     pub fn start(
         listener: Listener,
         endpoint: Endpoint,
+        abstract_listener: Option<Abstract>,
         core: Sender<Command>,
     ) -> io::Result<Self> {
         let stopping = Arc::new(AtomicBool::new(false));
-        let flag = Arc::clone(&stopping);
-        let acceptor = thread::Builder::new()
-            .name("game-accept".into())
-            .spawn(move || accept_loop(&listener, &flag, &core))?;
+        let abstract_name = abstract_listener.as_ref().map(|a| a.name.clone());
+        let mut acceptors = Vec::new();
+        let listeners = std::iter::once(("game-accept", listener))
+            .chain(abstract_listener.map(|a| ("game-accept-abstract", a.listener)));
+        for (name, listener) in listeners {
+            let flag = Arc::clone(&stopping);
+            let core = core.clone();
+            acceptors.push(
+                thread::Builder::new()
+                    .name(name.into())
+                    .spawn(move || accept_loop(&listener, &flag, &core))?,
+            );
+        }
         Ok(Self {
             stopping,
             endpoint,
-            acceptor,
+            abstract_name,
+            acceptors,
         })
     }
 
-    /// Stops the acceptor, as `server::Server::stop` does. Connections
+    /// Stops the acceptors, as `server::Server::stop` does. Connections
     /// end when the core drops their queues.
     pub fn stop(self) {
         self.stopping.store(true, Ordering::Release);
         drop(self.endpoint.connect());
-        let _ = self.acceptor.join();
+        if let Some(name) = &self.abstract_name {
+            drop(connect_abstract(name));
+        }
+        for a in self.acceptors {
+            let _ = a.join();
+        }
     }
 }
 

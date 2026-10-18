@@ -408,7 +408,7 @@ fn launch_supervise_stop_and_play_session() {
 
 /// Connects to the test daemon's game endpoint as the shim does.
 #[cfg_attr(not(unix), allow(dead_code))]
-fn shim_connect(
+pub(super) fn shim_connect(
     addr: &ossteam_gameipc::endpoint::Address,
     hello: ossteam_gameipc::Hello,
 ) -> (
@@ -423,7 +423,7 @@ fn shim_connect(
 }
 
 #[cfg_attr(not(unix), allow(dead_code))]
-fn hello(app_id: u32) -> ossteam_gameipc::Hello {
+pub(super) fn hello(app_id: u32) -> ossteam_gameipc::Hello {
     ossteam_gameipc::Hello {
         protocol: ossteam_gameipc::PROTOCOL,
         pid: std::process::id(),

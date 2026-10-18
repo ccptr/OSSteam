@@ -25,6 +25,11 @@ pub struct Address {
     /// The socket path (Unix) or the pipe name without `\\.\pipe\`
     /// (Windows).
     pub name: String,
+    /// Linux: the abstract socket the daemon also listens on, for games
+    /// in a container that has its own runtime directory
+    /// (`compat-tools.md` §9).
+    #[cfg(target_os = "linux")]
+    pub abstract_name: Option<String>,
 }
 
 impl Address {
@@ -39,8 +44,19 @@ impl Address {
     pub fn in_dir(dir: impl Into<std::path::PathBuf>) -> Self {
         let dir = dir.into();
         let name = dir.join("game.sock").to_string_lossy().into_owned();
-        Self { dir, name }
+        Self {
+            dir,
+            name,
+            #[cfg(target_os = "linux")]
+            abstract_name: None,
+        }
     }
+}
+
+/// Linux: the abstract socket name for user `uid`, `ossteam-game-<uid>`.
+#[cfg(target_os = "linux")]
+pub fn abstract_name(uid: u32) -> String {
+    format!("ossteam-game-{uid}")
 }
 
 /// The two directions of one connection. Each may be used from its own
@@ -56,7 +72,8 @@ pub struct Connection {
 
 /// Connects to the daemon, after checking that the endpoint belongs to
 /// this user: the directory's owner and mode on Unix, the serving
-/// process's user on Windows.
+/// process's user on Windows. On Linux, when the socket file is not
+/// there, the abstract socket is tried, and its listener's user checked.
 pub fn connect(addr: &Address) -> io::Result<Connection> {
     os::connect(addr)
 }

@@ -138,6 +138,7 @@ fn run(args: &Args) -> anyhow::Result<ExitCode> {
     let game_listener = game_endpoint
         .listen()
         .with_context(|| format!("listening on {}", game_endpoint.address))?;
+    let game_abstract = listen_abstract(&game_address);
     tracing::info!(pid = std::process::id(), address = %endpoint.address, "ossteamd {} started", env!("CARGO_PKG_VERSION"));
     tracing::debug!(
         config = %paths.config.display(),
@@ -155,6 +156,7 @@ fn run(args: &Args) -> anyhow::Result<ExitCode> {
             endpoint,
             game_listener,
             game_endpoint,
+            game_abstract,
             dialer,
             open_secrets: secrets::Secrets::open,
             pics_poll: pics::POLL_INTERVAL,
@@ -173,6 +175,24 @@ fn run(args: &Args) -> anyhow::Result<ExitCode> {
     Ok(ExitCode::SUCCESS)
 }
 
+/// Linux: the abstract game socket. Without it, games in a Steam Linux
+/// Runtime container find no client, but everything else works.
+fn listen_abstract(addr: &ossteam_gameipc::endpoint::Address) -> Option<gameipc::Abstract> {
+    #[cfg(target_os = "linux")]
+    if let Some(name) = &addr.abstract_name {
+        return gameipc::listen_abstract(name)
+            .inspect_err(|e| {
+                tracing::warn!(
+                    "cannot listen on the abstract socket {name}; games in a Steam Linux \
+                     Runtime container will find no client: {e}"
+                );
+            })
+            .ok();
+    }
+    let _ = addr;
+    None
+}
+
 /// What [`serve`] runs on. The daemon passes the real CM dialer and the OS
 /// keyring; only tests pass anything else (FAITH-4).
 struct Env {
@@ -182,6 +202,8 @@ struct Env {
     /// The game endpoint (`steamworks-abi.md` §3.1).
     game_listener: Listener,
     game_endpoint: Endpoint,
+    /// Linux: the game endpoint for containers (`compat-tools.md` §9).
+    game_abstract: Option<gameipc::Abstract>,
     dialer: Box<dyn session::Dialer>,
     open_secrets: fn(bool, &Path) -> secrets::Secrets,
     pics_poll: Duration,
@@ -204,6 +226,7 @@ fn serve(
         endpoint,
         game_listener,
         game_endpoint,
+        game_abstract,
         dialer,
         open_secrets,
         pics_poll,
@@ -224,8 +247,9 @@ fn serve(
     let (alive_tx, alive_rx) = bounded::<()>(0);
     let server = server::Server::start(listener, endpoint, cmd_tx.clone(), alive_tx)
         .context("starting the IPC server")?;
-    let game_server = gameipc::Server::start(game_listener, game_endpoint, cmd_tx.clone())
-        .context("starting the game endpoint")?;
+    let game_server =
+        gameipc::Server::start(game_listener, game_endpoint, game_abstract, cmd_tx.clone())
+            .context("starting the game endpoint")?;
 
     let pics_dir = paths.cache.join("pics");
     let pics = pics::Handle::spawn(Cache::new(&pics_dir), pics_poll, cmd_tx.clone())

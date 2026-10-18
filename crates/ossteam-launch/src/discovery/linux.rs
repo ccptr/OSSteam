@@ -2,8 +2,8 @@
 //! `~/.steam/sdk64`, `~/.steam/sdk32` and `~/.steam/steam.pid`
 //! (`steamworks-abi.md` §1.1).
 
-use std::io;
-use std::os::unix::fs::{DirBuilderExt, symlink};
+use std::io::{self, Write};
+use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt, symlink};
 use std::path::{Path, PathBuf};
 
 use super::{Error, Libraries};
@@ -96,7 +96,7 @@ impl Entries {
                 continue;
             };
             make_dir(&dir, 0o700)?;
-            replace_link(lib, &dir.join("steamclient.so"))?;
+            replace_copy(lib, &dir.join("steamclient.so"))?;
             if matches!(self.find(sdk)?, Found::Missing) {
                 symlink(&dir, &link)
                     .map_err(|e| Error::io(format!("creating {}", link.display()), e))?;
@@ -154,17 +154,42 @@ fn remove(path: &Path) -> Result<(), Error> {
     }
 }
 
-/// Points `link` at `target`, replacing whatever link was there.
-fn replace_link(target: &Path, link: &Path) -> Result<(), Error> {
-    if std::fs::read_link(link).is_ok_and(|t| t == target) {
+/// Makes `dest` a copy of `lib`, unless it is one already. A container
+/// sees the home directory but not ossteam's install directory, so a
+/// link would not do (`compat-tools.md` §9). The new copy is renamed over
+/// the old file, which a running game keeps mapped.
+fn replace_copy(lib: &Path, dest: &Path) -> Result<(), Error> {
+    let want =
+        std::fs::read(lib).map_err(|e| Error::io(format!("reading {}", lib.display()), e))?;
+    let is_copy = dest
+        .symlink_metadata()
+        .is_ok_and(|m| m.file_type().is_file() && m.len() == want.len() as u64)
+        && std::fs::read(dest).is_ok_and(|have| have == want);
+    if is_copy {
         return Ok(());
     }
-    remove(link)?;
-    symlink(target, link).map_err(|e| Error::io(format!("creating {}", link.display()), e))
+    let tmp = dest.with_file_name(".steamclient.so.ossteam");
+    let written = std::fs::OpenOptions::new()
+        .write(true)
+        .create(true)
+        .truncate(true)
+        .mode(0o755)
+        .open(&tmp)
+        .and_then(|mut f| {
+            f.write_all(&want)?;
+            f.sync_all()
+        })
+        .and_then(|()| std::fs::rename(&tmp, dest));
+    written.map_err(|e| {
+        let _ = std::fs::remove_file(&tmp);
+        Error::io(format!("writing {}", dest.display()), e)
+    })
 }
 
 #[cfg(test)]
 mod tests {
+    use std::os::unix::fs::MetadataExt;
+
     use super::*;
 
     struct Dirs {
@@ -217,6 +242,17 @@ mod tests {
             std::fs::read(steam.join("sdk32/steamclient.so")).unwrap(),
             b"32"
         );
+        // Copies, not links, and replaced by a new file when the library
+        // changes.
+        let copy = d.data.join("steam-sdk/sdk64/steamclient.so");
+        assert!(copy.symlink_metadata().unwrap().file_type().is_file());
+        let before = copy.metadata().unwrap().ino();
+        e.create(&d.libs, 1234, 0).unwrap();
+        assert_eq!(copy.metadata().unwrap().ino(), before, "unchanged");
+        std::fs::write(&d.libs.lib64, b"64 v2").unwrap();
+        e.create(&d.libs, 1234, 0).unwrap();
+        assert_eq!(std::fs::read(&copy).unwrap(), b"64 v2");
+        assert_ne!(copy.metadata().unwrap().ino(), before);
         // Again, with only the 64-bit library: the 32-bit entry goes.
         let only64 = Libraries {
             lib64: d.libs.lib64.clone(),

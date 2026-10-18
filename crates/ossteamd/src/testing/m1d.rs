@@ -422,3 +422,31 @@ fn a_windows_game_gets_windows_depots_and_proton_in_the_runtime() {
         .expect("an alias");
     d.stop();
 }
+
+/// A game in a container has its own runtime directory, without the
+/// socket file, and reaches the daemon by the abstract socket
+/// (`compat-tools.md` §9).
+#[test]
+fn a_game_in_a_container_reaches_the_daemon_by_the_abstract_socket() {
+    use ossteam_gameipc::Message;
+    use ossteam_gameipc::endpoint::{Address, connect};
+
+    let cdn = Arc::new(FakeCdn::new());
+    let cm = steam(&cdn);
+    let root = Root::new();
+    let d = TestDaemon::start_with_cdn(&root, &cm, POLL, cdn.clone());
+    let container = Address {
+        abstract_name: root.game_address().abstract_name,
+        ..Address::in_dir(root.path().join("container-run"))
+    };
+    let (_, answer) = super::m1c::shim_connect(&container, super::m1c::hello(NATIVE));
+    assert!(matches!(answer, Message::Welcome(_)), "{answer:?}");
+
+    // No listener under that name is no client.
+    let nobody = Address {
+        abstract_name: Some(format!("{}-none", container.abstract_name.unwrap())),
+        ..container
+    };
+    assert!(connect(&nobody).is_err());
+    d.stop();
+}

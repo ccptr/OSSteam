@@ -122,7 +122,17 @@ impl Root {
     pub fn game_address(&self) -> ossteam_gameipc::endpoint::Address {
         #[cfg(unix)]
         {
-            ossteam_gameipc::endpoint::Address::in_dir(self.0.join("run"))
+            #[allow(unused_mut)]
+            let mut a = ossteam_gameipc::endpoint::Address::in_dir(self.0.join("run"));
+            // A name of this test's own, not the user's daemon's.
+            #[cfg(target_os = "linux")]
+            {
+                a.abstract_name = Some(format!(
+                    "ossteam-test-{}",
+                    self.0.file_name().expect("named").to_string_lossy()
+                ));
+            }
+            a
         }
         #[cfg(windows)]
         {
@@ -215,6 +225,7 @@ impl TestDaemon {
             endpoint: endpoint.clone(),
             game_listener,
             game_endpoint,
+            game_abstract: crate::listen_abstract(&root.game_address()),
             dialer: cm.dialer(),
             open_secrets: file_secrets,
             pics_poll,

@@ -318,6 +318,9 @@ message AppSummary {
   bool installed = 6;
   // The account's DLC for this app.
   repeated AppSummary dlc = 7;
+  // Installed, and the branch has manifests other than the installed ones
+  // (InstalledApp.update_available).
+  bool update_available = 8;
 }
 
 message ListAppsResponse {
@@ -397,6 +400,9 @@ message GetAppResponse {
   // Linux: the app's compatibility tool; unset elsewhere and while the
   // tool list is not available.
   Compat compat = 10;
+  // The last ShimReport sent for the app on the active account; unset when
+  // there was none (docs/spec/gui.md §5).
+  ShimReport last_shim_report = 11;
 }
 
 // docs/spec/compat-tools.md §8.

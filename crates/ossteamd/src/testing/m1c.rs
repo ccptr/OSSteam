@@ -594,6 +594,8 @@ fn games_talk_to_the_game_endpoint() {
             ("SteamUser021", "GetVoice", 4)
         ]
     );
+    // GetApp keeps it as the app's last report (gui.md §5).
+    assert_eq!(c.get_app(GAME).unwrap().last_shim_report, Some(r));
     d.stop();
 }
 

@@ -185,7 +185,7 @@ impl Core {
                 let p = self.shims.processes.remove(&c.pid).expect("present");
                 if !p.is_empty() {
                     let report = shim_report(c.app, c.pid, false, [p].into_iter());
-                    self.broadcast(Topic::Games, event::Kind::ShimReport(report));
+                    self.send_shim_report(report);
                 }
             }
         }
@@ -297,6 +297,28 @@ impl Core {
         account
             .filter(|_| owned)
             .ok_or_else(|| error(&format!("the account does not own app {app}")))
+    }
+
+    /// Keeps `report` as its app's last one for the active account, which
+    /// is the game's: accounts cannot be switched while games run
+    /// (`gui.md` §5), and sends it to clients.
+    fn send_shim_report(&mut self, report: v1::ShimReport) {
+        if let Some(a) = &self.session_state.account
+            && let Err(e) = self.db.set_shim_report(SteamId(a.steam_id), &report)
+        {
+            tracing::warn!(app = report.app_id, "cannot store a shim report: {e:#}");
+        }
+        self.broadcast(Topic::Games, event::Kind::ShimReport(report));
+    }
+
+    /// The app's last shim report on the active account.
+    pub(super) fn last_shim_report(&self, app: AppId) -> Option<v1::ShimReport> {
+        let account = self.session_state.account.as_ref()?;
+        self.db
+            .shim_report(SteamId(account.steam_id), app)
+            .inspect_err(|e| tracing::warn!(%app, "cannot read a shim report: {e:#}"))
+            .ok()
+            .flatten()
     }
 
     /// The app of a game connection.
@@ -553,7 +575,7 @@ impl Core {
             .collect();
         if !processes.is_empty() {
             let report = shim_report(app, running.proto.pid, true, processes.into_iter());
-            self.broadcast(Topic::Games, event::Kind::ShimReport(report));
+            self.send_shim_report(report);
         }
         self.announce_exit(exited, running, seconds);
     }

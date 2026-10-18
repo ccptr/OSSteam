@@ -104,6 +104,11 @@ impl Core {
         self.content.installed.contains_key(&app)
     }
 
+    /// For `library::InstallState`.
+    pub(super) fn install_state(&self, app: AppId) -> Option<bool> {
+        self.content.installed.get(&app).map(|a| a.update_available)
+    }
+
     pub(super) fn installed_proto(&self, app: AppId) -> Option<v1::InstalledApp> {
         let a = self.content.installed.get(&app)?;
         let folder = self.content.folders.iter().find(|f| f.id == a.folder_id)?;

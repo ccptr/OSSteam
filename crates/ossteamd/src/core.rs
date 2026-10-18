@@ -393,13 +393,14 @@ impl Core {
             },
             request::Method::SetPersonaState(req) => Some(self.set_persona_state(req.state)),
             request::Method::ListApps(req) => Some(self.snapshot().map(|s| {
-                response::Result::ListApps(library::list_apps(&s, &req, &|a| self.is_installed(a)))
+                response::Result::ListApps(library::list_apps(&s, &req, &|a| self.install_state(a)))
             })),
             request::Method::GetApp(req) => Some(self.snapshot().and_then(|s| {
-                library::get_app(&s, &self.pics_cache, req.app_id, &|a| self.is_installed(a)).map(
+                library::get_app(&s, &self.pics_cache, req.app_id, &|a| self.install_state(a)).map(
                     |mut r| {
                         let app = ossteam_types::AppId(req.app_id);
                         r.installed = self.installed_proto(app);
+                        r.last_shim_report = self.last_shim_report(app);
                         if r.app.as_ref().is_some_and(|a| a.has_info) {
                             r.compat = self.compat_proto(app, self.app_info(app).as_ref());
                         }

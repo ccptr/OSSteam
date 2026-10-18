@@ -14,7 +14,7 @@ use crate::content::script::{Key, ScriptFile, ValueRef};
 pub const FILE_NAME: &str = "state.db";
 
 /// The schema version this build writes, kept in `PRAGMA user_version`.
-const SCHEMA_VERSION: i64 = 7;
+const SCHEMA_VERSION: i64 = 8;
 
 const SCHEMA_V1: &str = "
     CREATE TABLE accounts (
@@ -117,6 +117,17 @@ const SCHEMA_V7: &str = "
     ALTER TABLE jobs ADD COLUMN remove_compat_data INTEGER NOT NULL DEFAULT 0;
 ";
 
+/// The last `ShimReport` of each app, per account (`gui.md` §5), as its
+/// protobuf encoding.
+const SCHEMA_V8: &str = "
+    CREATE TABLE shim_reports (
+        steam_id INTEGER NOT NULL,
+        app_id   INTEGER NOT NULL,
+        report   BLOB NOT NULL,
+        PRIMARY KEY (steam_id, app_id)
+    );
+";
+
 /// The persona state a user chose (`pics.md` §8). The numbers are stored
 /// and must not change.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -178,7 +189,7 @@ impl Db {
         conn.pragma_update(None, "foreign_keys", true)?;
         let version: i64 = conn.pragma_query_value(None, "user_version", |r| r.get(0))?;
         match version {
-            0..=5 => {
+            0..SCHEMA_VERSION => {
                 let tx = conn.unchecked_transaction()?;
                 for (from, schema) in [
                     (0, SCHEMA_V1),
@@ -188,6 +199,7 @@ impl Db {
                     (4, SCHEMA_V5),
                     (5, SCHEMA_V6),
                     (6, SCHEMA_V7),
+                    (7, SCHEMA_V8),
                 ] {
                     if version <= from {
                         tx.execute_batch(schema)?;
@@ -574,6 +586,39 @@ impl Db {
         Ok(())
     }
 
+    pub fn shim_report(
+        &self,
+        steam_id: SteamId,
+        app: AppId,
+    ) -> anyhow::Result<Option<v1::ShimReport>> {
+        let blob: Option<Vec<u8>> = self
+            .conn
+            .query_row(
+                "SELECT report FROM shim_reports WHERE steam_id = ?1 AND app_id = ?2",
+                params![steam_id.0 as i64, app.0],
+                |r| r.get(0),
+            )
+            .optional()?;
+        blob.map(|b| ossteam_proto::Message::decode(b.as_slice()).context("decoding a shim report"))
+            .transpose()
+    }
+
+    pub fn set_shim_report(
+        &self,
+        steam_id: SteamId,
+        report: &v1::ShimReport,
+    ) -> anyhow::Result<()> {
+        self.conn.execute(
+            "INSERT OR REPLACE INTO shim_reports (steam_id, app_id, report) VALUES (?1, ?2, ?3)",
+            params![
+                steam_id.0 as i64,
+                report.app_id,
+                ossteam_proto::Message::encode_to_vec(report)
+            ],
+        )?;
+        Ok(())
+    }
+
     pub fn set_update_available(&self, app: AppId, available: bool) -> anyhow::Result<()> {
         self.conn.execute(
             "UPDATE installed_apps SET update_available = ?2 WHERE app_id = ?1",
@@ -776,6 +821,44 @@ mod tests {
             .pragma_query_value(None, "user_version", |r| r.get(0))
             .unwrap();
         assert_eq!(v, SCHEMA_VERSION);
+    }
+
+    #[test]
+    fn upgrades_a_version_6_database() {
+        let conn = Connection::open_in_memory().unwrap();
+        for schema in [
+            SCHEMA_V1, SCHEMA_V2, SCHEMA_V3, SCHEMA_V4, SCHEMA_V5, SCHEMA_V6,
+        ] {
+            conn.execute_batch(schema).unwrap();
+        }
+        conn.pragma_update(None, "user_version", 6).unwrap();
+        let db = Db::init(conn).unwrap();
+        assert!(db.jobs().unwrap().is_empty());
+    }
+
+    #[test]
+    fn shim_reports_are_kept_per_account_and_app() {
+        let db = Db::in_memory();
+        let (a, b) = (SteamId::individual(1), SteamId::individual(2));
+        let report = |app_id, count| v1::ShimReport {
+            app_id,
+            pid: 7,
+            launched: true,
+            interfaces: vec!["SteamUser023".into()],
+            unknown_versions: Vec::new(),
+            unimplemented: vec![v1::ShimCall {
+                interface: "SteamUser023".into(),
+                method: "GetVoice".into(),
+                count,
+            }],
+        };
+        assert_eq!(db.shim_report(a, AppId(480)).unwrap(), None);
+        db.set_shim_report(a, &report(480, 1)).unwrap();
+        db.set_shim_report(a, &report(480, 3)).unwrap();
+        db.set_shim_report(b, &report(480, 5)).unwrap();
+        assert_eq!(db.shim_report(a, AppId(480)).unwrap(), Some(report(480, 3)));
+        assert_eq!(db.shim_report(b, AppId(480)).unwrap(), Some(report(480, 5)));
+        assert_eq!(db.shim_report(a, AppId(10)).unwrap(), None);
     }
 
     #[test]

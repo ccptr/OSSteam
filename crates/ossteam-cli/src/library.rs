@@ -69,6 +69,9 @@ pub(crate) fn label(a: &AppSummary, nested: bool) -> String {
     if a.parent != 0 && !nested {
         let _ = write!(s, " (for app {})", a.parent);
     }
+    if a.update_available {
+        s.push_str(" (update available)");
+    }
     s
 }
 
@@ -267,6 +270,13 @@ fn info_text(r: &v1::GetAppResponse) -> String {
     if let Some(c) = &r.compat {
         compat_text(&mut out, c);
     }
+    if let Some(report) = &r.last_shim_report {
+        let _ = writeln!(out, "last run");
+        let text = crate::games::shim_report_text(report);
+        for line in text.lines() {
+            let _ = writeln!(out, "  {line}");
+        }
+    }
     out
 }
 
@@ -357,6 +367,7 @@ fn app_json(a: &AppSummary) -> Value {
         "parent": (a.parent != 0).then_some(a.parent),
         "has_info": a.has_info,
         "installed": a.installed,
+        "update_available": a.update_available,
         "dlc": a.dlc.iter().map(app_json).collect::<Vec<_>>(),
     })
 }
@@ -410,6 +421,7 @@ fn info_json(r: &v1::GetAppResponse) -> Value {
             "betakey": l.betakey,
         })).collect::<Vec<_>>(),
         "compat": r.compat.as_ref().map(compat_json),
+        "last_shim_report": r.last_shim_report.as_ref().map(crate::games::shim_report_json),
     })
 }
 
@@ -461,6 +473,7 @@ mod tests {
     #[test]
     fn listing_nests_dlc_and_marks_what_is_missing() {
         let mut game = app(480, "Spacewar", "Game");
+        game.update_available = true;
         game.dlc.push(AppSummary {
             parent: 480,
             ..app(110_902, "Spacewar Pack", "DLC")
@@ -477,7 +490,7 @@ mod tests {
         assert_eq!(
             text,
             "APP ID  NAME\n\
-             480     Spacewar\n\
+             480     Spacewar (update available)\n\
              110902    Spacewar Pack [DLC]\n\
              500     Orphan [DLC] (for app 999)\n\
              7       (app 7: info not available)\n"
@@ -515,6 +528,39 @@ mod tests {
         assert!(text.contains("  public        build 1234      updated 2023-11-14\n"));
         assert!(!text.contains("depots"));
         assert!(!text.contains("compatibility tool"));
+        assert!(!text.contains("last run"));
+    }
+
+    #[test]
+    fn info_shows_the_last_shim_report() {
+        let r = v1::GetAppResponse {
+            app: Some(app(480, "Spacewar", "Game")),
+            last_shim_report: Some(v1::ShimReport {
+                app_id: 480,
+                interfaces: vec!["SteamUser023".into()],
+                unimplemented: vec![v1::ShimCall {
+                    interface: "SteamUser023".into(),
+                    method: "GetVoice".into(),
+                    count: 2,
+                }],
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        let text = info_text(&r);
+        assert!(
+            text.ends_with(
+                "last run\n\
+                 \x20 the Steamworks library handed out 1 interface version\n\
+                 \x20 unimplemented calls (they returned failure values):\n\
+                 \x20          2  SteamUser023::GetVoice\n"
+            ),
+            "{text}"
+        );
+        assert_eq!(
+            info_json(&r)["last_shim_report"]["unimplemented"][0]["count"],
+            2
+        );
     }
 
     #[test]

@@ -18,16 +18,20 @@ use crate::pics::Snapshot;
 /// The language images are chosen in, until there is a language setting.
 const ASSET_LANGUAGE: &str = "english";
 
+/// Whether an app is installed: `None` when it is not, otherwise whether an
+/// update is known for it.
+pub type InstallState<'a> = &'a dyn Fn(AppId) -> Option<bool>;
+
 pub fn list_apps(
     snapshot: &Snapshot,
     req: &v1::ListAppsRequest,
-    is_installed: &dyn Fn(AppId) -> bool,
+    install_state: InstallState,
 ) -> v1::ListAppsResponse {
     let filter = req.filter.trim().to_lowercase();
     let matches = |a: &LibraryApp| {
         filter.is_empty() || a.name.to_lowercase().contains(&filter) || a.id.to_string() == filter
     };
-    let installed = |a: &LibraryApp| is_installed(a.id);
+    let installed = |a: &LibraryApp| install_state(a.id).is_some();
     let keep = |a: &LibraryApp| matches(a) && (!req.installed_only || installed(a));
 
     let apps = snapshot
@@ -44,9 +48,9 @@ pub fn list_apps(
                 } else {
                     a.dlc.iter().collect()
                 };
-                Some(summary(a, &all, is_installed))
+                Some(summary(a, &all, install_state))
             } else if !dlc.is_empty() {
-                Some(summary(a, &dlc, is_installed))
+                Some(summary(a, &dlc, install_state))
             } else {
                 None
             }
@@ -99,7 +103,7 @@ pub fn get_app(
     snapshot: &Snapshot,
     cache: &Cache,
     app_id: u32,
-    is_installed: &dyn Fn(AppId) -> bool,
+    install_state: InstallState,
 ) -> Result<v1::GetAppResponse, RemoteError> {
     let Some(app) = snapshot.library.find(AppId(app_id)) else {
         let mut message = format!("app {app_id} is not in the library");
@@ -112,7 +116,7 @@ pub fn get_app(
         app: Some(summary(
             app,
             &app.dlc.iter().collect::<Vec<_>>(),
-            is_installed,
+            install_state,
         )),
         ..Default::default()
     };
@@ -186,19 +190,17 @@ pub fn changed_apps(old: Option<&Snapshot>, new: Option<&Snapshot>) -> BTreeSet<
     added_or_changed.chain(removed).map(|(&id, _)| id).collect()
 }
 
-fn summary(
-    a: &LibraryApp,
-    dlc: &[&LibraryApp],
-    is_installed: &dyn Fn(AppId) -> bool,
-) -> v1::AppSummary {
+fn summary(a: &LibraryApp, dlc: &[&LibraryApp], install_state: InstallState) -> v1::AppSummary {
+    let state = install_state(a.id);
     v1::AppSummary {
         app_id: a.id.0,
         name: a.name.clone(),
         r#type: a.app_type.clone(),
         parent: a.parent.map_or(0, |p| p.0),
         has_info: a.has_info,
-        installed: is_installed(a.id),
-        dlc: dlc.iter().map(|d| summary(d, &[], is_installed)).collect(),
+        installed: state.is_some(),
+        dlc: dlc.iter().map(|d| summary(d, &[], install_state)).collect(),
+        update_available: state == Some(true),
     }
 }
 
@@ -256,7 +258,7 @@ mod tests {
                     filter: filter.into(),
                     installed_only: false,
                 },
-                &|_| false,
+                &|_| None,
             ))
         };
         assert_eq!(list(""), [(10, vec![11]), (20, vec![21, 22])]);
@@ -278,7 +280,7 @@ mod tests {
                     filter: String::new(),
                     installed_only: true,
                 },
-                &|a| installed.contains(&a.0),
+                &|a| installed.contains(&a.0).then_some(false),
             );
             assert!(r.complete);
             ids(&r)
@@ -293,10 +295,10 @@ mod tests {
     fn get_app_needs_the_app_in_the_library() {
         let s = snapshot(vec![app(10, "Game", vec![])]);
         let cache = Cache::new(std::env::temp_dir().join("ossteamd-no-such-cache"));
-        let e = get_app(&s, &cache, 99, &|_| false).unwrap_err();
+        let e = get_app(&s, &cache, 99, &|_| None).unwrap_err();
         assert_eq!(e.code, ErrorCode::NotFound);
         // Listed but not cached: the summary only.
-        let r = get_app(&s, &cache, 10, &|_| false).unwrap();
+        let r = get_app(&s, &cache, 10, &|_| None).unwrap();
         assert!(!r.app.unwrap().has_info);
     }
 

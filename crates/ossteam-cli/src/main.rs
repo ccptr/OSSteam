@@ -5,6 +5,7 @@
 mod config;
 mod content;
 mod events;
+mod games;
 mod library;
 mod session;
 
@@ -158,6 +159,31 @@ enum Command {
     Jobs {
         #[command(subcommand)]
         action: Option<JobsAction>,
+    },
+    /// Start an installed app.
+    Launch {
+        /// App id, or the exact name of an app in the library.
+        app: String,
+        /// The launch option's index, as `info` lists them. Asked for when
+        /// the app has several.
+        #[arg(long)]
+        option: Option<u32>,
+        /// Wait until the game has exited.
+        #[arg(long)]
+        wait: bool,
+        /// Launch even though an update is available.
+        #[arg(long)]
+        allow_stale: bool,
+        /// Arguments added to the launch option's own.
+        #[arg(last = true)]
+        args: Vec<String>,
+    },
+    /// List the games launched through ossteam that are running.
+    Running,
+    /// Ask a running game to close, and kill it if it does not.
+    Stop {
+        /// App id, or the exact name of an app in the library.
+        app: String,
     },
     /// Library folders, where apps are installed.
     Folders {
@@ -382,6 +408,15 @@ fn run(cli: &Cli) -> Result<(), Failure> {
             }
             JobsAction::Watch => events::follow(cli, &[events::TopicArg::Jobs]),
         },
+        Command::Launch {
+            app,
+            option,
+            wait,
+            allow_stale,
+            args,
+        } => games::launch(cli, app, *option, *wait, *allow_stale, args),
+        Command::Running => games::running(cli),
+        Command::Stop { app } => games::stop(cli, app),
         Command::Folders { action } => match action.as_ref().unwrap_or(&FoldersAction::List) {
             FoldersAction::List => content::list_folders(cli),
             FoldersAction::Add { path } => content::add_folder(cli, path),

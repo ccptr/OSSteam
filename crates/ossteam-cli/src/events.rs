@@ -140,6 +140,15 @@ fn to_json(ev: &Event) -> Value {
             "job_id": p.job_id,
             "progress": p.progress.as_ref().map(crate::content::progress_json),
         }),
+        Some(event::Kind::GameStarted(g)) => json!({
+            "event": "game_started",
+            "game": g.game.as_ref().map(crate::games::game_json),
+        }),
+        Some(event::Kind::GameExited(e)) => {
+            let mut v = crate::games::exited_json(e);
+            v["event"] = "game_exited".into();
+            v
+        }
         // An event kind newer than this client.
         None => json!({ "event": "unknown" }),
     }
@@ -213,6 +222,11 @@ fn to_text(ev: &Event) -> String {
                 .map(crate::content::progress_text)
                 .unwrap_or_default()
         ),
+        Some(event::Kind::GameStarted(g)) => match &g.game {
+            Some(g) => format!("game     app {} started (pid {})", g.app_id, g.pid),
+            None => "game     started".into(),
+        },
+        Some(event::Kind::GameExited(e)) => format!("game     {}", crate::games::exited_text(e)),
         None => "unknown event".into(),
     }
 }

@@ -8,6 +8,7 @@ members = [
     "crates/ossteam-auth",
     "crates/ossteam-pics",
     "crates/ossteam-content",
+    "crates/ossteam-launch",
     "crates/ossteam-ipc",
     "crates/ossteamd",
     "crates/ossteam-cli",
@@ -22,6 +23,7 @@ default-members = [
     "crates/ossteam-auth",
     "crates/ossteam-pics",
     "crates/ossteam-content",
+    "crates/ossteam-launch",
     "crates/ossteam-ipc",
     "crates/ossteamd",
     "crates/ossteam-cli",
@@ -42,6 +44,7 @@ ossteam-net = { path = "crates/ossteam-net" }
 ossteam-auth = { path = "crates/ossteam-auth" }
 ossteam-pics = { path = "crates/ossteam-pics" }
 ossteam-content = { path = "crates/ossteam-content" }
+ossteam-launch = { path = "crates/ossteam-launch" }
 ossteam-ipc = { path = "crates/ossteam-ipc" }
 
 aes = "0.8.4"
@@ -55,6 +58,7 @@ crossbeam-channel = "0.5.17"
 directories = "6.0.0"
 flate2 = "1.1.10"
 interprocess = "2.4.6"
+libc = "0.2.191"
 lzma-rs = "0.3.0"
 polling = "3.11.0"
 prost = "0.14.4"

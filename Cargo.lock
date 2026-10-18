@@ -4225,6 +4225,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "ossteam-launch"
+version = "0.1.0"
+dependencies = [
+ "libc",
+ "ossteam-types",
+ "ossteam-vdf",
+ "rustix",
+ "thiserror 2.0.21",
+ "tracing",
+ "windows-sys 0.61.2",
+]
+
+[[package]]
 name = "ossteam-net"
 version = "0.1.0"
 dependencies = [
@@ -4301,6 +4314,7 @@ dependencies = [
  "ossteam-auth",
  "ossteam-content",
  "ossteam-ipc",
+ "ossteam-launch",
  "ossteam-net",
  "ossteam-pics",
  "ossteam-proto",

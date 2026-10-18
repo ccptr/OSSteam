@@ -111,7 +111,7 @@ is left unchanged. Events always have `id = 0`.
 | `SESSION` | `SessionChanged`, `LoginPrompt`, `LoginEnded` (§5.2) |
 | `LIBRARY` | `AppChanged{app_ids, complete}` (§5.3) |
 | `JOBS` | `JobStateChanged{job}`, `JobProgress{job_id, progress}` (§5.6) |
-| `GAMES` | Subscribable now; its events arrive with M1c |
+| `GAMES` | `GameStarted{game}`, `GameExited{app_id, exit_code \| signal, seconds}` (§5.7) |
 
 ## 5. Methods
 
@@ -119,9 +119,9 @@ is left unchanged. Events always have `id = 0`.
 
 | Method | Behaviour |
 |---|---|
-| `GetStatus` | Daemon version, pid, uptime, the session (§5.2: connection state, active account, `logged_on`, `session_reason`), connected clients, active jobs, running games. Jobs and games are 0 until M1b and M1c add them, which is the true state. |
+| `GetStatus` | Daemon version, pid, uptime, the session (§5.2: connection state, active account, `logged_on`, `session_reason`), connected clients, active jobs, and the games the daemon launched that are running. |
 | `GetVersion` | Daemon version, protocol version, and the OS and architecture the daemon was built for. |
-| `Shutdown{force}` | Replies, then shuts down (§6). Once games can run (M1c), a request without `force` is refused with `CONFLICT` while any game the daemon launched is running (D-5). |
+| `Shutdown{force}` | Replies, then shuts down (§6). A request without `force` is refused with `CONFLICT` while any game the daemon launched is running (D-5). With `force`, the games keep running. |
 | `Subscribe`, `Unsubscribe` | See §4. |
 
 ### 5.2 Session
@@ -147,9 +147,9 @@ between connecting and the logon answer.
 | `LoginWithQr{remember}` | Starts a QR login (`auth.md` §3). |
 | `SubmitGuardCode{code, kind}` | Answers an `EMAIL_CODE` or `DEVICE_CODE` prompt. `kind` may be left unspecified when the login offers one kind of code. A rejected code fails with `NOT_LOGGED_IN`; the login stays open for another try. Without a login waiting, `CONFLICT`. |
 | `CancelLogin` | Ends the login in progress, if any, and succeeds either way. |
-| `Logout` | Logs the active account off and deletes its stored token. `NOT_LOGGED_IN` when there is no active account. |
+| `Logout` | Logs the active account off and deletes its stored token. `NOT_LOGGED_IN` when there is no active account; `CONFLICT` while a game the daemon launched runs. |
 | `ListAccounts` | The remembered accounts (those with a stored token) and the active account's Steam id, or 0. |
-| `SwitchAccount{steam_id}` | Logs off the active account and logs on as a remembered one (`auth.md` §6). Replies once that logon has succeeded or failed. `NOT_FOUND` for an account that is not remembered. |
+| `SwitchAccount{steam_id}` | Logs off the active account and logs on as a remembered one (`auth.md` §6). Replies once that logon has succeeded or failed. `NOT_FOUND` for an account that is not remembered; `CONFLICT` while a game the daemon launched runs. |
 | `SetPersonaState{state}` | Stores `ONLINE`, `INVISIBLE` or `OFFLINE` for the active account and sends it to Steam if the account is logged on; it is sent again after every logon (`pics.md` §8). Replies at once, then `SessionChanged` carries the new state. `NOT_LOGGED_IN` without an active account. |
 
 **Login flow.** A client subscribes to `SESSION` first, then starts a
@@ -295,6 +295,13 @@ Events on `JOBS`:
   or error changes;
 - `JobProgress{job_id, progress}` while a job runs, at most ten times a
   second for each job.
+
+### 5.7 Games
+
+Launching is specified in `launch.md`; §8 there lists the methods
+(`GetLaunchOptions`, `Launch`, `ListRunning`, `StopGame`), the running
+game they return and the events on `GAMES`. `GetApp` lists the same
+launch options without `qualifies`.
 
 ## 6. Daemon lifecycle
 

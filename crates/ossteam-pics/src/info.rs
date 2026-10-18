@@ -129,19 +129,6 @@ pub struct AppInfo<'a>(pub &'a Object);
 pub struct PackageInfo<'a>(pub &'a Object);
 
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
-pub struct LaunchOption {
-    /// The key under `config/launch`.
-    pub index: u32,
-    pub executable: String,
-    pub arguments: String,
-    pub description: String,
-    pub kind: String,
-    pub oslist: Vec<String>,
-    pub osarch: String,
-    pub betakey: String,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct Depot {
     pub id: DepotId,
     pub name: String,
@@ -288,30 +275,6 @@ impl AppInfo<'_> {
         str_at(self.0, &["config", "installdir"])
     }
 
-    pub fn launch_options(&self) -> Vec<LaunchOption> {
-        let Some(launch) = self
-            .0
-            .get_path(&["config", "launch"])
-            .and_then(Value::as_object)
-        else {
-            return Vec::new();
-        };
-        launch
-            .iter()
-            .filter_map(|(k, v)| Some((k.parse().ok()?, v.as_object()?)))
-            .map(|(index, o)| LaunchOption {
-                index,
-                executable: str_at(o, &["executable"]).into(),
-                arguments: str_at(o, &["arguments"]).into(),
-                description: str_at(o, &["description"]).into(),
-                kind: str_at(o, &["type"]).into(),
-                oslist: split_list(str_at(o, &["config", "oslist"])),
-                osarch: str_at(o, &["config", "osarch"]).into(),
-                betakey: str_at(o, &["config", "betakey"]).into(),
-            })
-            .collect()
-    }
-
     /// The depots, in the order the info lists them. Other keys under
     /// `depots`, such as `branches`, are not depots and are skipped.
     pub fn depots(&self) -> Vec<Depot> {
@@ -456,10 +419,6 @@ mod tests {
         assert_eq!(a.oslist(), ["windows", "linux"]);
         assert_eq!(a.dlc(), [AppId(110902), AppId(110903)]);
         assert_eq!(a.install_dir(), "Spacewar");
-        let l = a.launch_options();
-        assert_eq!(l.len(), 1);
-        assert_eq!(l[0].executable, "SteamworksExample.exe");
-        assert_eq!(l[0].oslist, ["windows"]);
         let d = a.depots();
         assert_eq!(d.len(), 2);
         assert_eq!(d[0].max_size, Some(1_048_576));

@@ -157,20 +157,8 @@ pub fn get_app(
             time_updated: b.time_updated.unwrap_or(0),
         })
         .collect();
-    r.launch_options = a
-        .launch_options()
-        .into_iter()
-        .map(|l| v1::LaunchOption {
-            index: l.index,
-            executable: l.executable,
-            arguments: l.arguments,
-            description: l.description,
-            r#type: l.kind,
-            oslist: l.oslist,
-            osarch: l.osarch,
-            betakey: l.betakey,
-        })
-        .collect();
+    // Launch options are read by ossteam-launch (`launch.md` §1).
+    r.launch_options = crate::core::app_launch_options(a.0, "");
     Ok(r)
 }
 

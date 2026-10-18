@@ -20,9 +20,12 @@ use ossteam_types::{Secret, SteamId};
 use crate::config::{self, Config};
 use crate::db::{Db, PersonaState};
 use crate::session::{self, Cmd, ReplyTo, Report};
-use crate::{assets, content, library, pics};
+use crate::{assets, content, launch, library, pics};
 
+mod games;
 mod jobs;
+
+pub use games::app_launch_options;
 
 pub type ClientId = u64;
 
@@ -60,6 +63,8 @@ pub enum Command {
     Asset(assets::Done),
     /// From a content job.
     Content(content::Report),
+    /// From a game's supervisor thread.
+    Game(launch::Exited),
 }
 
 /// Why the core loop ended.
@@ -105,6 +110,8 @@ pub struct Core {
     content: jobs::Content,
     /// The running jobs' threads.
     content_jobs: content::Handle,
+    /// Running games and the discovery entries.
+    games: games::Games,
 }
 
 /// What a `Core` is made of.
@@ -119,6 +126,11 @@ pub struct Parts {
     pub content_jobs: content::Handle,
     /// `<data>/library`.
     pub default_folder: PathBuf,
+    pub launch: launch::Settings,
+    pub data_dir: PathBuf,
+    pub state_dir: PathBuf,
+    /// The core's own command channel, for game supervisors.
+    pub commands: Sender<Command>,
 }
 
 impl Core {
@@ -143,11 +155,13 @@ impl Core {
                 ..Default::default()
             },
             content_jobs: p.content_jobs,
+            games: games::Games::new(p.launch, &p.data_dir, &p.state_dir, p.commands),
         }
         .loaded()
     }
 
     fn loaded(mut self) -> Self {
+        self.clean_discovery();
         if let Err(e) = self.load_content() {
             tracing::error!("reading folders, installs and jobs: {e:#}");
         }
@@ -209,6 +223,7 @@ impl Core {
                 Command::Pics(update) => self.on_library(update),
                 Command::Asset(done) => self.on_asset(done),
                 Command::Content(report) => self.on_content(report),
+                Command::Game(exited) => self.on_game(exited),
             }
         };
         // Running jobs stop first and keep their journals (`content.md`
@@ -220,6 +235,9 @@ impl Core {
         // Reports sent meanwhile are not needed any more. With the
         // connection closed, PICS requests in flight fail at once.
         self.session.shutdown();
+        // Running games keep going (SPEC D-5), but no client is here for
+        // them any more.
+        self.remove_discovery();
         self.pics.shutdown();
         self.assets.shutdown();
         self.broadcast(
@@ -252,12 +270,16 @@ impl Core {
                 })))
             }
             request::Method::Shutdown(req) => {
-                // No game can be running yet: launching arrives in M1c. When
-                // it does, a non-forced shutdown with running games returns
-                // Conflict here (SPEC D-5).
                 tracing::info!(client = to.client, force = req.force, "shutdown requested");
-                stop = true;
-                Some(Ok(response::Result::Shutdown(v1::ShutdownResponse {})))
+                if self.games_running() && !req.force {
+                    Some(Err(RemoteError::new(
+                        ErrorCode::Conflict,
+                        "games launched by the daemon are running; stop them, or force the shutdown",
+                    )))
+                } else {
+                    stop = true;
+                    Some(Ok(response::Result::Shutdown(v1::ShutdownResponse {})))
+                }
             }
             request::Method::Subscribe(req) => Some(
                 self.change_topics(to.client, &req.topics, true)
@@ -320,11 +342,15 @@ impl Core {
                 self.session.cancel_login(Some(to));
                 None
             }
+            request::Method::Logout(_) if self.games_running() => Some(Err(games_block("log out"))),
             request::Method::Logout(_) => {
                 self.session.send(Cmd::Logout { reply: to });
                 None
             }
             request::Method::ListAccounts(_) => Some(self.list_accounts()),
+            request::Method::SwitchAccount(_) if self.games_running() => {
+                Some(Err(games_block("switch accounts")))
+            }
             request::Method::SwitchAccount(req) => match self.db.account(SteamId(req.steam_id)) {
                 Ok(Some(account)) => {
                     self.session.send(Cmd::SwitchAccount { reply: to, account });
@@ -367,6 +393,10 @@ impl Core {
             request::Method::ResumeJob(req) => Some(self.resume_job(req.job_id)),
             request::Method::CancelJob(req) => Some(self.cancel_job(req.job_id)),
             request::Method::SetJobPriority(req) => Some(self.set_job_priority(&req)),
+            request::Method::GetLaunchOptions(req) => Some(self.get_launch_options(&req)),
+            request::Method::Launch(req) => Some(self.launch(&req)),
+            request::Method::ListRunning(_) => Some(Ok(self.list_running())),
+            request::Method::StopGame(req) => Some(self.stop_game(&req)),
         };
         if let Some(result) = outcome {
             self.reply(to, result);
@@ -400,6 +430,7 @@ impl Core {
                     tracing::debug!(?state, "session changed");
                     let logged_on = state.logged_on;
                     self.session_state = state;
+                    self.sync_discovery();
                     self.broadcast_session();
                     if logged_on {
                         self.schedule();
@@ -414,6 +445,10 @@ impl Core {
                 requester,
             } => {
                 self.set_requester(Some(requester));
+                // The server forgot the play session with the connection.
+                if self.games_running() {
+                    self.send_games_played();
+                }
                 self.db.persona_state(steam_id).map(|state| {
                     self.session.send(Cmd::SetPersonaState { steam_id, state });
                 })
@@ -646,7 +681,7 @@ impl Core {
             account: s.account.clone(),
             connected_clients: self.clients.len() as u32,
             active_jobs: self.running_jobs(),
-            running_games: 0,
+            running_games: self.running_games(),
             logged_on: s.logged_on,
             session_reason: s.reason.clone(),
             persona_state: self.persona_state() as i32,
@@ -750,6 +785,14 @@ fn asset_missing(asset: &assets::Asset) -> RemoteError {
     RemoteError::new(
         ErrorCode::NotFound,
         format!("Steam has no image at {}", asset.url),
+    )
+}
+
+/// Refuses what would take the account away from running games.
+fn games_block(what: &str) -> RemoteError {
+    RemoteError::new(
+        ErrorCode::Conflict,
+        format!("games are running on this account; stop them before you {what}"),
     )
 }
 

@@ -107,6 +107,10 @@ message Request {
     ResumeJobRequest resume_job = 28;
     CancelJobRequest cancel_job = 29;
     SetJobPriorityRequest set_job_priority = 30;
+    GetLaunchOptionsRequest get_launch_options = 31;
+    LaunchRequest launch = 32;
+    ListRunningRequest list_running = 33;
+    StopGameRequest stop_game = 34;
   }
 }
 
@@ -142,6 +146,10 @@ message Response {
     JobResponse resume_job = 28;
     JobResponse cancel_job = 29;
     JobResponse set_job_priority = 30;
+    GetLaunchOptionsResponse get_launch_options = 31;
+    LaunchResponse launch = 32;
+    ListRunningResponse list_running = 33;
+    StopGameResponse stop_game = 34;
   }
 }
 
@@ -352,16 +360,25 @@ message Branch {
   uint64 time_updated = 5;
 }
 
+// A launch option from the app's info (docs/spec/launch.md §1).
 message LaunchOption {
   // The key under config/launch.
   uint32 index = 1;
   string executable = 2;
   string arguments = 3;
+  // In the content language when the info translates it.
   string description = 4;
   string type = 5;
   repeated string oslist = 6;
   string osarch = 7;
   string betakey = 8;
+  string working_dir = 9;
+  // DLC the account must own.
+  repeated uint32 owns_dlc = 10;
+  string realm = 11;
+  // Set by GetLaunchOptions only: the option can be launched on this OS,
+  // branch and account.
+  bool qualifies = 12;
 }
 
 message GetAppResponse {
@@ -678,6 +695,8 @@ message Event {
     SettingChanged setting_changed = 7;
     JobStateChanged job_state_changed = 8;
     JobProgress job_progress = 9;
+    GameStarted game_started = 10;
+    GameExited game_exited = 11;
   }
 }
 
@@ -746,4 +765,73 @@ message JobStateChanged {
 message JobProgress {
   uint64 job_id = 1;
   JobProgressInfo progress = 2;
+}
+
+// docs/spec/launch.md §8.
+message GetLaunchOptionsRequest {
+  uint32 app_id = 1;
+}
+
+message GetLaunchOptionsResponse {
+  // Every option in the app's info, in index order, with `qualifies` set.
+  repeated LaunchOption options = 1;
+  // Exactly one option qualifies, so Launch needs no index.
+  bool single = 2;
+}
+
+message LaunchRequest {
+  uint32 app_id = 1;
+  // The option's index. Unset launches the only option that qualifies.
+  optional uint32 option = 2;
+  // Appended to the option's arguments, each as one argument.
+  repeated string extra_args = 3;
+  // Launch even when an update is known.
+  bool allow_stale = 4;
+}
+
+message RunningGame {
+  uint32 app_id = 1;
+  // The launch option's index.
+  uint32 option = 2;
+  // The process the daemon started: the reaper on Linux.
+  uint32 pid = 3;
+  // Unix time.
+  uint64 started = 4;
+  // Where the game's standard output and error go.
+  string log = 5;
+}
+
+message LaunchResponse {
+  RunningGame game = 1;
+}
+
+message ListRunningRequest {}
+
+message ListRunningResponse {
+  repeated RunningGame games = 1;
+}
+
+message StopGameRequest {
+  uint32 app_id = 1;
+}
+
+message StopGameResponse {}
+
+// Topic: GAMES. A game's process was created.
+message GameStarted {
+  RunningGame game = 1;
+}
+
+// Topic: GAMES. The last process of a game is gone.
+message GameExited {
+  uint32 app_id = 1;
+  oneof status {
+    // The exit code of the process the daemon started. On Windows, the
+    // 32-bit exit code.
+    int64 exit_code = 2;
+    // The signal that ended it (Unix).
+    int32 signal = 3;
+  }
+  // How long the game ran.
+  uint64 seconds = 4;
 }

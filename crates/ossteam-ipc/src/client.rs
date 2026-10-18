@@ -595,6 +595,64 @@ impl Client {
     }
 }
 
+impl Client {
+    /// The app's launch options, each marked with whether it can be
+    /// launched here (`launch.md` §8).
+    pub fn get_launch_options(
+        &self,
+        app_id: u32,
+    ) -> Result<v1::GetLaunchOptionsResponse, ClientError> {
+        let req = v1::GetLaunchOptionsRequest { app_id };
+        match self.call(request::Method::GetLaunchOptions(req), DEFAULT_TIMEOUT)? {
+            response::Result::GetLaunchOptions(r) => Ok(r),
+            other => Err(unexpected(other)),
+        }
+    }
+
+    /// Launches an installed app. `option` `None` launches the only option
+    /// that qualifies.
+    pub fn launch(
+        &self,
+        app_id: u32,
+        option: Option<u32>,
+        extra_args: &[String],
+        allow_stale: bool,
+    ) -> Result<v1::RunningGame, ClientError> {
+        let req = v1::LaunchRequest {
+            app_id,
+            option,
+            extra_args: extra_args.to_vec(),
+            allow_stale,
+        };
+        match self.call(request::Method::Launch(req), DEFAULT_TIMEOUT)? {
+            response::Result::Launch(r) => r.game.ok_or_else(|| {
+                ClientError::Protocol("a launch was answered without a game".into())
+            }),
+            other => Err(unexpected(other)),
+        }
+    }
+
+    /// The games the daemon launched that are running.
+    pub fn list_running(&self) -> Result<Vec<v1::RunningGame>, ClientError> {
+        match self.call(
+            request::Method::ListRunning(v1::ListRunningRequest {}),
+            DEFAULT_TIMEOUT,
+        )? {
+            response::Result::ListRunning(r) => Ok(r.games),
+            other => Err(unexpected(other)),
+        }
+    }
+
+    /// Asks a running game to close; `GameExited` follows when it has.
+    pub fn stop_game(&self, app_id: u32) -> Result<(), ClientError> {
+        let req = v1::StopGameRequest { app_id };
+        match self.call(request::Method::StopGame(req), DEFAULT_TIMEOUT)? {
+            response::Result::StopGame(_) => Ok(()),
+            other => Err(unexpected(other)),
+        }
+    }
+}
+
 fn job(r: v1::JobResponse) -> Result<v1::Job, ClientError> {
     r.job
         .ok_or_else(|| ClientError::Protocol("a job request was answered without a job".into()))

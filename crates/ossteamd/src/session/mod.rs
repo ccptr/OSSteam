@@ -88,6 +88,12 @@ pub enum Cmd {
     },
     /// `secrets.file_fallback` changed (SPEC D-8).
     SetFileFallback(bool),
+    /// Tells Steam which games the account plays, if it is logged on
+    /// (`launch.md` §6). The core sends it again after every logon.
+    GamesPlayed {
+        steam_id: SteamId,
+        body: ossteam_proto::steam::CMsgClientGamesPlayed,
+    },
 }
 
 /// What the worker tells the core.

@@ -25,12 +25,12 @@ const DLC: u32 = 102;
 /// PICS polling for these tests: updates are found by a PICS change.
 const POLL: Duration = Duration::from_millis(200);
 
-fn key(depot: u32) -> DepotKey {
+pub(super) fn key(depot: u32) -> DepotKey {
     DepotKey::new(&[depot as u8; 32]).expect("32 bytes")
 }
 
 /// Bytes that differ from chunk to chunk, so no two chunks share an id.
-fn data(seed: u8, len: usize) -> Vec<u8> {
+pub(super) fn data(seed: u8, len: usize) -> Vec<u8> {
     let mut x = u32::from(seed).wrapping_mul(2_654_435_761) | 1;
     (0..len)
         .map(|_| {
@@ -42,7 +42,7 @@ fn data(seed: u8, len: usize) -> Vec<u8> {
         .collect()
 }
 
-fn depot(id: u32, manifest: u64, files: &[(&str, &[u8])]) -> Depot {
+pub(super) fn depot(id: u32, manifest: u64, files: &[(&str, &[u8])]) -> Depot {
     let entries: Vec<Entry<'_>> = files
         .iter()
         .map(|&(name, data)| Entry::File {
@@ -55,7 +55,7 @@ fn depot(id: u32, manifest: u64, files: &[(&str, &[u8])]) -> Depot {
 }
 
 /// The inner object of `"x" { <body> }`.
-fn section(body: &str) -> Object {
+pub(super) fn section(body: &str) -> Object {
     let o = ossteam_vdf::text::parse(&format!("\"x\" {{ {body} }}")).expect("valid KeyValues");
     o.get_object("x").expect("the section").clone()
 }
@@ -80,7 +80,7 @@ fn steam(cdn: &Arc<FakeCdn>) -> FakeCm {
     cm
 }
 
-fn login(d: &TestDaemon) {
+pub(super) fn login(d: &TestDaemon) {
     let c = d.subscribed(&[Topic::Session]);
     c.login_with_credentials("alice", &Secret::new("alice-password".into()), true)
         .expect("the login starts");
@@ -111,12 +111,12 @@ fn ended(c: &Client, job_id: u64) -> v1::Job {
     })
 }
 
-fn done(c: &Client, job: v1::Job) {
+pub(super) fn done(c: &Client, job: v1::Job) {
     let j = ended(c, job.job_id);
     assert_eq!(j.state(), JobState::Done, "the job failed: {:?}", j.error);
 }
 
-fn installed(c: &Client, app: u32) -> Option<v1::InstalledApp> {
+pub(super) fn installed(c: &Client, app: u32) -> Option<v1::InstalledApp> {
     c.get_app(app).expect("get app").installed
 }
 

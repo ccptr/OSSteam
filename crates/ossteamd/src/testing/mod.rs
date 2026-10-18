@@ -12,6 +12,7 @@ mod fake_cm;
 mod loopback;
 mod m1a;
 mod m1b;
+mod m1c;
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -53,6 +54,45 @@ impl Root {
     /// The token file the test daemon uses in place of the OS keyring.
     pub fn secrets_file(&self) -> PathBuf {
         self.0.join("data").join(FALLBACK_FILE)
+    }
+
+    /// Where the test daemon looks for its client libraries; empty until
+    /// [`Self::install_client_libraries`].
+    pub fn library_dir(&self) -> PathBuf {
+        self.0.join("bin")
+    }
+
+    /// Puts stand-ins for the client libraries where the daemon looks
+    /// (`steamworks-abi.md` §1.3). They are never loaded.
+    // Used by the launch tests, which run on Linux only.
+    #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+    pub fn install_client_libraries(&self) {
+        let dir = self.library_dir();
+        let name = if cfg!(windows) {
+            "ossteam_steamclient.dll"
+        } else {
+            "libossteam_steamclient.so"
+        };
+        std::fs::create_dir_all(dir.join("lib32")).expect("create the library directory");
+        std::fs::write(dir.join(name), b"64").expect("write the 64-bit stand-in");
+        std::fs::write(dir.join("lib32").join(name), b"32").expect("write the 32-bit stand-in");
+    }
+
+    /// A stand-in for `ossteamd --reaper` (FAITH-4): it drops
+    /// `--reaper AppId=<id> --`, runs the rest as its child and exits with
+    /// its status. Staying the parent matters: `StopGame` signals the
+    /// reaper's descendants, not the reaper. The real reaper is tested in
+    /// `tests/reaper.rs` against the built daemon.
+    fn reaper(&self) -> PathBuf {
+        let path = self.0.join("reaper.sh");
+        #[cfg(unix)]
+        if !path.exists() {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::write(&path, "#!/bin/sh\nshift 3\n\"$@\"\n").expect("write the reaper");
+            std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755))
+                .expect("make the reaper executable");
+        }
+        path
     }
 
     fn endpoint(&self) -> Endpoint {
@@ -144,6 +184,11 @@ impl TestDaemon {
             .ensure_dir()
             .expect("prepare the endpoint directory");
         let listener = endpoint.listen().expect("listen");
+        let launch = crate::launch::Settings {
+            home: r.join("home"),
+            library_dir: Some(root.library_dir()),
+            reaper: root.reaper(),
+        };
         let env = Env {
             paths,
             listener,
@@ -153,6 +198,7 @@ impl TestDaemon {
             pics_poll,
             content_fetch: cdn.map(|c| c as Arc<dyn ossteam_content::cdn::Fetch>),
             scripts,
+            launch,
         };
         let thread = std::thread::Builder::new()
             .name("test-daemon".into())
@@ -196,8 +242,18 @@ impl TestDaemon {
                 name: "it-stop".into(),
                 version: "0".into(),
             },
-        ) {
-            let _ = c.shutdown(false);
+        ) && c.shutdown(false).is_err()
+        {
+            // Refused because games run, as a failed test may leave them:
+            // they are stopped, so that none outlives the test.
+            for g in c.list_running().unwrap_or_default() {
+                let _ = c.stop_game(g.app_id);
+            }
+            let deadline = Instant::now() + WAIT;
+            while Instant::now() < deadline && c.list_running().is_ok_and(|g| !g.is_empty()) {
+                std::thread::sleep(Duration::from_millis(50));
+            }
+            let _ = c.shutdown(true);
         }
         let _ = thread.join();
     }

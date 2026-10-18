@@ -15,7 +15,9 @@ use ossteam_ipc::RemoteError;
 use ossteam_ipc::v1::{self, ConnectionState, ErrorCode, LoginPromptKind, response};
 use ossteam_net::directory::jitter;
 use ossteam_net::{CallError, Connection, Incoming, Packet, SessionIds};
-use ossteam_proto::steam::{CMsgClientAccountInfo, CMsgClientChangeStatus, EMsg};
+use ossteam_proto::steam::{
+    CMsgClientAccountInfo, CMsgClientChangeStatus, CMsgClientGamesPlayed, EMsg,
+};
 use ossteam_types::{CancelToken, EResult, Secret, SteamId};
 
 use super::{Cmd, Dialer, NoServer, ReplyTo, Report, Settings, State};
@@ -342,6 +344,7 @@ impl Worker {
             Cmd::Logout { reply } => self.logout(reply),
             Cmd::SwitchAccount { reply, account } => self.switch(reply, account),
             Cmd::SetPersonaState { steam_id, state } => self.set_persona_state(steam_id, state),
+            Cmd::GamesPlayed { steam_id, body } => self.games_played(steam_id, &body),
             Cmd::SetFileFallback(on) => {
                 if self.settings.file_fallback != on {
                     tracing::info!(on, "secrets.file_fallback changed; reopening token storage");
@@ -786,6 +789,25 @@ impl Worker {
         {
             Ok(()) => tracing::info!(?state, "persona state sent"),
             Err(e) => tracing::info!("could not send the persona state: {e}"),
+        }
+    }
+
+    /// Sends the play session (`launch.md` §6). Like the persona state,
+    /// it is sent again after every logon, so a failed send is not retried.
+    fn games_played(&self, steam_id: SteamId, body: &CMsgClientGamesPlayed) {
+        let (Some(live), Some(active)) = (&self.live, &self.active) else {
+            return;
+        };
+        if !self.logged_on || active.steam_id != steam_id {
+            return;
+        }
+        let apps: Vec<u64> = body.games_played.iter().filter_map(|g| g.game_id).collect();
+        match live.conn.send(Packet::proto(
+            EMsg::KEMsgClientGamesPlayedWithDataBlob,
+            body,
+        )) {
+            Ok(()) => tracing::info!(?apps, "play session sent"),
+            Err(e) => tracing::info!("could not send the play session: {e}"),
         }
     }
 

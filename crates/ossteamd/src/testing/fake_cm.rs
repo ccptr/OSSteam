@@ -2,10 +2,11 @@
 //! A fake CM for the daemon integration tests (SPEC §19.1 level 3). Test
 //! code only (FAITH-4).
 //!
-//! It answers the messages M1a and M1b send, as `cm.md`, `auth.md`,
-//! `pics.md` and `content.md` describe them: the sign-in service methods,
-//! logon and logoff, the license list, PICS, persona state, depot keys,
-//! manifest request codes, the content server list and CDN auth tokens. It checks what the daemon sends
+//! It answers the messages M1a to M1c send, as `cm.md`, `auth.md`,
+//! `pics.md`, `content.md` and `launch.md` describe them: the sign-in
+//! service methods, logon and logoff, the license list, PICS, persona
+//! state, depot keys, manifest request codes, the content server list, CDN
+//! auth tokens and play sessions. It checks what the daemon sends
 //! (the password is decrypted, codes and tokens are compared) so a test
 //! fails when the daemon gets the protocol wrong. Where those pages mark a
 //! server behaviour as unverified, the fake picks one reading; the
@@ -36,13 +37,13 @@ use ossteam_proto::steam::{
     CContentServerDirectoryGetManifestRequestCodeResponse,
     CContentServerDirectoryGetServersForSteamPipeRequest,
     CContentServerDirectoryGetServersForSteamPipeResponse, CContentServerDirectoryServerInfo,
-    CMsgClientAccountInfo, CMsgClientChangeStatus, CMsgClientGetDepotDecryptionKey,
-    CMsgClientGetDepotDecryptionKeyResponse, CMsgClientLicenseList, CMsgClientLoggedOff,
-    CMsgClientLogon, CMsgClientLogonResponse, CMsgClientPicsAccessTokenRequest,
-    CMsgClientPicsAccessTokenResponse, CMsgClientPicsChangesSinceRequest,
-    CMsgClientPicsChangesSinceResponse, CMsgClientPicsProductInfoRequest,
-    CMsgClientPicsProductInfoResponse, EAuthSessionGuardType, EMsg, authentication,
-    c_msg_client_license_list, c_msg_client_pics_access_token_response,
+    CMsgClientAccountInfo, CMsgClientChangeStatus, CMsgClientGamesPlayed,
+    CMsgClientGetDepotDecryptionKey, CMsgClientGetDepotDecryptionKeyResponse,
+    CMsgClientLicenseList, CMsgClientLoggedOff, CMsgClientLogon, CMsgClientLogonResponse,
+    CMsgClientPicsAccessTokenRequest, CMsgClientPicsAccessTokenResponse,
+    CMsgClientPicsChangesSinceRequest, CMsgClientPicsChangesSinceResponse,
+    CMsgClientPicsProductInfoRequest, CMsgClientPicsProductInfoResponse, EAuthSessionGuardType,
+    EMsg, authentication, c_msg_client_license_list, c_msg_client_pics_access_token_response,
     c_msg_client_pics_changes_since_response, c_msg_client_pics_product_info_response,
     content_server_directory as csd,
 };
@@ -148,6 +149,8 @@ struct State {
     logons: Vec<String>,
     /// `ClientChangeStatus` persona states, in arrival order.
     persona_states: Vec<(SteamId, u32)>,
+    /// `ClientGamesPlayedWithDataBlob` messages, in arrival order.
+    games_played: Vec<(SteamId, CMsgClientGamesPlayed)>,
     /// Asks every live connection to drop.
     generation: u64,
     /// Depot keys Steam grants.
@@ -375,6 +378,13 @@ impl FakeView<'_> {
     pub fn persona_states(&self) -> &[(SteamId, u32)] {
         &self.0.persona_states
     }
+
+    /// The play sessions the daemon reported, in arrival order.
+    // Used by the launch tests, which run on Linux only.
+    #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+    pub fn games_played(&self) -> &[(SteamId, CMsgClientGamesPlayed)] {
+        &self.0.games_played
+    }
 }
 
 #[derive(Default)]
@@ -441,6 +451,12 @@ impl FakeCm {
                 self.state()
                     .persona_states
                     .push((steam_id, body.persona_state()));
+                Vec::new()
+            }
+            EMsg::KEMsgClientGamesPlayedWithDataBlob => {
+                let steam_id = conn.logged_on.expect("play session before logon");
+                let body: CMsgClientGamesPlayed = decode(p);
+                self.state().games_played.push((steam_id, body));
                 Vec::new()
             }
             EMsg::KEMsgClientPicsChangesSinceRequest => vec![self.changes_since(p)],

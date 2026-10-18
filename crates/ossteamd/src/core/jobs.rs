@@ -330,7 +330,7 @@ impl Core {
         );
     }
 
-    fn unfinished_job(&self, app: AppId) -> Option<u64> {
+    pub(super) fn unfinished_job(&self, app: AppId) -> Option<u64> {
         self.content
             .jobs
             .values()
@@ -375,7 +375,7 @@ impl Core {
         Ok(job)
     }
 
-    fn app_info(&self, app: AppId) -> Option<Object> {
+    pub(super) fn app_info(&self, app: AppId) -> Option<Object> {
         self.pics_cache.load(CacheKind::App, app.0).map(|i| i.data)
     }
 

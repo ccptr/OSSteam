@@ -6,6 +6,7 @@ mod config;
 mod content;
 mod core;
 mod db;
+mod launch;
 mod library;
 mod logging;
 mod paths;
@@ -53,6 +54,15 @@ struct Args {
 }
 
 fn main() -> ExitCode {
+    // The reaper's arguments end in the game's command line, which clap
+    // must not see (`launch.md` §4).
+    #[cfg(target_os = "linux")]
+    {
+        let raw: Vec<std::ffi::OsString> = std::env::args_os().collect();
+        if raw.get(1).is_some_and(|a| a == "--reaper") {
+            ossteam_launch::process::reaper_main(&raw[2..]);
+        }
+    }
     let args = Args::parse();
     if let Some(request) = &args.script_helper {
         return match content::script::helper_main(request) {
@@ -139,6 +149,7 @@ fn run(args: &Args) -> anyhow::Result<ExitCode> {
             pics_poll: pics::POLL_INTERVAL,
             content_fetch: None,
             scripts: content::script::system(),
+            launch: launch::Settings::resolve().context("resolving the home directory")?,
         },
         |cmd_tx| {
             let signal_tx = cmd_tx.clone();
@@ -164,6 +175,7 @@ struct Env {
     content_fetch: Option<std::sync::Arc<dyn ossteam_content::cdn::Fetch>>,
     /// What install scripts act on (`install-scripts.md`).
     scripts: Option<std::sync::Arc<dyn content::script::System>>,
+    launch: launch::Settings,
 }
 
 /// Starts the workers and the IPC server and runs the core until it stops
@@ -181,6 +193,7 @@ fn serve(
         pics_poll,
         content_fetch,
         scripts,
+        launch,
     } = env;
     let mut config = config::Config::load(&paths.config)?;
     let db = db::Db::open(&paths.data.join(db::FILE_NAME))?;
@@ -227,7 +240,6 @@ fn serve(
     };
 
     started(&cmd_tx)?;
-    drop(cmd_tx);
 
     let exit = core::Core::new(core::Parts {
         db,
@@ -239,6 +251,10 @@ fn serve(
         assets_dir: paths.cache.join("assets"),
         content_jobs,
         default_folder: paths.data.join("library"),
+        launch,
+        data_dir: paths.data.clone(),
+        state_dir: paths.state.clone(),
+        commands: cmd_tx,
     })
     .run(cmd_rx);
     tracing::info!(?exit, "shutting down");

@@ -94,7 +94,13 @@ Steam mobile app.
   to show the account. It never relies on the token's signature, never
   edits a token, and never builds one itself (FAITH-3).
 - **CM logon uses the refresh token.** Community clients put the refresh
-  token in the `ClientLogon` field named `access_token`. *Unverified.* If
+  token in the `ClientLogon` field named `access_token`, with
+  `should_remember_password` set. Without that flag Steam accepts the
+  logon, but answers the next logon with the same token with
+  `ACCESS_DENIED` once the session has logged off (seen live on
+  2026-10-18; node-steam-user 5.0.2 fixed the same symptom the same way).
+  ossteam sets it on every logon, `--no-remember` ones included, which
+  only keep the token out of storage. *Otherwise unverified.* If
   a capture confirms this, SPEC AUTH-3's wording ("Logon to the CM uses the
   access token") must be corrected in the same change.
 - **Access tokens** are needed for some service calls and WebAPI requests.

@@ -486,6 +486,9 @@ impl FakeView<'_> {
 struct ConnState {
     logged_on: Option<SteamId>,
     session_id: i32,
+    /// The token of a logon without `should_remember_password`, which
+    /// Steam stops accepting once that session logs off (`auth.md` §4).
+    forget_at_logoff: Option<String>,
 }
 
 fn reply_to(request: &Packet, emsg: EMsg, body: &impl prost::Message) -> Packet {
@@ -533,6 +536,9 @@ impl FakeCm {
             EMsg::KEMsgClientLogon => self.logon(conn, p),
             EMsg::KEMsgClientLogOff => {
                 conn.logged_on = None;
+                if let Some(token) = conn.forget_at_logoff.take() {
+                    self.state().tokens.remove(&token);
+                }
                 vec![Packet::proto(
                     EMsg::KEMsgClientLoggedOff,
                     &CMsgClientLoggedOff {
@@ -1139,6 +1145,8 @@ impl FakeCm {
         };
         conn.session_id += 1;
         conn.logged_on = Some(account.steam_id);
+        conn.forget_at_logoff =
+            (!body.should_remember_password()).then(|| body.access_token().to_owned());
         let mut response = Packet::proto(
             EMsg::KEMsgClientLogOnResponse,
             &CMsgClientLogonResponse {

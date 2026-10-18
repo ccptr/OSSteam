@@ -18,15 +18,19 @@ use ossteam_types::{AccountType, EResult, Secret, SteamId, Universe};
 /// The `ClientLogon` message for a refresh-token logon.
 ///
 /// Only the fields `cm.md` and `auth.md` establish are set: the protocol
-/// version, the account name, the cell id, and the refresh token in the
-/// `access_token` field (`auth.md` §4, unverified). The rest of what the
-/// official client sends waits for the capture in `cm.md` §7.
+/// version, the account name, the cell id, the refresh token in the
+/// `access_token` field (`auth.md` §4, unverified) and
+/// `should_remember_password`. Without that flag Steam accepts the logon
+/// but rejects the same token on the next one with AccessDenied (seen live
+/// 2026-10-18). The rest of what the official client sends waits for the
+/// capture in `cm.md` §7.
 pub fn logon_packet(account_name: &str, refresh_token: &Secret, cell_id: u32) -> Packet {
     let mut body = CMsgClientLogon {
         protocol_version: Some(PROTOCOL_VERSION),
         cell_id: Some(cell_id),
         account_name: Some(account_name.to_owned()),
         access_token: Some(refresh_token.expose().to_owned()),
+        should_remember_password: Some(true),
         ..Default::default()
     };
     let mut packet = Packet::proto(EMsg::KEMsgClientLogon, &body);
@@ -221,6 +225,7 @@ mod tests {
         assert_eq!(body.account_name(), "alice");
         assert_eq!(body.access_token(), "tok");
         assert_eq!(body.protocol_version(), PROTOCOL_VERSION);
+        assert_eq!(body.should_remember_password, Some(true));
         assert_eq!(body.client_os_type, None);
         assert_eq!(body.machine_id, None);
         assert_eq!(

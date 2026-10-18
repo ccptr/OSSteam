@@ -179,7 +179,7 @@ built (§7), so these calls never wait on Steam's servers. All fail with
 | Method | Behaviour |
 |---|---|
 | `ListApps{filter, installed_only}` | Top-level apps sorted by name, each with its DLC. `filter` keeps apps whose name contains it, ignoring case, or whose id it is; a matching DLC is listed under its parent even if the parent does not match. `complete` is false until the license list has arrived and every needed info has been fetched or refused, and again after a fetch fails, until the retry succeeds. `packages_without_info` names granted packages whose apps cannot be listed. Until the install engine exists (M1b) nothing is installed, so `installed_only` returns no apps. |
-| `GetApp{app_id}` | The app's summary and its cached info: platforms, install directory, depots, branches and launch options. `NOT_FOUND` when the app is not in the library. An app whose info is not available has only its summary. |
+| `GetApp{app_id}` | The app's summary and its cached info: platforms, install directory, depots, branches and launch options, and on Linux its compatibility tool (`compat-tools.md` §8). `NOT_FOUND` when the app is not in the library. An app whose info is not available has only its summary. |
 | `GetAsset{app_id, kind, high_dpi}` | The absolute path of one of the app's images (`HEADER`, `CAPSULE`, `HERO`, `HERO_BLUR`, `LOGO`), downloaded into the cache first if it is not there (`pics.md` §9). This is the one Library method that may wait on the network; clients should allow 90 s. Requests for the same image share one download. `NOT_FOUND` when the app is not in the library, its info is not available, the info names no such image, or the CDN has none (remembered until the daemon restarts); `NETWORK` when the download fails; `INVALID_ARGUMENT` for an unknown kind. |
 
 `AppChanged` lists the apps that were added to or removed from the
@@ -220,6 +220,8 @@ These keys exist:
 | `content.concurrent_jobs` | `INTEGER` | `1` | Jobs that run at once, 1 to 8 |
 | `content.download_threads` | `INTEGER` | `8` | Chunk downloads at once per job, 1 to 64. Applies to jobs started after the change |
 | `content.language` | `STRING` | `english` | The language whose depots are installed, as Steam names languages (`german`, `schinese`, ...) |
+| `compat.default_tool` | `STRING` | `proton_experimental` | Linux: the compatibility tool for apps without a Linux version that no other mapping covers; empty for none (`compat-tools.md` §2) |
+| `compat.tool.<app id>` | `STRING` | empty | Linux: the user's compatibility tool for one app, a tool's name or a selectable alias; empty for Valve's mapping. A family of keys: `GetSettings` lists those with an override (`compat-tools.md` §8) |
 | `secrets.file_fallback` | `BOOL` | `false` | When no OS keyring is available, store refresh tokens in `secrets.json` in the data directory, mode 0600 (D-8, `auth.md` §4). A change applies to the next token read or write. |
 
 **Secrets (IPC-10).** The password and Steam Guard codes travel only in
@@ -277,7 +279,7 @@ are resumed or cancelled, and count as unfinished.
 | `Install{app_id, folder, branch}` | Queues an install and replies with the job. `folder` empty means the default folder; `branch` empty means `public`. Before queueing, the daemon checks what it can without the network: the app is in the library (`NOT_FOUND`), its info names an install directory and the branch exists and needs no password (`UNSUPPORTED` for a password-protected branch, `NOT_FOUND` for an unknown one), the folder is in the list (`NOT_FOUND`), and the app is not installed and has no unfinished job (`CONFLICT`). Entitlement and disk space are checked when the job runs. |
 | `Update{app_ids, all}` | Queues an update of each named app, or with `all` of every installed app whose update is known (`content.md` §10). Replies with the jobs created. An app with an unfinished job gets no second one; `NOT_FOUND` names an app that is not installed. An update of an app that has no new manifests finishes at once and writes nothing. |
 | `Verify{app_id}` | Queues a verify of an installed app. `NOT_FOUND` when it is not installed, `CONFLICT` when it has an unfinished job. |
-| `Uninstall{app_id}` | Queues an uninstall (`content.md` §12). An unfinished install, update or verify of the app is cancelled first. `NOT_FOUND` when the app is neither installed nor being installed. |
+| `Uninstall{app_id, remove_compat_data}` | Queues an uninstall (`content.md` §12); with `remove_compat_data`, on Linux, the app's prefix goes too (`compat-tools.md` §6.1). An unfinished install, update or verify of the app is cancelled first. `NOT_FOUND` when the app is neither installed nor being installed. |
 | `ListJobs` | Every job of the active account, unfinished ones first. |
 | `PauseJob{job_id}` | A queued or running job becomes `PAUSED`; a running one stops within a second and keeps its journal. |
 | `ResumeJob{job_id}` | A paused or failed job is queued again. |

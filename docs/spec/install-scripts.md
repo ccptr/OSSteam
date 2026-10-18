@@ -191,9 +191,8 @@ A Run Process entry that fails does not stop the launch: the game may
 work without it, and the entry runs again next time. *Unverified:* what
 the official client shows or does in that case.
 
-Scripts are applied on native Windows only. Under Proton (M1d) they run
-inside the prefix, through Wine's registry and process handling; that is
-specified with the compatibility layer.
+Scripts are applied on native Windows, and on Linux to the prefix of an
+app launched through Proton (`compat-tools.md` §7).
 
 ## 4. Elevation
 

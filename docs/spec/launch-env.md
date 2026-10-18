@@ -46,17 +46,19 @@ game (VAC-4).
 | `SDL_GAMECONTROLLERCONFIG`, `SDL_GAMECONTROLLER_ALLOW_STEAM_VIRTUAL_GAMEPAD`, `SDL_GAMECONTROLLER_IGNORE_DEVICES`, `SDL_ENABLE_STEAM_SCREEN_KEYBOARD` | no Steam Input |
 | `SteamStreaming*` | no Remote Play |
 | `SteamDeck`, `SteamOS`, `STEAM_GAMESCOPE_*`, `STEAM_MANGOAPP_*` | ossteam is not the Steam Deck's session |
-| `STEAM_COMPAT_*`, `STEAM_RUNTIME_*`, the runtime's `LD_LIBRARY_PATH` | compatibility tools and the Steam Linux Runtime are M1d (`compat-tools.md`) |
+| `STEAM_COMPAT_*` | set only for a launch through a compatibility tool (`compat-tools.md` §5.2) |
+| `STEAM_RUNTIME_*`, the scout runtime's `LD_LIBRARY_PATH` | ossteam has no `LD_LIBRARY_PATH` runtime of its own; the Steam Linux Runtime tools bring theirs |
 | `SteamRealm` | *unverified* value; to be set once captured |
 | `STEAM_GAME_LAUNCH_SHELL`, `STEAM_GAME_PIDS`, `STEAM_GAMES_RUNNING` | *unverified* meaning |
 
-## 3. Differences from the official client in M1c
+## 3. Differences from the official client
 
-- On Linux, the official client runs a native game inside the Steam
-  Linux Runtime when Valve's compat-tool mapping says so (for example
-  "sniper" for Counter-Strike 2), and otherwise with its scout runtime's
-  libraries on `LD_LIBRARY_PATH`. ossteam runs native games against the
-  host's libraries until M1d builds the runtime chains.
+- On Linux, a native game runs inside the Steam Linux Runtime that
+  Valve's compat-tool mapping gives it (`compat-tools.md` §2), as under
+  the official client: "sniper" for Counter-Strike 2, and Steam Linux
+  Runtime 1.0 (scout) for a Linux game without a mapping. Only when
+  the tool list is not available does ossteam run a native game
+  against the host's libraries.
 - The official client's environment includes what `steam.sh` sets up for
   the client itself. ossteam's daemon has the environment of the login
   session that started it.

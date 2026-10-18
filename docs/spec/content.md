@@ -257,8 +257,9 @@ install on branch `b`, a depot is part of the install when all of these
 hold:
 
 1. **Platform.** `config/oslist` is empty or contains the host OS:
-   `windows`, `macos` or `linux`. Choosing the Windows depots on Linux for
-   Proton is M1d.
+   `windows`, `macos` or `linux`. On Linux, an app whose compatibility
+   tool runs Windows programs installs its Windows depots, and the
+   platform is recorded with the install (`compat-tools.md` §4).
 2. **Architecture.** `config/osarch` is empty or equals the host's
    pointer width (`64` on every PLAT-1 target). *Unverified: whether the
    official client also installs `32` depots on a 64-bit host when no
@@ -430,7 +431,8 @@ Uninstall deletes `common/<installdir>`, the app's stored manifests and
 staging, and its rows in the state database. Shared-install depots are
 kept while another installed app uses them (§8). On Linux the app's
 `compatdata/<appid>` holds the user's saves and settings under Proton and
-is left in place (M1d decides how to offer removing it).
+is left in place unless the uninstall asks for its removal
+(`compat-tools.md` §6.1).
 
 ## 13. Settings (CONT-7)
 

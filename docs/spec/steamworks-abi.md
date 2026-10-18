@@ -43,8 +43,13 @@ ossteam creates only `sdk64`, `sdk32` and `steam.pid`:
 
 - `~/.steam/sdk64` and `~/.steam/sdk32` are symlinks to
   `<data>/steam-sdk/sdk64` and `<data>/steam-sdk/sdk32`. Those
-  directories belong to ossteam, and each holds a `steamclient.so`
-  symlink to the matching library (§1.3).
+  directories belong to ossteam, and each holds a `steamclient.so` that
+  is a copy of the matching library (§1.3), not a link: a game in a
+  Steam Linux Runtime container sees the home directory but not
+  ossteam's install directory (`compat-tools.md` §9). The daemon
+  replaces a copy that differs from the library by writing a temporary
+  file and renaming it, so that a running game keeps the file it has
+  mapped.
 - `~/.steam/steam.pid` holds the daemon's pid.
 
 `~/.steam` is created with mode 0755 when it does not exist, as the
@@ -379,7 +384,7 @@ logs warnings, refusals, and the first call of each unimplemented slot.
 
 | OS | Endpoint |
 |---|---|
-| Linux | Unix socket `$XDG_RUNTIME_DIR/ossteam/game.sock` |
+| Linux | Unix socket `$XDG_RUNTIME_DIR/ossteam/game.sock`, and the abstract Unix socket `ossteam-game-<uid>` |
 | macOS | Unix socket `$TMPDIR/ossteam/game.sock` |
 | Windows | Named pipe `\\.\pipe\ossteam-game-<SID>` |
 
@@ -392,6 +397,16 @@ peer is the same user (IPC-2) and reads the peer's pid: `SO_PEERCRED`
 on Linux, `LOCAL_PEERPID` on macOS, `GetNamedPipeClientProcessId` on
 Windows. The daemon listens on the game endpoint for as long as it runs,
 whether or not an account is logged in.
+
+**Linux containers.** A game in a Steam Linux Runtime container has a
+private `$XDG_RUNTIME_DIR` but shares the network namespace, which is
+where abstract socket names live (`compat-tools.md` §9). The shim
+connects to the socket file when it exists and to the abstract socket
+otherwise. An abstract socket has no permissions, so after connecting
+the shim reads the listener's credentials (`SO_PEERCRED`) and closes the
+connection, finding no client, unless the listener runs as its own
+user. A name another user took first therefore hides the daemon, which
+logs that it could not listen on it, but cannot impersonate it.
 
 ### 3.2 Framing and encoding
 

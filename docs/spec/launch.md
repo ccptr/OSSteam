@@ -12,7 +12,8 @@ line, how it watches the game and how it stops it, and how it reports
 the game to Steam. The environment the game gets is in `launch-env.md`.
 The entries that let the game's `steam_api` find a client are in
 `steamworks-abi.md` §1. Compatibility tools (Proton, the Steam Linux
-Runtime) are M1d and `compat-tools.md`. This page covers native launches.
+Runtime) are in `compat-tools.md`, which builds on this page: on Linux,
+an app that Valve's mappings give a tool is launched through it.
 
 **Verification.** The official Linux client writes each launch's
 command line and its tracked processes to its logs
@@ -86,7 +87,13 @@ and stops at the first that fails:
 | The launch option qualifies (§1) | `INVALID_ARGUMENT` for an index that does not exist or does not qualify; `UNSUPPORTED` when none qualifies |
 | The executable exists under the install directory and does not leave it | `NOT_FOUND`, with a message that the app needs a verify |
 | The executable is not protected by SteamStub (§7) | `UNSUPPORTED` |
+| Linux: the app's compatibility tool, if it has one, runs programs of the option's platform, and the install is for that platform (`compat-tools.md` §2, §4) | `UNSUPPORTED`; `CONFLICT` when the app must be updated for its tool |
 | The discovery entries are in place (`steamworks-abi.md` §1) | `CONFLICT` when an official Steam client owns them (DISC-3); `UNSUPPORTED` when ossteam's client library is not installed next to the daemon |
+
+On Linux, the launch options that qualify are those of the platform the
+app's tool runs programs of (`windows` for Proton), or of `linux` when
+it has none. Once the checks pass, missing or outdated tools of the
+chain are installed before the game starts (`compat-tools.md` §4).
 
 The account need not be logged on at that moment. A game started while
 the connection is down runs, and its play session is reported once the
@@ -123,8 +130,10 @@ written, then the user's arguments, each quoted by the rules that
 official Windows client.
 
 **Working directory.** It is `workingdir` under the install directory
-when the option gives one. Otherwise it is the directory that contains
-the executable. *Unverified.*
+when the option gives one. Otherwise it is the install directory itself,
+even when the executable is in a subdirectory. Valve's compat-tool
+interface document states this for the official client, with Dota 2 as
+its example (`compat-tools.md` §5.1).
 
 **Standard streams.** Standard input is the null device. Standard output
 and standard error go to `<state>/logs/games/<app id>.log`, which is
@@ -303,7 +312,7 @@ The logs of an official Linux client (build 1791918634) show:
 |---|---|
 | The keys under `config/launch` beyond `executable`, `arguments`, `description`, `type`, `oslist`, `osarch`, `betakey` | unverified |
 | Hiding of types and of 32-bit options (§1) | unverified |
-| The working directory (§3) | unverified |
+| The working directory (§3) | from Valve's compat-tool interface document |
 | The Windows command line (§3) | unverified |
 | Tree tracking on Windows (§4) | unverified |
 | Stop signals and timeout (§5) | unverified |

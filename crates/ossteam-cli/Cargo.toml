@@ -17,7 +17,7 @@ anyhow.workspace = true
 clap.workspace = true
 clap_complete.workspace = true
 crossbeam-channel.workspace = true
-qrcode = { version = "0.14.1", default-features = false }
+qrcode.workspace = true
 rpassword = "7.5.4"
 serde.workspace = true
 serde_json.workspace = true

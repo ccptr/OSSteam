@@ -94,9 +94,9 @@ events (GUI-2):
 |---|---|---|
 | status | `GetStatus` | `SessionChanged` (connection, account, logged on, reason, persona state) |
 | accounts | `ListAccounts` | read again after `SessionChanged` and `LoginEnded` |
-| library | `ListApps` | read again after `AppChanged`, at most every 250 ms |
+| library | `ListApps` | read again after `AppChanged`, at most every 250 ms, and when the active account changes |
 | app details | `GetApp`, `GetLaunchOptions`, for open App pages only | read again when `AppChanged` names the app, or a job of the app changes state |
-| jobs | `ListJobs` | `JobStateChanged` replaces or adds the job; `JobProgress` replaces its progress |
+| jobs | `ListJobs` | `JobStateChanged` replaces or adds the job; `JobProgress` replaces its progress; read again when the active account changes |
 | running games | `ListRunning` | `GameStarted` adds, `GameExited` removes |
 | shim reports | `GetApp.last_shim_report` (§5) | `ShimReport` replaces the app's |
 | settings | `GetSettings` | `SettingChanged` replaces the setting |
@@ -105,10 +105,20 @@ events (GUI-2):
 Views keep only view state: the page shown, text typed, selection,
 scroll position, which menus are open, and the download rates of §4.4.
 
-A view may show the effect of its own request before the confirming
-event arrives only when that event replaces it (GUI-2). A paused job,
-for example, is drawn as paused when `PauseJob` replies, because the
-reply carries the job, and that reply is what the store holds.
+When the active account changes, the store drops the library, jobs,
+app details and shim reports of the old one and reads them again; an
+open App page closes.
+
+A reply and the event about the same change reach the store by
+different paths (§2.1), so a reply can arrive after a newer event. A job
+a reply carries (`Install`, `PauseJob` and the like) is therefore added
+only when the store does not have that job yet; otherwise the job's
+`JobStateChanged` decides. This shows a new job at once without letting
+a late reply undo a newer state (GUI-2).
+
+A login started here takes `LoginPrompt` events from the moment the
+request is sent, for the same reason; prompts of a login another client
+started are not shown.
 
 ## 4. Pages
 
@@ -149,7 +159,8 @@ page.
   `ListApps` has no such parameter).
 - **Grid** (default) and **list** layouts, both virtualised with
   `uniform_list`: the grid as rows of capsules, the list as one row per
-  app with its name, install state and size.
+  app with its name and install state. (`AppSummary` has no size; the
+  App page shows it.)
 - **Artwork.** A grid cell asks for `GetAsset{CAPSULE}`, with `high_dpi`
   when the window's scale factor is above 1, only while the row is
   visible, at most eight requests at once, and once per app and kind for
@@ -208,9 +219,11 @@ The jobs of `ListJobs`, in two lists:
   `DOWNLOADING`), the rate, and the error of a failed job. Pause, Resume
   and Cancel call their methods.
 - **Reordering.** Move up, Move down, and Move to top. The GUI computes
-  the queue order it wants and calls `SetJobPriority` for each job whose
-  priority must change to produce it, from the top: the job moved and the
-  ones it passes get distinct priorities above those below them.
+  the queue order it wants and the fewest `SetJobPriority` calls that
+  produce it: from the bottom up, a job keeps its priority if it already
+  sorts before the job after it, and is otherwise raised just enough
+  (to that job's priority if it was created earlier, else one above).
+  Jobs only rise, so what is below stays in order.
 - **Rate** is view state: the change of `downloaded` (file bytes while
   not downloading) over the `JobProgress` events of the last 3 s. The
   time left is derived from it and shown only after 3 s of samples.
@@ -242,8 +255,8 @@ leaves, and show the daemon's `INVALID_ARGUMENT` message on failure.
 ### 4.6 Account menu
 
 The active account's persona name and state; the other remembered
-accounts (`SwitchAccount`); Add account (the Login page, while the active
-account stays logged on until a new login succeeds); Log out.
+accounts (`SwitchAccount`); Add account (the Login page; starting a
+login there logs the active account off first, ipc.md §5.2); Log out.
 
 ### 4.7 Status bar
 
@@ -270,8 +283,9 @@ adding fields within major version 1):
 
 Every action is reachable from the keyboard. Tab and Shift-Tab move
 focus through the page in reading order; Enter and Space activate the
-focused control; Escape closes a menu, a chooser or the App page. The
-focused control always has a visible focus ring.
+focused control; Escape closes a menu, a chooser or the App page. While
+focus moves by keyboard, the focused control has a visible focus ring;
+a text field shows it whenever it has focus.
 
 | Keys (Linux, Windows) | macOS | Action |
 |---|---|---|

@@ -4207,10 +4207,14 @@ name = "ossteam-gui"
 version = "0.1.0"
 dependencies = [
  "async-channel",
+ "crossbeam-channel",
  "gpui",
  "gpui_platform",
  "ossteam-ipc",
  "ossteam-types",
+ "qrcode",
+ "unicode-segmentation",
+ "zeroize",
 ]
 
 [[package]]

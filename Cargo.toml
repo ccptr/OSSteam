@@ -69,6 +69,7 @@ polling = "3.11.0"
 prost = "0.14.4"
 prost-build = "0.14.4"
 protox = "0.10.0"
+qrcode = { version = "0.14.1", default-features = false }
 rand_core = { version = "0.6.4", features = ["getrandom"] }
 rsa = "0.9.10"
 rustix = "1.1.5"
@@ -82,6 +83,7 @@ sha1 = "0.11.0"
 socket2 = "0.6.5"
 thiserror = "2.0.21"
 toml = "1.1.8"
+unicode-segmentation = "1.13.3"
 tracing = "0.1.44"
 tracing-appender = "0.2.5"
 tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }

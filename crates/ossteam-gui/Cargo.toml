@@ -9,9 +9,13 @@ publish.workspace = true
 [dependencies]
 ossteam-ipc.workspace = true
 ossteam-types.workspace = true
+async-channel = "2.5.0"
+crossbeam-channel.workspace = true
 gpui.workspace = true
 gpui_platform.workspace = true
-async-channel = "2.5.0"
+qrcode.workspace = true
+unicode-segmentation.workspace = true
+zeroize.workspace = true
 
 [lints]
 workspace = true

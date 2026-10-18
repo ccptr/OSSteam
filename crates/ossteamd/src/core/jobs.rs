@@ -328,6 +328,16 @@ impl Core {
             Topic::Jobs,
             event::Kind::JobStateChanged(v1::JobStateChanged { job: Some(job) }),
         );
+        self.resume_launches();
+    }
+
+    /// Whether job `job_id` can still finish; a job no longer listed
+    /// cannot.
+    pub(super) fn job_unfinished(&self, job_id: u64) -> bool {
+        self.content
+            .jobs
+            .get(&job_id)
+            .is_some_and(|e| unfinished(e.row.state) && e.row.state != v1::JobState::Failed)
     }
 
     pub(super) fn unfinished_job(&self, app: AppId) -> Option<u64> {
@@ -338,7 +348,7 @@ impl Core {
             .map(|j| j.row.job_id)
     }
 
-    fn create_job(
+    pub(super) fn create_job(
         &mut self,
         steam_id: SteamId,
         app: AppId,

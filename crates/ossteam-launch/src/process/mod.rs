@@ -33,12 +33,16 @@ pub struct Spec {
     pub command_line: String,
     pub working_dir: PathBuf,
     /// Set on top of the inherited environment.
-    pub env: Vec<(&'static str, String)>,
+    pub env: Vec<(String, String)>,
     /// Standard output and error go here; the file is replaced.
     pub log: PathBuf,
     /// Linux: the program that runs `--reaper` (the daemon's own
     /// executable). Unused elsewhere.
     pub reaper: PathBuf,
+    /// Linux: stopping sends `SIGINT` to the reaper's children first, for
+    /// a compatibility tool with `use_tool_subprocess_reaper`
+    /// (`compat-tools.md` §10). Unused elsewhere.
+    pub interrupt_first: bool,
 }
 
 /// How the process the daemon started ended.

@@ -17,10 +17,12 @@ use ossteam_launch::{command, env, steamstub};
 use ossteam_proto::steam::{CMsgClientGamesPlayed, c_msg_client_games_played::GamePlayed};
 use ossteam_types::{AppId, SteamId};
 
-use super::{Command, Core, internal, invalid};
+use super::compat::{self, Prepared};
+use super::{Command, Core, Outcome, internal, invalid};
 use crate::content::folders::Layout;
 use crate::launch::{self, Exited};
-use crate::session::Cmd;
+use crate::session::{Cmd, ReplyTo};
+use ossteam_launch::compat::{CompatEnv, Verb, chain};
 
 pub struct Running {
     pub proto: v1::RunningGame,
@@ -32,6 +34,19 @@ pub struct Running {
     branch: String,
 }
 
+/// What [`Core::try_launch`] did.
+enum Started {
+    Now(v1::RunningGame),
+    Waiting(Vec<u64>),
+}
+
+/// A launch that waits for its tools.
+pub struct Pending {
+    to: ReplyTo,
+    req: v1::LaunchRequest,
+    jobs: Vec<u64>,
+}
+
 /// The launch state the core keeps.
 pub struct Games {
     pub settings: launch::Settings,
@@ -39,8 +54,15 @@ pub struct Games {
     /// Whether ossteam's discovery entries are in place.
     pub entries_made: bool,
     pub running: BTreeMap<AppId, Running>,
+    /// Launches waiting for jobs that install their tools
+    /// (`compat-tools.md` §4).
+    pub pending: BTreeMap<AppId, Pending>,
     /// `<state>/games`.
     pub log_dir: PathBuf,
+    /// `<data>/compat-client` (`compat-tools.md` §6.2).
+    pub client_dir: PathBuf,
+    /// `<data>/steam-sdk`, which a container must see (§9).
+    pub sdk_dir: PathBuf,
     /// For the supervisor threads.
     pub commands: Sender<Command>,
 }
@@ -57,7 +79,10 @@ impl Games {
             settings,
             entries_made: false,
             running: BTreeMap::new(),
+            pending: BTreeMap::new(),
             log_dir: state.join("games"),
+            client_dir: data.join("compat-client"),
+            sdk_dir: data.join("steam-sdk"),
             commands,
         }
     }
@@ -203,11 +228,62 @@ impl Core {
         ))
     }
 
+    /// `Launch`: replies at once, or once the jobs that install the app's
+    /// tools are done (`compat-tools.md` §4).
+    pub(super) fn launch(&mut self, to: ReplyTo, req: v1::LaunchRequest) -> Outcome {
+        let app = AppId(req.app_id);
+        if self.games.pending.contains_key(&app) {
+            return Some(Err(conflict(format!(
+                "app {app} is being launched; its compatibility tools are being installed"
+            ))));
+        }
+        match self.try_launch(&req) {
+            Ok(Started::Now(game)) => Some(Ok(response::Result::Launch(v1::LaunchResponse {
+                game: Some(game),
+            }))),
+            Ok(Started::Waiting(jobs)) => {
+                tracing::info!(app = %app, ?jobs, "the launch waits for its tools");
+                self.games.pending.insert(app, Pending { to, req, jobs });
+                None
+            }
+            Err(e) => Some(Err(e)),
+        }
+    }
+
+    /// Goes on with the launches whose tool jobs have ended.
+    pub(super) fn resume_launches(&mut self) {
+        let ready: Vec<AppId> = self
+            .games
+            .pending
+            .iter()
+            .filter(|(_, p)| p.jobs.iter().all(|j| !self.job_unfinished(*j)))
+            .map(|(a, _)| *a)
+            .collect();
+        for app in ready {
+            let Some(p) = self.games.pending.remove(&app) else {
+                continue;
+            };
+            let failed = p.jobs.iter().find_map(|j| {
+                let e = self.content.jobs.get(j)?;
+                (e.row.state != v1::JobState::Done).then(|| (*j, e.row.clone()))
+            });
+            let outcome = match failed {
+                Some((j, row)) => Some(Err(conflict(format!(
+                    "app {app} was not launched: job {j}, which installs one of its \
+                     compatibility tools, ended {}{}",
+                    row.state.as_str_name().to_ascii_lowercase(),
+                    row.error.map(|(_, m)| format!(": {m}")).unwrap_or_default()
+                )))),
+                None => self.launch(p.to, p.req),
+            };
+            if let Some(result) = outcome {
+                self.reply(p.to, result);
+            }
+        }
+    }
+
     /// `launch.md` §2, in order.
-    pub(super) fn launch(
-        &mut self,
-        req: &v1::LaunchRequest,
-    ) -> Result<response::Result, RemoteError> {
+    fn try_launch(&mut self, req: &v1::LaunchRequest) -> Result<Started, RemoteError> {
         let Some(account) = self.session_state.account.clone() else {
             return Err(RemoteError::new(
                 ErrorCode::NotLoggedIn,
@@ -238,13 +314,56 @@ impl Core {
                 "app {app} has an update; update it, or launch the installed build anyway with allow_stale"
             )));
         }
-        let platform = Platform::native()
+        let info = self
+            .app_info(app)
+            .ok_or_else(|| not_found(format!("the info of app {app} is not available")))?;
+        let native = Platform::native()
             .ok_or_else(|| unsupported("Steam has no launch options for this OS"))?;
-        let all = self.launch_options(app)?;
+
+        // The app's tool decides whose launch options and depots it uses
+        // (`compat-tools.md` §2, §4).
+        let list = self.tool_list();
+        let mapping = list
+            .as_ref()
+            .and_then(|l| self.compat_mapping(l, app, Some(&info)));
+        let platform = match mapping.as_ref().and_then(|m| m.tool.platform()) {
+            Some(os) if os.eq_ignore_ascii_case("windows") => Platform {
+                os: "windows",
+                ..native
+            },
+            Some(os) if !os.eq_ignore_ascii_case(native.os) => {
+                return Err(unsupported(format!(
+                    "app {app}'s compatibility tool {} runs {os} programs, which ossteam cannot",
+                    mapping
+                        .as_ref()
+                        .map_or("", |m| m.tool.display_name.as_str())
+                )));
+            }
+            _ => native,
+        };
+        let installed_os = match installed.platform.as_str() {
+            "" => native.os,
+            os => os,
+        };
+        if compat::ENABLED && installed_os != platform.os {
+            return Err(conflict(format!(
+                "app {app} is installed for {installed_os}, but its compatibility tool runs {} \
+                 programs; update it",
+                platform.os
+            )));
+        }
+        let all = options::parse(&info);
         let branch = self.branch_of(app);
         let owns = |d: AppId| snapshot.library.find(d).is_some();
         let option = options::choose(&all, req.option, platform, &branch, &owns)
             .map_err(|e| match e {
+                // Without the tool list, no app gets Proton (§1).
+                ChoiceError::NoneQualifies { .. } if compat::ENABLED && list.is_none() => {
+                    unsupported(format!(
+                        "{e}; the compatibility tool list (app {}) is not available",
+                        ossteam_launch::compat::MANIFESTS_APP
+                    ))
+                }
                 ChoiceError::NoneQualifies { .. } => unsupported(e.to_string()),
                 _ => invalid(e.to_string()),
             })?
@@ -255,8 +374,10 @@ impl Core {
             .folders
             .iter()
             .find(|f| f.id == installed.folder_id)
+            .cloned()
             .ok_or_else(|| internal(&anyhow::anyhow!("app {app}'s library folder is gone")))?;
-        let app_dir = Layout::new(&folder.path).app_dir(&installed.install_dir);
+        let layout = Layout::new(&folder.path);
+        let app_dir = layout.app_dir(&installed.install_dir);
         // A path that leaves the install directory is refused like a missing
         // executable (`launch.md` §2).
         let executable =
@@ -286,10 +407,73 @@ impl Core {
         }
         self.make_discovery().map_err(discovery_error)?;
 
-        let command_line = if cfg!(windows) {
+        let ready = match (&list, &mapping) {
+            (Some(list), Some(m)) => {
+                let first = m.tool.app;
+                match self.prepare_chain(SteamId(account.steam_id), list, first, &folder.id)? {
+                    Prepared::Ready(r) => Some(r),
+                    Prepared::Waiting(jobs) => return Ok(Started::Waiting(jobs)),
+                }
+            }
+            _ => None,
+        };
+
+        let game_line = if cfg!(windows) {
             command::windows_command_line(&executable, &option.arguments, &req.extra_args)
         } else {
             command::shell_command_line(&executable, &option.arguments, &req.extra_args)
+        };
+        let base_env: Vec<(String, String)> = env::launch_vars(app, &account.account_name)
+            .into_iter()
+            .map(|(k, v)| (k.to_owned(), v))
+            .collect();
+        let (command_line, env, interrupt_first) = match &ready {
+            None => (game_line, base_env, false),
+            Some(r) => {
+                let data_dir = layout.root.join("compatdata").join(app.0.to_string());
+                let client_dir = &self.games.client_dir;
+                for d in [&data_dir, &client_dir.join("legacycompat")] {
+                    std::fs::create_dir_all(d)
+                        .map_err(|e| internal(&anyhow::anyhow!("creating {}: {e}", d.display())))?;
+                }
+                let list = list.as_ref().expect("a chain has a list");
+                let config = list.config(app);
+                let mut library_paths = vec![folder.path.clone()];
+                library_paths.extend(r.tool_folders.iter().cloned());
+                let home = &self.games.settings.home;
+                let mounts = if self.games.sdk_dir.starts_with(home) {
+                    Vec::new()
+                } else {
+                    vec![self.games.sdk_dir.clone()]
+                };
+                let compat_env = CompatEnv {
+                    app,
+                    install_dir: &app_dir,
+                    data_dir: &data_dir,
+                    client_dir,
+                    library_paths,
+                    tool_paths: r.tools.iter().rev().map(|t| t.dir.clone()).collect(),
+                    mounts,
+                    config: config.map(|c| c.config.as_str()),
+                };
+                // An app's environment is for Proton (§5.3).
+                let extra = config
+                    .filter(|_| platform.os == "windows")
+                    .map(|c| c.environment.as_str());
+                let line = format!(
+                    "{} {game_line}",
+                    chain::command_prefix(&r.tools, Verb::WaitForExitAndRun)
+                );
+                let interrupt = r
+                    .tools
+                    .first()
+                    .is_some_and(|t| t.manifest.use_subprocess_reaper);
+                (
+                    line,
+                    compat::chain_env(base_env, &compat_env, extra),
+                    interrupt,
+                )
+            }
         };
         std::fs::create_dir_all(&self.games.log_dir)
             .map_err(|e| internal(&anyhow::Error::from(e)))?;
@@ -299,9 +483,10 @@ impl Core {
             executable,
             command_line,
             working_dir,
-            env: env::launch_vars(app, &account.account_name),
+            env,
             log: log.clone(),
             reaper: self.games.settings.reaper.clone(),
+            interrupt_first,
         };
         tracing::info!(app = %app, option = option.index, command = %spec.command_line, "launching");
         let game = Game::spawn(&spec).map_err(|e| {
@@ -346,9 +531,7 @@ impl Core {
             }),
         );
         self.send_games_played();
-        Ok(response::Result::Launch(v1::LaunchResponse {
-            game: Some(proto),
-        }))
+        Ok(Started::Now(proto))
     }
 
     pub(super) fn list_running(&self) -> response::Result {

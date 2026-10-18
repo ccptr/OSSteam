@@ -21,6 +21,7 @@ use super::{Exit, Spec};
 pub struct Game {
     child: Child,
     done: Arc<AtomicBool>,
+    interrupt_first: bool,
 }
 
 impl Game {
@@ -52,6 +53,7 @@ impl Game {
         Ok(Self {
             child,
             done: Arc::default(),
+            interrupt_first: spec.interrupt_first,
         })
     }
 
@@ -63,6 +65,7 @@ impl Game {
         Stopper {
             pid: self.child.id() as i32,
             done: self.done.clone(),
+            interrupt_first: self.interrupt_first,
         }
     }
 
@@ -99,6 +102,7 @@ fn wait_for_group(pgid: i32) {
 pub struct Stopper {
     pid: i32,
     done: Arc<AtomicBool>,
+    interrupt_first: bool,
 }
 
 impl Stopper {
@@ -106,7 +110,12 @@ impl Stopper {
         if self.done.load(Ordering::SeqCst) {
             return;
         }
-        signal_tree(self.pid, Signal::TERM);
+        if cfg!(target_os = "linux") && self.interrupt_first {
+            // The outermost tool stops its own tree (`compat-tools.md` §10).
+            signal_children(self.pid, Signal::INT);
+        } else {
+            signal_tree(self.pid, Signal::TERM);
+        }
         let s = self.clone();
         std::thread::Builder::new()
             .name("game-stop".into())
@@ -165,12 +174,40 @@ fn signal_tree(pgid: i32, sig: Signal) {
     }
 }
 
+/// Linux: the reaper's own children only.
+#[cfg(target_os = "linux")]
+fn signal_children(reaper: i32, sig: Signal) {
+    for pid in children().remove(&reaper).unwrap_or_default() {
+        if let Some(p) = Pid::from_raw(pid) {
+            let _ = rustix::process::kill_process(p, sig);
+        }
+    }
+}
+
+#[cfg(not(target_os = "linux"))]
+fn signal_children(_: i32, _: Signal) {}
+
 /// The descendants of `root`, from `/proc`.
 #[cfg(target_os = "linux")]
 fn descendants(root: i32) -> Vec<i32> {
+    let children = children();
+    let mut out = Vec::new();
+    let mut queue = vec![root];
+    while let Some(p) = queue.pop() {
+        for &c in children.get(&p).into_iter().flatten() {
+            out.push(c);
+            queue.push(c);
+        }
+    }
+    out
+}
+
+/// Every process's children, by parent pid, from `/proc`.
+#[cfg(target_os = "linux")]
+fn children() -> std::collections::HashMap<i32, Vec<i32>> {
     let mut children: std::collections::HashMap<i32, Vec<i32>> = Default::default();
     let Ok(dir) = std::fs::read_dir("/proc") else {
-        return Vec::new();
+        return children;
     };
     for entry in dir.flatten() {
         let Some(pid) = entry
@@ -188,15 +225,7 @@ fn descendants(root: i32) -> Vec<i32> {
             children.entry(ppid).or_default().push(pid);
         }
     }
-    let mut out = Vec::new();
-    let mut queue = vec![root];
-    while let Some(p) = queue.pop() {
-        for &c in children.get(&p).into_iter().flatten() {
-            out.push(c);
-            queue.push(c);
-        }
-    }
-    out
+    children
 }
 
 /// The parent pid in `/proc/<pid>/stat`: the second field after the

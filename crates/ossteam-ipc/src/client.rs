@@ -610,7 +610,9 @@ impl Client {
     }
 
     /// Launches an installed app. `option` `None` launches the only option
-    /// that qualifies.
+    /// that qualifies. Waits without a timeout: the daemon replies once the
+    /// compatibility tools the launch needs are installed, which can take
+    /// as long as their downloads.
     pub fn launch(
         &self,
         app_id: u32,
@@ -624,7 +626,7 @@ impl Client {
             extra_args: extra_args.to_vec(),
             allow_stale,
         };
-        match self.call(request::Method::Launch(req), DEFAULT_TIMEOUT)? {
+        match self.call(request::Method::Launch(req), Duration::MAX)? {
             response::Result::Launch(r) => r.game.ok_or_else(|| {
                 ClientError::Protocol("a launch was answered without a game".into())
             }),

@@ -397,7 +397,9 @@ them and stores their last journals before it exits.
 
 The client library runs one reader thread per connection. That thread
 routes each reply to the waiting call by id and queues events. Calls can
-come from any thread, and each one has a timeout (30 s by default).
+come from any thread, and each one has a timeout (30 s by default),
+except `Launch`, whose reply can wait for tool installs (`launch.md` §8)
+and which ends when the reply comes or the connection closes.
 
 ## 8. Error codes and CLI exit codes
 

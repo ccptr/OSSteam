@@ -116,6 +116,11 @@ priority 75: mapping to tool SteamLinuxRuntime_sniper with priority 100
 already exists"). *Unverified:* which of two mappings of the same
 priority wins; ossteam keeps the first in the order of the table.
 
+A tool of the list (§1) gets no mapping: it runs as a program of its
+`to_oslist`, and its depots are the host's (§4). (Tools' own info need
+not name `linux` in `common/oslist`; without this rule the default would
+map them to Proton.)
+
 A mapping whose `tool` is empty, or names no tool (§1), is ignored. The
 entries also have a `config` (always `none` in the cache) and a
 `comment`. ossteam ignores both (*unverified* meaning of `config`).
@@ -193,7 +198,9 @@ requires, and so on outwards. A tool that requires itself or a tool
 already in the chain is an error. Before a launch, every tool in the
 chain must be installed and up to date. A tool that is not installed is
 installed, and one with an update is updated, as jobs that the launch
-waits for. The launch then shows the step as `INSTALLING_TOOLS`. The
+waits for: the `Launch` reply comes once they have ended and the game
+has started, and the jobs show the progress in the meantime. A tool job
+that fails fails the launch with `CONFLICT`, naming the job. The
 manifest of a tool is read only after it is installed, so the chain is
 completed one tool at a time. *Unverified:* whether the official client
 installs tools in the game's library folder; ossteam uses the folder of
@@ -269,7 +276,7 @@ On top of `launch-env.md` §1, a launch through a tool sets:
 | `STEAM_COMPAT_CLIENT_INSTALL_PATH` | the generated client-install directory (§6.2) |
 | `STEAM_COMPAT_LIBRARY_PATHS` | the library folders that hold the app and every tool of the chain, `:`-separated, without duplicates |
 | `STEAM_COMPAT_TOOL_PATHS` | the install directories of the chain's tools, innermost first, `:`-separated |
-| `STEAM_COMPAT_MOUNTS` | the directory of ossteam's client library (§9), when it is not under the home directory |
+| `STEAM_COMPAT_MOUNTS` | `<data>/steam-sdk`, the directory of ossteam's client library (§9), when it is not under the home directory |
 | `STEAM_COMPAT_CONFIG` | the app's `config` from `app_compat_configs` (§5.3), when it has one |
 
 `SteamAppId` and the other variables of `launch-env.md` §1 are set for

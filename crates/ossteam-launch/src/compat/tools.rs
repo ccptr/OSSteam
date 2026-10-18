@@ -214,6 +214,10 @@ impl ToolList {
     /// none and runs natively (§2). A mapping only replaces one of a
     /// lower priority, so among equals the first of the table wins.
     pub fn resolve(&self, input: MappingInput<'_>) -> Option<Mapping<'_>> {
+        // A tool is a program for its `to_oslist` and runs as one.
+        if self.by_app(input.app).is_some() {
+            return None;
+        }
         let mut best: Option<Mapping<'_>> = None;
         let mut offer = |name: &str, source, priority| {
             let Some(tool) = self.find(name) else {
@@ -510,6 +514,15 @@ pub(crate) mod tests {
         // An empty Valve mapping is no mapping.
         let m = l.resolve(input(227000, Some(&windows))).unwrap();
         assert_eq!(m.source, Source::Default);
+
+        // Tools get no tool, whatever their info says.
+        assert!(
+            l.resolve(MappingInput {
+                user: "proton-stable",
+                ..input(1628350, Some(&windows))
+            })
+            .is_none()
+        );
     }
 
     #[test]

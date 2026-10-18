@@ -423,7 +423,7 @@ impl Core {
             request::Method::CancelJob(req) => Some(self.cancel_job(req.job_id)),
             request::Method::SetJobPriority(req) => Some(self.set_job_priority(&req)),
             request::Method::GetLaunchOptions(req) => Some(self.get_launch_options(&req)),
-            request::Method::Launch(req) => Some(self.launch(&req)),
+            request::Method::Launch(req) => self.launch(to, req),
             request::Method::ListRunning(_) => Some(Ok(self.list_running())),
             request::Method::StopGame(req) => Some(self.stop_game(&req)),
         };

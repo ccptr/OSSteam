@@ -209,7 +209,7 @@ impl Game {
 }
 
 /// The inherited environment with `vars` set, as a sorted UTF-16 block.
-fn environment_block(vars: &[(&'static str, String)]) -> Vec<u16> {
+fn environment_block(vars: &[(String, String)]) -> Vec<u16> {
     let mut all: Vec<(OsString, OsString)> = std::env::vars_os()
         .filter(|(k, _)| !vars.iter().any(|(n, _)| k.eq_ignore_ascii_case(n)))
         .collect();

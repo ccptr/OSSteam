@@ -1307,10 +1307,16 @@ fn app_buffer(id: u32, app: &App) -> Vec<u8> {
     if let Some(parent) = app.parent {
         common.push("parent", parent.to_string());
     }
+    // A `common` section adds to the one made from the name and type.
+    for (_, v) in app.sections.iter().filter(|(k, _)| k == "common") {
+        for (k, v) in v.iter() {
+            common.set(k, v.clone());
+        }
+    }
     let mut info = Object::new();
     info.push("appid", id.to_string());
     info.push("common", common);
-    for (k, v) in &app.sections {
+    for (k, v) in app.sections.iter().filter(|(k, _)| k != "common") {
         info.push(k.as_str(), v.clone());
     }
     let mut root = Object::new();

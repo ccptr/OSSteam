@@ -13,6 +13,7 @@ mod loopback;
 mod m1a;
 mod m1b;
 mod m1c;
+mod m1d;
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;

@@ -28,8 +28,9 @@ const GAME_DEPOT: u32 = 201;
 const ACCOUNT_ID: u32 = 1001;
 const POLL: Duration = Duration::from_millis(200);
 
-/// The game: writes how it was started next to itself, then does what its
-/// first extra argument says.
+/// The game: writes how it was started into its working directory, the
+/// install directory (`launch.md` §3), then does what its first extra
+/// argument says.
 const SCRIPT: &[u8] = br#"#!/bin/sh
 pwd > cwd.txt
 printf '%s\n' "$@" > args.txt
@@ -329,10 +330,9 @@ fn launch_supervise_stop_and_play_session() {
     assert_eq!(started, game);
     let e = exited(&c);
     assert_eq!(e.status, Some(game_exited::Status::ExitCode(3)));
-    let bin = dir.join("bin");
-    let read = |n: &str| std::fs::read_to_string(bin.join(n)).unwrap_or_default();
+    let read = |n: &str| std::fs::read_to_string(dir.join(n)).unwrap_or_default();
     assert_eq!(read("args.txt"), "-steam\nexit\nit's\n");
-    assert_eq!(read("cwd.txt").trim(), bin.to_str().unwrap());
+    assert_eq!(read("cwd.txt").trim(), dir.to_str().unwrap());
     let env = read("env.txt");
     for var in [
         "SteamAppId=20",
@@ -641,9 +641,8 @@ fn launch_reports_what_the_game_used() {
     login(&d);
     let c = d.subscribed(&[Topic::Jobs, Topic::Games]);
     let dir = install(&c);
-    let bin = dir.join("bin");
     std::fs::write(
-        bin.join("shim-address.txt"),
+        dir.join("shim-address.txt"),
         root.path().join("run").to_str().unwrap(),
     )
     .unwrap();
@@ -661,7 +660,7 @@ fn launch_reports_what_the_game_used() {
     let log = std::fs::read_to_string(&game.log).unwrap_or_default();
     assert_eq!(e.status, Some(game_exited::Status::ExitCode(0)), "{log}");
     assert_eq!(
-        std::fs::read_to_string(bin.join("launched.txt")).unwrap(),
+        std::fs::read_to_string(dir.join("launched.txt")).unwrap(),
         "true",
         "{log}"
     );

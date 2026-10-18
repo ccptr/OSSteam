@@ -26,6 +26,18 @@ cargo build --release
 target/release/ossteam daemon status
 ```
 
+Games reach the daemon through the Steamworks client library. This
+builds it for the host's 64-bit target and its 32-bit counterpart, and
+puts both where the daemon looks for them (next to it, and in `lib32/`):
+
+```sh
+cargo xtask build-steamclient --release
+cargo xtask build-steamclient --release --target x86_64-pc-windows-gnu
+```
+
+The 32-bit build needs the target's standard library (`rustup target
+add i686-unknown-linux-gnu`) and, on Linux, 32-bit glibc and libgcc.
+
 On Linux, gpui needs development packages for Wayland, X11 (xcb and
 xkbcommon), fontconfig, ALSA and Vulkan. CI installs these on Ubuntu:
 

@@ -10,7 +10,11 @@
 //! - `import-steamworks <lsteamclient dir>`: rewrites the Steamworks
 //!   vtable table (`docs/spec/steamworks/vtables.txt`) from Proton's
 //!   interface wrappers.
+//! - `build-steamclient [--release] [--target <triple>]`: builds the
+//!   Steamworks client library for a 64-bit target and its 32-bit
+//!   counterpart, laid out as the daemon expects (`lib32/`).
 
+mod steamclient;
 mod steamworks;
 
 use std::collections::BTreeMap;
@@ -92,9 +96,10 @@ fn main() -> ExitCode {
                 "usage: cargo xtask import-steamworks <Proton lsteamclient directory>"
             )),
         },
+        Some("build-steamclient") => steamclient::build(args.collect()),
         Some(other) => Err(anyhow::anyhow!("unknown command {other:?}")),
         None => Err(anyhow::anyhow!(
-            "usage: cargo xtask <check-layering|check-spdx|update-protos|import-steamworks>"
+            "usage: cargo xtask <check-layering|check-spdx|update-protos|import-steamworks|build-steamclient>"
         )),
     };
     match result {

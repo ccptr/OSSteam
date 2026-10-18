@@ -276,7 +276,10 @@ file.
 
 Events on `GAMES`: `GameStarted{game}` after the process is created,
 and `GameExited{app_id, exit_code | signal, seconds}` after the last
-process of the game is gone. Exactly one of `exit_code` and `signal` is
+process of the game is gone and its connections to the game endpoint
+have closed, at most 2 s later (`steamworks-abi.md` §3.5). Just before
+`GameExited` comes `ShimReport` when any of the game's processes loaded
+ossteam's Steamworks library (`steamworks-abi.md` §4). Exactly one of `exit_code` and `signal` is
 set: the exit code of the process the daemon started, or the signal
 that ended it. On Windows, `exit_code` is the process's exit code as an
 unsigned 32-bit number.

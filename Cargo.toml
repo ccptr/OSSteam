@@ -9,6 +9,8 @@ members = [
     "crates/ossteam-pics",
     "crates/ossteam-content",
     "crates/ossteam-launch",
+    "crates/ossteam-gameipc",
+    "crates/ossteam-steamclient",
     "crates/ossteam-ipc",
     "crates/ossteamd",
     "crates/ossteam-cli",
@@ -24,6 +26,8 @@ default-members = [
     "crates/ossteam-pics",
     "crates/ossteam-content",
     "crates/ossteam-launch",
+    "crates/ossteam-gameipc",
+    "crates/ossteam-steamclient",
     "crates/ossteam-ipc",
     "crates/ossteamd",
     "crates/ossteam-cli",
@@ -45,6 +49,7 @@ ossteam-auth = { path = "crates/ossteam-auth" }
 ossteam-pics = { path = "crates/ossteam-pics" }
 ossteam-content = { path = "crates/ossteam-content" }
 ossteam-launch = { path = "crates/ossteam-launch" }
+ossteam-gameipc = { path = "crates/ossteam-gameipc" }
 ossteam-ipc = { path = "crates/ossteam-ipc" }
 
 aes = "0.8.4"

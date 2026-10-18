@@ -267,6 +267,10 @@ impl Stopper {
             .unwrap_or_else(|e| tracing::error!("starting the stop timer failed: {e}"));
     }
 
+    pub fn contains(&self, pid: u32) -> bool {
+        !self.done.load(Ordering::SeqCst) && self.pids().contains(&pid)
+    }
+
     /// The processes in the job.
     fn pids(&self) -> Vec<u32> {
         // JOBOBJECT_BASIC_PROCESS_ID_LIST: two u32 counts, then the ids as

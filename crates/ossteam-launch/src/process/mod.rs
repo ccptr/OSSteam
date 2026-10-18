@@ -90,4 +90,12 @@ impl Stopper {
     pub fn stop(&self, timeout: Duration) {
         self.0.stop(timeout);
     }
+
+    /// Whether `pid` is a process of the game's tree (`launch.md` §4): a
+    /// descendant of the reaper on Linux, a member of the game's process
+    /// group on macOS, a process in its job object on Windows. False once
+    /// the tree is gone.
+    pub fn contains(&self, pid: u32) -> bool {
+        self.0.contains(pid)
+    }
 }

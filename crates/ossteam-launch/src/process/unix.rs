@@ -128,6 +128,25 @@ impl Stopper {
     }
 }
 
+impl Stopper {
+    #[cfg(target_os = "linux")]
+    pub fn contains(&self, pid: u32) -> bool {
+        !self.done.load(Ordering::SeqCst)
+            && i32::try_from(pid).is_ok_and(|p| descendants(self.pid).contains(&p))
+    }
+
+    #[cfg(not(target_os = "linux"))]
+    pub fn contains(&self, pid: u32) -> bool {
+        if self.done.load(Ordering::SeqCst) {
+            return false;
+        }
+        let Some(p) = i32::try_from(pid).ok().and_then(Pid::from_raw) else {
+            return false;
+        };
+        rustix::process::getpgid(Some(p)).is_ok_and(|g| g.as_raw_nonzero().get() == self.pid)
+    }
+}
+
 /// Linux: every descendant of the reaper, but not the reaper, which must
 /// outlive them.
 #[cfg(target_os = "linux")]

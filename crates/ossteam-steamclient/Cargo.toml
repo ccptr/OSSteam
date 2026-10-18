@@ -1,0 +1,21 @@
+[package]
+name = "ossteam-steamclient"
+description = "ossteam's Steamworks client library, loaded by games through steam_api"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[lib]
+# The cdylib is what steam_api loads; the rlib lets tests call it.
+crate-type = ["cdylib", "rlib"]
+
+# SPEC WS-2: the game IPC protocol and plain types only.
+[dependencies]
+ossteam-gameipc.workspace = true
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { workspace = true, features = ["Win32_System_Power"] }
+
+[lints]
+workspace = true

@@ -24,6 +24,7 @@ use crate::{assets, content, launch, library, pics};
 
 mod games;
 mod jobs;
+mod shim;
 
 pub use games::app_launch_options;
 
@@ -65,6 +66,11 @@ pub enum Command {
     Content(content::Report),
     /// From a game's supervisor thread.
     Game(launch::Exited),
+    /// From a game endpoint connection.
+    Shim(crate::gameipc::Event),
+    /// A game's connections had their time to close (`steamworks-abi.md`
+    /// §3.5).
+    GameExitWait(ossteam_types::AppId),
 }
 
 /// Why the core loop ended.
@@ -112,6 +118,8 @@ pub struct Core {
     content_jobs: content::Handle,
     /// Running games and the discovery entries.
     games: games::Games,
+    /// Game endpoint connections and their reports.
+    shims: shim::Shims,
 }
 
 /// What a `Core` is made of.
@@ -156,6 +164,7 @@ impl Core {
             },
             content_jobs: p.content_jobs,
             games: games::Games::new(p.launch, &p.data_dir, &p.state_dir, p.commands),
+            shims: shim::Shims::new(&p.data_dir),
         }
         .loaded()
     }
@@ -224,6 +233,8 @@ impl Core {
                 Command::Asset(done) => self.on_asset(done),
                 Command::Content(report) => self.on_content(report),
                 Command::Game(exited) => self.on_game(exited),
+                Command::Shim(e) => self.on_shim(e),
+                Command::GameExitWait(app) => self.exit_wait_over(app),
             }
         };
         // Running jobs stop first and keep their journals (`content.md`
@@ -429,9 +440,14 @@ impl Core {
                 if state != self.session_state {
                     tracing::debug!(?state, "session changed");
                     let logged_on = state.logged_on;
+                    if state.account.is_none() {
+                        self.shims.clock = None;
+                        self.shims.ip_country.clear();
+                    }
                     self.session_state = state;
                     self.sync_discovery();
                     self.broadcast_session();
+                    self.update_shims();
                     if logged_on {
                         self.schedule();
                     } else {
@@ -443,8 +459,11 @@ impl Core {
             Report::LoggedOn {
                 steam_id,
                 requester,
+                ip_country,
+                server_time,
             } => {
                 self.set_requester(Some(requester));
+                self.shim_logged_on(ip_country, server_time);
                 // The server forgot the play session with the connection.
                 if self.games_running() {
                     self.send_games_played();
@@ -487,6 +506,7 @@ impl Core {
         self.library = update.snapshot;
         self.check_updates();
         self.schedule();
+        self.update_shims();
         if !changed.is_empty() || complete != was_complete {
             self.broadcast(
                 Topic::Library,
@@ -596,6 +616,7 @@ impl Core {
         // Applied now if logged on; otherwise at the next logon.
         self.session.send(Cmd::SetPersonaState { steam_id, state });
         self.broadcast_session();
+        self.update_shims();
         Ok(response::Result::SetPersonaState(
             v1::SetPersonaStateResponse {},
         ))
@@ -626,6 +647,7 @@ impl Core {
         let after = self.config.proto(def);
         tracing::info!(key = def.key, value = %after.value, reset = req.reset, "setting changed");
         self.apply_settings();
+        self.update_shims();
         if after != before {
             self.broadcast(
                 Topic::Daemon,

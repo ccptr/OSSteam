@@ -58,6 +58,10 @@ pub struct LogonOk {
     pub cell_id: Option<u32>,
     pub public_ip: Option<IpAddr>,
     pub country: Option<String>,
+    /// The country of the address the server saw (`ip_country_code`).
+    pub ip_country: Option<String>,
+    /// Steam's clock when the server answered (`rtime32_server_time`).
+    pub server_time: Option<u32>,
     pub vanity_url: Option<String>,
     pub email_domain: Option<String>,
 }
@@ -155,6 +159,8 @@ pub fn parse_logon_response(packet: &Packet) -> Result<LogonOk, LogonError> {
             .clone()
             .or(body.ip_country_code.clone())
             .filter(|c| !c.is_empty()),
+        ip_country: body.ip_country_code.clone().filter(|c| !c.is_empty()),
+        server_time: body.rtime32_server_time.filter(|&t| t != 0),
         vanity_url: body.vanity_url.clone().filter(|v| !v.is_empty()),
         email_domain: body.email_domain.clone().filter(|d| !d.is_empty()),
     })

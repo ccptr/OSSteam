@@ -149,6 +149,11 @@ fn to_json(ev: &Event) -> Value {
             v["event"] = "game_exited".into();
             v
         }
+        Some(event::Kind::ShimReport(r)) => {
+            let mut v = crate::games::shim_report_json(r);
+            v["event"] = "shim_report".into();
+            v
+        }
         // An event kind newer than this client.
         None => json!({ "event": "unknown" }),
     }
@@ -227,6 +232,19 @@ fn to_text(ev: &Event) -> String {
             None => "game     started".into(),
         },
         Some(event::Kind::GameExited(e)) => format!("game     {}", crate::games::exited_text(e)),
+        Some(event::Kind::ShimReport(r)) => {
+            let who = if r.launched {
+                "app"
+            } else {
+                "a process claiming app"
+            };
+            format!(
+                "game     {who} {} (pid {}): {}",
+                r.app_id,
+                r.pid,
+                crate::games::shim_report_text(r).replace('\n', "\n         ")
+            )
+        }
         None => "unknown event".into(),
     }
 }

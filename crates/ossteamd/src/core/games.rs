@@ -61,6 +61,14 @@ impl Games {
             commands,
         }
     }
+
+    /// Whether `pid` belongs to the running game launched for `app`
+    /// (`steamworks-abi.md` §3.5).
+    pub fn launched(&self, app: AppId, pid: u32) -> bool {
+        self.running
+            .get(&app)
+            .is_some_and(|r| r.stopper.contains(pid))
+    }
 }
 
 fn unsupported(m: impl Into<String>) -> RemoteError {
@@ -217,7 +225,7 @@ impl Core {
         let Some(installed) = self.content.installed.get(&app).cloned() else {
             return Err(not_found(format!("app {app} is not installed")));
         };
-        if self.games.running.contains_key(&app) {
+        if self.games.running.contains_key(&app) || self.game_exiting(app) {
             return Err(conflict(format!("app {app} is already running")));
         }
         if let Some(j) = self.unfinished_job(app) {
@@ -380,6 +388,12 @@ impl Core {
         }
         let r = self.games.running.remove(&e.app).expect("checked above");
         let seconds = r.started.elapsed().as_secs();
+        self.game_gone(e, r, seconds);
+    }
+
+    /// The game's end, once its connections to the game endpoint closed
+    /// (`steamworks-abi.md` §3.5).
+    pub(super) fn announce_exit(&mut self, e: Exited, r: Running, seconds: u64) {
         let status = match e.exit {
             Ok(Exit::Code(c)) => v1::game_exited::Status::ExitCode(c),
             Ok(Exit::Signal(s)) => v1::game_exited::Status::Signal(s),

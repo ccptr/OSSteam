@@ -126,6 +126,10 @@ pub enum Report {
     LoggedOn {
         steam_id: SteamId,
         requester: ossteam_net::Requester,
+        /// The country of the address Steam saw, or empty.
+        ip_country: String,
+        /// Steam's clock in the logon response.
+        server_time: Option<u32>,
     },
     PersonaName {
         steam_id: SteamId,

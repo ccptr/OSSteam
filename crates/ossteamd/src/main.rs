@@ -6,6 +6,7 @@ mod config;
 mod content;
 mod core;
 mod db;
+mod gameipc;
 mod launch;
 mod library;
 mod logging;
@@ -129,6 +130,12 @@ fn run(args: &Args) -> anyhow::Result<ExitCode> {
     let listener = endpoint
         .listen()
         .with_context(|| format!("listening on {}", endpoint.address))?;
+    let game_address =
+        ossteam_gameipc::endpoint::Address::locate().context("locating the game endpoint")?;
+    let game_endpoint = gameipc::endpoint(&endpoint, &game_address);
+    let game_listener = game_endpoint
+        .listen()
+        .with_context(|| format!("listening on {}", game_endpoint.address))?;
     tracing::info!(pid = std::process::id(), address = %endpoint.address, "ossteamd {} started", env!("CARGO_PKG_VERSION"));
     tracing::debug!(
         config = %paths.config.display(),
@@ -144,6 +151,8 @@ fn run(args: &Args) -> anyhow::Result<ExitCode> {
             paths,
             listener,
             endpoint,
+            game_listener,
+            game_endpoint,
             dialer,
             open_secrets: secrets::Secrets::open,
             pics_poll: pics::POLL_INTERVAL,
@@ -168,6 +177,9 @@ struct Env {
     paths: paths::Paths,
     listener: Listener,
     endpoint: Endpoint,
+    /// The game endpoint (`steamworks-abi.md` §3.1).
+    game_listener: Listener,
+    game_endpoint: Endpoint,
     dialer: Box<dyn session::Dialer>,
     open_secrets: fn(bool, &Path) -> secrets::Secrets,
     pics_poll: Duration,
@@ -188,6 +200,8 @@ fn serve(
         paths,
         listener,
         endpoint,
+        game_listener,
+        game_endpoint,
         dialer,
         open_secrets,
         pics_poll,
@@ -208,6 +222,8 @@ fn serve(
     let (alive_tx, alive_rx) = bounded::<()>(0);
     let server = server::Server::start(listener, endpoint, cmd_tx.clone(), alive_tx)
         .context("starting the IPC server")?;
+    let game_server = gameipc::Server::start(game_listener, game_endpoint, cmd_tx.clone())
+        .context("starting the game endpoint")?;
 
     let pics_dir = paths.cache.join("pics");
     let pics = pics::Handle::spawn(Cache::new(&pics_dir), pics_poll, cmd_tx.clone())
@@ -264,6 +280,7 @@ fn serve(
     // Shutdown response and DaemonStopping. The lock is released when the
     // process exits.
     server.stop();
+    game_server.stop();
     let deadline = Instant::now() + FLUSH_TIMEOUT;
     match alive_rx.recv_deadline(deadline) {
         Err(RecvTimeoutError::Disconnected) | Ok(()) => {}

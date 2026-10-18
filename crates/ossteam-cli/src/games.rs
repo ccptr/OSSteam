@@ -42,14 +42,18 @@ pub fn launch(
         );
     }
     if wait {
-        let exited = wait_exit(&client, id, None)?;
+        let (exited, report) = wait_exit(&client, id, None)?;
         if cli.json {
             println!(
                 "{}",
-                json!({ "game": game_json(&game), "exited": exited_json(&exited) })
+                json!({
+                    "game": game_json(&game),
+                    "exited": exited_json(&exited),
+                    "shim_report": report.as_ref().map(shim_report_json),
+                })
             );
         } else if !cli.quiet {
-            println!("{}", exited_text(&exited));
+            print_exit(&exited, report.as_ref());
         }
     }
     Ok(())
@@ -152,21 +156,33 @@ pub fn stop(cli: &Cli, app: &str) -> Result<(), Failure> {
     if !cli.quiet && !cli.json && std::io::stderr().is_terminal() {
         eprintln!("asked app {id} to close; waiting for it");
     }
-    let exited = wait_exit(&client, id, Some(STOP_WAIT))?;
+    let (exited, report) = wait_exit(&client, id, Some(STOP_WAIT))?;
     if cli.json {
-        println!("{}", exited_json(&exited));
+        let mut v = exited_json(&exited);
+        v["shim_report"] = report.as_ref().map(shim_report_json).into();
+        println!("{v}");
     } else if !cli.quiet {
-        println!("{}", exited_text(&exited));
+        print_exit(&exited, report.as_ref());
     }
     Ok(())
 }
 
-/// Waits for the app's `GameExited`.
+fn print_exit(exited: &v1::GameExited, report: Option<&v1::ShimReport>) {
+    println!("{}", exited_text(exited));
+    if let Some(r) = report {
+        println!("{}", shim_report_text(r));
+    }
+}
+
+/// Waits for the app's `GameExited`, and the `ShimReport` that comes just
+/// before it when the game loaded the Steamworks library
+/// (`steamworks-abi.md` §4).
 fn wait_exit(
     client: &Client,
     app: u32,
     limit: Option<Duration>,
-) -> Result<v1::GameExited, Failure> {
+) -> Result<(v1::GameExited, Option<v1::ShimReport>), Failure> {
+    let mut report = None;
     let deadline = limit.map(|l| Instant::now() + l);
     loop {
         let ev = match deadline {
@@ -186,7 +202,8 @@ fn wait_exit(
             ));
         };
         match ev.kind {
-            Some(event::Kind::GameExited(e)) if e.app_id == app => return Ok(e),
+            Some(event::Kind::ShimReport(r)) if r.app_id == app && r.launched => report = Some(r),
+            Some(event::Kind::GameExited(e)) if e.app_id == app => return Ok((e, report)),
             Some(event::Kind::DaemonStopping(_)) => {
                 return Err(Failure::new(
                     exit::DAEMON_UNAVAILABLE,
@@ -228,4 +245,51 @@ pub fn exited_text(e: &v1::GameExited) -> String {
         e.app_id,
         crate::format_uptime(e.seconds)
     )
+}
+
+pub fn shim_report_json(r: &v1::ShimReport) -> Value {
+    json!({
+        "app_id": r.app_id,
+        "pid": r.pid,
+        "launched": r.launched,
+        "interfaces": r.interfaces,
+        "unknown_versions": r.unknown_versions,
+        "unimplemented": r
+            .unimplemented
+            .iter()
+            .map(|c| json!({ "interface": c.interface, "method": c.method, "count": c.count }))
+            .collect::<Vec<_>>(),
+    })
+}
+
+/// What the game asked for that ossteam does not provide, one item per
+/// line after a summary.
+pub fn shim_report_text(r: &v1::ShimReport) -> String {
+    let mut out = format!(
+        "the Steamworks library handed out {} interface version{}",
+        r.interfaces.len(),
+        if r.interfaces.len() == 1 { "" } else { "s" }
+    );
+    if r.unknown_versions.is_empty() && r.unimplemented.is_empty() {
+        out.push_str("; everything the game called is implemented");
+        return out;
+    }
+    if !r.unknown_versions.is_empty() {
+        out.push_str(&format!(
+            "\nversions it asked for that ossteam does not have: {}",
+            r.unknown_versions.join(", ")
+        ));
+    }
+    if !r.unimplemented.is_empty() {
+        out.push_str("\nunimplemented calls (they returned failure values):");
+        for c in &r.unimplemented {
+            let name = if c.interface == "exports" {
+                c.method.clone()
+            } else {
+                format!("{}::{}", c.interface, c.method)
+            };
+            out.push_str(&format!("\n  {:>8}  {name}", c.count));
+        }
+    }
+    out
 }

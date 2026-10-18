@@ -38,6 +38,7 @@ echo "game output"
 case "$2" in
   exit) exit 3 ;;
   wait) exec sleep 60 ;;
+  shim) exec "$3" --exact testing::m1c::shim_in_a_game --ignored --nocapture ;;
 esac
 "#;
 
@@ -397,5 +398,269 @@ fn launch_supervise_stop_and_play_session() {
     );
     assert!(c.list_running().unwrap().is_empty());
     assert_eq!(code(c.stop_game(GAME)), ErrorCode::NotFound);
+    d.stop();
+}
+
+/// Connects to the test daemon's game endpoint as the shim does.
+fn shim_connect(
+    addr: &ossteam_gameipc::endpoint::Address,
+    hello: ossteam_gameipc::Hello,
+) -> (
+    ossteam_gameipc::endpoint::Connection,
+    ossteam_gameipc::Message,
+) {
+    let mut conn = ossteam_gameipc::endpoint::connect(addr).expect("connect to the game endpoint");
+    ossteam_gameipc::write_message(&mut conn.writer, &ossteam_gameipc::Message::Hello(hello))
+        .expect("hello");
+    let answer = ossteam_gameipc::read_message(&mut conn.reader).expect("an answer");
+    (conn, answer)
+}
+
+fn hello(app_id: u32) -> ossteam_gameipc::Hello {
+    ossteam_gameipc::Hello {
+        protocol: ossteam_gameipc::PROTOCOL,
+        pid: std::process::id(),
+        app_id,
+        arch: "x86_64".into(),
+        version: "test".into(),
+    }
+}
+
+fn shim_report(c: &Client, pid: u32) -> v1::ShimReport {
+    wait_event(c, "a shim report", |k| match k {
+        ossteam_ipc::v1::event::Kind::ShimReport(r) if r.pid == pid => Some(r.clone()),
+        _ => None,
+    })
+}
+
+/// A process that is not launched (`steamworks-abi.md` §3): the
+/// handshake, what it is told, `AppState`, updates and its report.
+#[cfg(unix)]
+#[test]
+fn games_talk_to_the_game_endpoint() {
+    use ossteam_gameipc::{
+        AppStateRequest, Call, Message, Report, Request, RequestBody, ResponseBody,
+    };
+
+    let cdn = Arc::new(FakeCdn::new());
+    let (os, _) = oses();
+    let cm = steam(&cdn, &[("bin/game.sh", os)]);
+    let root = Root::new();
+    let addr = root.game_address();
+    let d = TestDaemon::start_with_cdn(&root, &cm, POLL, cdn.clone());
+
+    // The endpoint is there before any login, and refuses what does not
+    // fit.
+    let (_, answer) = shim_connect(
+        &addr,
+        ossteam_gameipc::Hello {
+            protocol: 99,
+            ..hello(GAME)
+        },
+    );
+    assert!(matches!(answer, Message::Refused(r) if r.reason.contains("99")));
+    let (_, answer) = shim_connect(
+        &addr,
+        ossteam_gameipc::Hello {
+            pid: 1,
+            ..hello(GAME)
+        },
+    );
+    assert!(matches!(answer, Message::Refused(r) if r.reason.contains("pid")));
+    let (_, answer) = shim_connect(&addr, hello(GAME));
+    let Message::Welcome(w) = answer else {
+        panic!("{answer:?}")
+    };
+    assert!(!w.session.active);
+    assert!(!w.app.owned);
+    assert!(w.app.user_dir.is_empty());
+
+    login(&d);
+    let c = d.subscribed(&[Topic::Jobs, Topic::Games]);
+    let dir = install(&c);
+    let (mut conn, answer) = shim_connect(&addr, hello(GAME));
+    let Message::Welcome(w) = answer else {
+        panic!("{answer:?}")
+    };
+    let s = &w.session;
+    assert!(s.active && s.logged_on);
+    assert_eq!(ossteam_types::SteamId(s.steam_id).account_id(), ACCOUNT_ID);
+    assert_eq!(s.ip_country, super::fake_cm::FAKE_COUNTRY);
+    assert!(s.server_time >= super::fake_cm::FAKE_SERVER_TIME);
+    assert_eq!(s.universe, 1);
+    assert_eq!(s.persona_state, 1);
+    let a = &w.app;
+    assert_eq!(a.app_id, GAME);
+    assert!(a.owned && a.installed && !a.launched);
+    assert_eq!(PathBuf::from(&a.install_dir), dir);
+    assert_eq!(a.build_id, 1);
+    assert_eq!(a.depots, [GAME_DEPOT]);
+    assert!(a.branch.is_empty());
+    assert_eq!(a.owner, s.steam_id);
+    assert_eq!(
+        PathBuf::from(&a.user_dir),
+        root.path()
+            .join("data/userdata")
+            .join(ACCOUNT_ID.to_string())
+            .join(GAME.to_string())
+    );
+
+    // Another app, and one the account does not own.
+    let ask = |conn: &mut ossteam_gameipc::endpoint::Connection, id: u32, app_id: u32| {
+        let req = Message::Request(Request {
+            id,
+            body: RequestBody::AppState(AppStateRequest { app_id }),
+        });
+        ossteam_gameipc::write_message(&mut conn.writer, &req).unwrap();
+        loop {
+            match ossteam_gameipc::read_message(&mut conn.reader).unwrap() {
+                Message::Response(r) if r.id == id => break r.body,
+                _ => {}
+            }
+        }
+    };
+    let ResponseBody::AppState(other) = ask(&mut conn, 1, OTHER) else {
+        panic!()
+    };
+    assert!(other.owned && !other.installed && other.install_dir.is_empty());
+    let ResponseBody::AppState(none) = ask(&mut conn, 2, 999) else {
+        panic!()
+    };
+    assert!(!none.owned && !none.installed);
+
+    // The connection to Steam drops: the game hears of it.
+    cm.drop_connections();
+    loop {
+        match ossteam_gameipc::read_message(&mut conn.reader).unwrap() {
+            Message::SessionUpdate(s) if !s.logged_on => break,
+            _ => {}
+        }
+    }
+
+    // Its report arrives when it disconnects.
+    let report = Report {
+        interfaces: vec!["SteamClient020".into(), "SteamUser021".into()],
+        unknown: vec!["SteamFoo001".into()],
+        calls: vec![Call {
+            interface: "SteamUser021".into(),
+            method: "GetVoice".into(),
+            count: 3,
+        }],
+    };
+    ossteam_gameipc::write_message(&mut conn.writer, &Message::Report(report)).unwrap();
+    let more = Report {
+        interfaces: vec!["SteamUser021".into()],
+        unknown: vec![],
+        calls: vec![
+            Call {
+                interface: "SteamUser021".into(),
+                method: "GetVoice".into(),
+                count: 1,
+            },
+            Call {
+                interface: "exports".into(),
+                method: "Breakpad_SteamSetAppID".into(),
+                count: 9,
+            },
+        ],
+    };
+    ossteam_gameipc::write_message(&mut conn.writer, &Message::Report(more)).unwrap();
+    (conn.closer)();
+    drop(conn);
+    let r = shim_report(&c, std::process::id());
+    assert_eq!(r.app_id, GAME);
+    assert!(!r.launched);
+    assert_eq!(r.interfaces, ["SteamClient020", "SteamUser021"]);
+    assert_eq!(r.unknown_versions, ["SteamFoo001"]);
+    let calls: Vec<(&str, &str, u64)> = r
+        .unimplemented
+        .iter()
+        .map(|c| (c.interface.as_str(), c.method.as_str(), c.count))
+        .collect();
+    assert_eq!(
+        calls,
+        [
+            ("exports", "Breakpad_SteamSetAppID", 9),
+            ("SteamUser021", "GetVoice", 4)
+        ]
+    );
+    d.stop();
+}
+
+/// Run by the game script, not on its own: a process of the launched
+/// game that connects as the shim does, reports and exits.
+#[cfg(target_os = "linux")]
+#[test]
+#[ignore = "run by launch_reports_what_the_game_used"]
+fn shim_in_a_game() {
+    use ossteam_gameipc::{Call, Message, Report};
+
+    let Ok(app) = std::env::var("SteamAppId") else {
+        return;
+    };
+    let addr = std::fs::read_to_string("shim-address.txt").expect("the address");
+    let addr = ossteam_gameipc::endpoint::Address::in_dir(addr.trim());
+    let (mut conn, answer) = shim_connect(&addr, hello(app.parse().unwrap()));
+    let Message::Welcome(w) = answer else {
+        panic!("{answer:?}")
+    };
+    std::fs::write("launched.txt", w.app.launched.to_string()).unwrap();
+    let report = Report {
+        interfaces: vec!["SteamClient020".into()],
+        unknown: vec![],
+        calls: vec![Call {
+            interface: "SteamUser021".into(),
+            method: "GetPlayerSteamLevel".into(),
+            count: 2,
+        }],
+    };
+    ossteam_gameipc::write_message(&mut conn.writer, &Message::Report(report)).unwrap();
+}
+
+/// A launched game's processes are recognised, and their report comes
+/// just before `GameExited` (`steamworks-abi.md` §3.5, §4).
+#[cfg(target_os = "linux")]
+#[test]
+fn launch_reports_what_the_game_used() {
+    let cdn = Arc::new(FakeCdn::new());
+    let (os, _) = oses();
+    let cm = steam(&cdn, &[("bin/game.sh", os)]);
+    let root = Root::new();
+    root.install_client_libraries();
+    let d = TestDaemon::start_with_cdn(&root, &cm, POLL, cdn.clone());
+    login(&d);
+    let c = d.subscribed(&[Topic::Jobs, Topic::Games]);
+    let dir = install(&c);
+    let bin = dir.join("bin");
+    std::fs::write(
+        bin.join("shim-address.txt"),
+        root.path().join("run").to_str().unwrap(),
+    )
+    .unwrap();
+    let exe = std::env::current_exe().unwrap();
+    let game = launch(&c, None, &["shim", exe.to_str().unwrap()]).expect("launched");
+    let mut report = None;
+    let e = wait_event(&c, "the game to exit", |k| match k {
+        event::Kind::ShimReport(r) => {
+            report = Some(r.clone());
+            None
+        }
+        event::Kind::GameExited(e) if e.app_id == GAME => Some(*e),
+        _ => None,
+    });
+    let log = std::fs::read_to_string(&game.log).unwrap_or_default();
+    assert_eq!(e.status, Some(game_exited::Status::ExitCode(0)), "{log}");
+    assert_eq!(
+        std::fs::read_to_string(bin.join("launched.txt")).unwrap(),
+        "true",
+        "{log}"
+    );
+    let r = report.expect("a shim report before GameExited");
+    assert!(r.launched);
+    assert_eq!((r.app_id, r.pid), (GAME, game.pid));
+    assert_eq!(r.interfaces, ["SteamClient020"]);
+    assert_eq!(r.unimplemented.len(), 1);
+    assert_eq!(r.unimplemented[0].method, "GetPlayerSteamLevel");
+    assert_eq!(r.unimplemented[0].count, 2);
     d.stop();
 }

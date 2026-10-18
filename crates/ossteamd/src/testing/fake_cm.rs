@@ -53,6 +53,10 @@ use rsa::traits::PublicKeyParts;
 use rsa::{Pkcs1v15Encrypt, RsaPrivateKey};
 
 use super::loopback::{self, ServerEnd};
+
+/// What the fake CM's logon response says about the address and the clock.
+pub const FAKE_COUNTRY: &str = "DE";
+pub const FAKE_SERVER_TIME: u32 = 1_790_000_000;
 use crate::session::{Dialer, NoServer};
 
 /// The fake server's address. Nothing listens there; the dialer connects
@@ -790,6 +794,8 @@ impl FakeCm {
                 eresult: Some(EResult::OK.0),
                 heartbeat_seconds: Some(HEARTBEAT_SECONDS),
                 cell_id: Some(0),
+                ip_country_code: Some(FAKE_COUNTRY.into()),
+                rtime32_server_time: Some(FAKE_SERVER_TIME),
                 ..Default::default()
             },
         );

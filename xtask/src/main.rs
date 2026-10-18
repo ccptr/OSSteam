@@ -7,6 +7,11 @@
 //! - `update-protos <rev> [<file>...]`: re-vendors the Steam protobuf
 //!   definitions at an upstream commit, applies local patches and rewrites
 //!   `PROVENANCE.md` (LIC-5 to LIC-7).
+//! - `import-steamworks <lsteamclient dir>`: rewrites the Steamworks
+//!   vtable table (`docs/spec/steamworks/vtables.txt`) from Proton's
+//!   interface wrappers.
+
+mod steamworks;
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -81,9 +86,15 @@ fn main() -> ExitCode {
                 "usage: cargo xtask update-protos <rev> [<file>...]"
             )),
         },
+        Some("import-steamworks") => match args.next() {
+            Some(dir) => steamworks::import(Path::new(&dir)),
+            None => Err(anyhow::anyhow!(
+                "usage: cargo xtask import-steamworks <Proton lsteamclient directory>"
+            )),
+        },
         Some(other) => Err(anyhow::anyhow!("unknown command {other:?}")),
         None => Err(anyhow::anyhow!(
-            "usage: cargo xtask <check-layering|check-spdx|update-protos>"
+            "usage: cargo xtask <check-layering|check-spdx|update-protos|import-steamworks>"
         )),
     };
     match result {

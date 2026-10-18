@@ -824,6 +824,7 @@ impl Core {
                 self.content_jobs.finished(job_id);
                 self.finished(job_id, result);
                 self.schedule();
+                self.update_shims();
             }
         }
     }

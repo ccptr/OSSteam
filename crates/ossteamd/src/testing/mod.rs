@@ -116,6 +116,23 @@ impl Root {
     }
 }
 
+impl Root {
+    /// The test daemon's game endpoint, next to its client endpoint.
+    pub fn game_address(&self) -> ossteam_gameipc::endpoint::Address {
+        #[cfg(unix)]
+        {
+            ossteam_gameipc::endpoint::Address::in_dir(self.0.join("run"))
+        }
+        #[cfg(windows)]
+        {
+            let name = self.0.file_name().expect("named").to_string_lossy();
+            ossteam_gameipc::endpoint::Address {
+                name: format!("ossteam-test-game-{name}"),
+            }
+        }
+    }
+}
+
 impl Drop for Root {
     fn drop(&mut self) {
         let _ = std::fs::remove_dir_all(&self.0);
@@ -184,6 +201,8 @@ impl TestDaemon {
             .ensure_dir()
             .expect("prepare the endpoint directory");
         let listener = endpoint.listen().expect("listen");
+        let game_endpoint = crate::gameipc::endpoint(&endpoint, &root.game_address());
+        let game_listener = game_endpoint.listen().expect("listen for games");
         let launch = crate::launch::Settings {
             home: r.join("home"),
             library_dir: Some(root.library_dir()),
@@ -193,6 +212,8 @@ impl TestDaemon {
             paths,
             listener,
             endpoint: endpoint.clone(),
+            game_listener,
+            game_endpoint,
             dialer: cm.dialer(),
             open_secrets: file_secrets,
             pics_poll,

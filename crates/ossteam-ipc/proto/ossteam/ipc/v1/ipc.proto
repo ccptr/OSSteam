@@ -697,6 +697,7 @@ message Event {
     JobProgress job_progress = 9;
     GameStarted game_started = 10;
     GameExited game_exited = 11;
+    ShimReport shim_report = 12;
   }
 }
 
@@ -834,4 +835,28 @@ message GameExited {
   }
   // How long the game ran.
   uint64 seconds = 4;
+}
+
+// Topic: GAMES. What a game asked of the Steamworks library that ossteam
+// does not provide (steamworks-abi.md §4). For a launched game, sent once
+// just before its GameExited.
+message ShimReport {
+  uint32 app_id = 1;
+  // For a launched game the pid the daemon started; otherwise the
+  // process's own.
+  uint32 pid = 2;
+  bool launched = 3;
+  // Interface versions handed out, in the order first seen.
+  repeated string interfaces = 4;
+  // Versions asked for that the library does not have.
+  repeated string unknown_versions = 5;
+  // Calls to unimplemented methods and exports, highest count first.
+  repeated ShimCall unimplemented = 6;
+}
+
+message ShimCall {
+  // An interface version string, or `exports`.
+  string interface = 1;
+  string method = 2;
+  uint64 count = 3;
 }

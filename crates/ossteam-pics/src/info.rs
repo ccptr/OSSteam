@@ -275,6 +275,43 @@ impl AppInfo<'_> {
         str_at(self.0, &["config", "installdir"])
     }
 
+    /// The languages the app declares, in its order: the keys of
+    /// `common/languages` whose value is not 0, or else the keys of
+    /// `common/supported_languages` marked `supported`.
+    pub fn languages(&self) -> Vec<String> {
+        let keys = |key: &str, on: &dyn Fn(&Value) -> bool| -> Vec<String> {
+            self.0
+                .get_path(&["common", key])
+                .and_then(Value::as_object)
+                .map(|o| {
+                    o.iter()
+                        .filter(|(_, v)| on(v))
+                        .map(|(k, _)| k.to_owned())
+                        .collect()
+                })
+                .unwrap_or_default()
+        };
+        let declared = keys("languages", &|v| number::<i64>(v).is_some_and(|n| n != 0));
+        if !declared.is_empty() {
+            return declared;
+        }
+        // Steam writes `true` here, not 1.
+        keys("supported_languages", &|v| {
+            v.as_object()
+                .and_then(|o| o.get("supported"))
+                .is_some_and(|s| {
+                    s.as_bool() == Some(true)
+                        || s.as_str().is_some_and(|s| s.eq_ignore_ascii_case("true"))
+                })
+        })
+    }
+
+    /// `common/releasestate` (`released`, `prerelease`, ...); empty when
+    /// not given.
+    pub fn release_state(&self) -> &str {
+        str_at(self.0, &["common", "releasestate"])
+    }
+
     /// The depots, in the order the info lists them. Other keys under
     /// `depots`, such as `branches`, are not depots and are skipped.
     pub fn depots(&self) -> Vec<Depot> {
@@ -348,6 +385,13 @@ mod tests {
 		"name"		"Spacewar"
 		"type"		"Game"
 		"oslist"		"windows,linux"
+		"releasestate"		"released"
+		"languages"
+		{
+			"english"		"1"
+			"german"		"1"
+			"french"		"0"
+		}
 	}
 	"extended"
 	{
@@ -419,6 +463,8 @@ mod tests {
         assert_eq!(a.oslist(), ["windows", "linux"]);
         assert_eq!(a.dlc(), [AppId(110902), AppId(110903)]);
         assert_eq!(a.install_dir(), "Spacewar");
+        assert_eq!(a.languages(), ["english", "german"]);
+        assert_eq!(a.release_state(), "released");
         let d = a.depots();
         assert_eq!(d.len(), 2);
         assert_eq!(d[0].max_size, Some(1_048_576));
@@ -436,6 +482,13 @@ mod tests {
         let o = parse_app_buffer(buf).unwrap();
         assert!(AppInfo(&o).is_dlc());
         assert_eq!(AppInfo(&o).parent(), Some(AppId(480)));
+    }
+
+    #[test]
+    fn languages_fall_back_to_supported_languages() {
+        let buf = b"\"appinfo\" { \"common\" { \"supported_languages\" { \"english\" { \"supported\" \"true\" } \"polish\" { \"supported\" \"false\" } } } }\0";
+        let o = parse_app_buffer(buf).unwrap();
+        assert_eq!(AppInfo(&o).languages(), ["english"]);
     }
 
     #[test]

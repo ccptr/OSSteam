@@ -534,6 +534,8 @@ impl Worker {
         self.report(Report::LoggedOn {
             steam_id: ok.steam_id,
             requester: live.conn.requester(),
+            ip_country: ok.ip_country.clone().unwrap_or_default(),
+            server_time: ok.server_time,
         });
         self.logged_on = true;
         self.retry_at = None;

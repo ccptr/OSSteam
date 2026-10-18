@@ -9,6 +9,7 @@ publish.workspace = true
 [dependencies]
 ossteam-auth.workspace = true
 ossteam-content.workspace = true
+ossteam-gameipc.workspace = true
 ossteam-ipc.workspace = true
 ossteam-launch.workspace = true
 ossteam-net.workspace = true

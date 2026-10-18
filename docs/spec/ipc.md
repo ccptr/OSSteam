@@ -111,7 +111,7 @@ is left unchanged. Events always have `id = 0`.
 | `SESSION` | `SessionChanged`, `LoginPrompt`, `LoginEnded` (§5.2) |
 | `LIBRARY` | `AppChanged{app_ids, complete}` (§5.3) |
 | `JOBS` | `JobStateChanged{job}`, `JobProgress{job_id, progress}` (§5.6) |
-| `GAMES` | `GameStarted{game}`, `GameExited{app_id, exit_code \| signal, seconds}` (§5.7) |
+| `GAMES` | `GameStarted{game}`, `GameExited{app_id, exit_code \| signal, seconds}`, `ShimReport{app_id, pid, launched, interfaces, unknown_versions, unimplemented}` (§5.7) |
 
 ## 5. Methods
 
@@ -301,7 +301,8 @@ Events on `JOBS`:
 Launching is specified in `launch.md`; §8 there lists the methods
 (`GetLaunchOptions`, `Launch`, `ListRunning`, `StopGame`), the running
 game they return and the events on `GAMES`. `GetApp` lists the same
-launch options without `qualifies`.
+launch options without `qualifies`. `ShimReport` is specified in
+`steamworks-abi.md` §4.
 
 ## 6. Daemon lifecycle
 

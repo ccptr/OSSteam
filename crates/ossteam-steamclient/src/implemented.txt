@@ -1,0 +1,110 @@
+# The methods ossteam implements (steamworks-abi.md §2.4): each line maps
+# an interface's method with one signature to the function that runs in
+# every version whose slot has that signature. `bool` stands for an `i8`
+# that is a C++ bool, `steamid` for a returned CSteamID; other types are
+# those of vtables.txt.
+
+ISteamClient.CreateSteamPipe() -> i32 = client::create_steam_pipe
+ISteamClient.BReleaseSteamPipe(i32) -> bool = client::release_steam_pipe
+ISteamClient.BShutdownIfAllPipesClosed() -> bool = client::shutdown_if_all_pipes_closed
+ISteamClient.ConnectToGlobalUser(i32) -> i32 = client::connect_to_global_user
+ISteamClient.CreateLocalUser(ptr, u32) -> i32 = client::create_local_user
+ISteamClient.CreateLocalUser(ptr) -> i32 = client::create_local_user_old
+ISteamClient.CreateGlobalUser(ptr) -> i32 = client::create_local_user_old
+ISteamClient.ReleaseUser(i32, i32) -> void = client::release_user
+ISteamClient.GetISteamAppList(i32, i32, ptr) -> ptr = client::get_app_list
+ISteamClient.GetISteamApps(i32, i32, ptr) -> ptr = client::get_apps
+ISteamClient.GetISteamBilling(i32, i32, ptr) -> ptr = client::get_billing
+ISteamClient.GetISteamContentServer(i32, i32, ptr) -> ptr = client::get_content_server
+ISteamClient.GetISteamController(i32, i32, ptr) -> ptr = client::get_controller
+ISteamClient.GetISteamFriends(i32, i32, ptr) -> ptr = client::get_friends
+ISteamClient.GetISteamGameSearch(i32, i32, ptr) -> ptr = client::get_game_search
+ISteamClient.GetISteamGameServer(i32, i32, ptr) -> ptr = client::get_game_server
+ISteamClient.GetISteamGameServerStats(i32, i32, ptr) -> ptr = client::get_game_server_stats
+ISteamClient.GetISteamGenericInterface(i32, i32, ptr) -> ptr = client::get_generic
+ISteamClient.GetISteamHTMLSurface(i32, i32, ptr) -> ptr = client::get_html_surface
+ISteamClient.GetISteamHTTP(i32, i32, ptr) -> ptr = client::get_http
+ISteamClient.GetISteamInput(i32, i32, ptr) -> ptr = client::get_input
+ISteamClient.GetISteamInventory(i32, i32, ptr) -> ptr = client::get_inventory
+ISteamClient.GetISteamMasterServerUpdater(i32, i32, ptr) -> ptr = client::get_master_server_updater
+ISteamClient.GetISteamMatchmaking(i32, i32, ptr) -> ptr = client::get_matchmaking
+ISteamClient.GetISteamMatchmakingServers(i32, i32, ptr) -> ptr = client::get_matchmaking_servers
+ISteamClient.GetISteamMusic(i32, i32, ptr) -> ptr = client::get_music
+ISteamClient.GetISteamMusicRemote(i32, i32, ptr) -> ptr = client::get_music_remote
+ISteamClient.GetISteamNetworking(i32, i32, ptr) -> ptr = client::get_networking
+ISteamClient.GetISteamParentalSettings(i32, i32, ptr) -> ptr = client::get_parental_settings
+ISteamClient.GetISteamParties(i32, i32, ptr) -> ptr = client::get_parties
+ISteamClient.GetISteamRemotePlay(i32, i32, ptr) -> ptr = client::get_remote_play
+ISteamClient.GetISteamRemoteStorage(i32, i32, ptr) -> ptr = client::get_remote_storage
+ISteamClient.GetISteamScreenshots(i32, i32, ptr) -> ptr = client::get_screenshots
+ISteamClient.GetISteamUGC(i32, i32, ptr) -> ptr = client::get_ugc
+ISteamClient.GetISteamUnifiedMessages(i32, i32, ptr) -> ptr = client::get_unified_messages
+ISteamClient.DEPRECATED_GetISteamUnifiedMessages(i32, i32, ptr) -> ptr = client::get_unified_messages
+ISteamClient.GetISteamUser(i32, i32, ptr) -> ptr = client::get_user
+ISteamClient.GetISteamUserStats(i32, i32, ptr) -> ptr = client::get_user_stats
+ISteamClient.GetISteamUtils(i32, ptr) -> ptr = client::get_utils
+ISteamClient.GetISteamVideo(i32, i32, ptr) -> ptr = client::get_video
+ISteamClient.GetIVAC(i32) -> ptr = client::get_vac
+ISteamClient.SetLocalIPBinding(u32, u16) -> void = client::set_local_ip_binding
+ISteamClient.SetLocalIPBinding(ptr, u16) -> void = client::set_local_ip_binding_address
+ISteamClient.RunFrame() -> void = client::run_frame
+ISteamClient.GetIPCCallCount() -> u32 = client::ipc_call_count
+ISteamClient.SetWarningMessageHook(ptr) -> void = client::set_warning_message_hook
+ISteamClient.Set_SteamAPI_CCheckCallbackRegisteredInProcess(ptr) -> void = client::set_check_callback_registered
+ISteamClient.DEPRECATED_Set_SteamAPI_CPostAPIResultInProcess(ptr) -> void = client::ignore_post_api_result
+ISteamClient.DEPRECATED_Remove_SteamAPI_CPostAPIResultInProcess(ptr) -> void = client::ignore_post_api_result
+ISteamClient.Set_SteamAPI_CPostAPIResultInProcess(ptr) -> void = client::ignore_post_api_result
+ISteamClient.Remove_SteamAPI_CPostAPIResultInProcess(ptr) -> void = client::ignore_post_api_result
+ISteamClient.DestroyAllInterfaces() -> void = client::destroy_all_interfaces
+
+ISteamUser.GetHSteamUser() -> i32 = user::h_steam_user
+ISteamUser.BLoggedOn() -> bool = user::logged_on
+ISteamUser.GetSteamID() -> steamid = user::steam_id
+ISteamUser.GetUserDataFolder(ptr, i32) -> bool = user::user_data_folder
+
+ISteamApps.BIsSubscribed() -> bool = apps::subscribed
+ISteamApps.BIsSubscribedApp(u32) -> bool = apps::subscribed_app
+ISteamApps.BIsAppInstalled(u32) -> bool = apps::app_installed
+ISteamApps.BIsDlcInstalled(u32) -> bool = apps::dlc_installed
+ISteamApps.GetDLCCount() -> i32 = apps::dlc_count
+ISteamApps.BGetDLCDataByIndex(i32, ptr, ptr, ptr, i32) -> bool = apps::dlc_data_by_index
+ISteamApps.GetCurrentBetaName(ptr, i32) -> bool = apps::current_beta_name
+ISteamApps.GetAppBuildId() -> i32 = apps::build_id
+ISteamApps.GetAppInstallDir(u32, ptr, u32) -> u32 = apps::install_dir
+ISteamApps.GetInstalledDepots(u32, ptr, u32) -> u32 = apps::installed_depots
+ISteamApps.GetInstalledDepots(ptr, u32) -> u32 = apps::installed_depots_own
+ISteamApps.GetCurrentGameLanguage() -> str = apps::current_game_language
+ISteamApps.GetAvailableGameLanguages() -> str = apps::available_game_languages
+ISteamApps.GetAppOwner() -> steamid = apps::app_owner
+ISteamApps.BIsSubscribedFromFamilySharing() -> bool = apps::family_shared
+ISteamApps.BIsLowViolence() -> bool = apps::low_violence
+ISteamApps.BIsCybercafe() -> bool = apps::cybercafe
+ISteamApps.GetLaunchQueryParam(ptr) -> str = apps::launch_query_param
+ISteamApps.GetLaunchCommandLine(ptr, i32) -> i32 = apps::launch_command_line
+
+ISteamUtils.GetAppID() -> u32 = utils::app_id
+ISteamUtils.GetConnectedUniverse() -> u32 = utils::connected_universe
+ISteamUtils.GetServerRealTime() -> u32 = utils::server_real_time
+ISteamUtils.GetIPCountry() -> str = utils::ip_country
+ISteamUtils.GetSteamUILanguage() -> str = utils::ui_language
+ISteamUtils.GetCurrentBatteryPower() -> u8 = utils::battery_power
+ISteamUtils.IsAPICallCompleted(u64, ptr) -> bool = utils::api_call_completed
+ISteamUtils.GetAPICallFailureReason(u64) -> u32 = utils::api_call_failure_reason
+ISteamUtils.GetAPICallResult(u64, ptr, i32, i32, ptr) -> bool = utils::get_api_call_result
+ISteamUtils.RunFrame() -> void = utils::run_frame
+ISteamUtils.GetIPCCallCount() -> u32 = utils::ipc_call_count
+ISteamUtils.SetWarningMessageHook(ptr) -> void = utils::set_warning_message_hook
+ISteamUtils.SetOverlayNotificationPosition(u32) -> void = utils::set_overlay_notification_position
+ISteamUtils.SetOverlayNotificationInset(i32, i32) -> void = utils::set_overlay_notification_inset
+ISteamUtils.IsOverlayEnabled() -> bool = utils::no
+ISteamUtils.BOverlayNeedsPresent() -> bool = utils::no
+ISteamUtils.IsSteamRunningInVR() -> bool = utils::no
+ISteamUtils.IsSteamInBigPictureMode() -> bool = utils::no
+ISteamUtils.IsSteamChinaLauncher() -> bool = utils::no
+ISteamUtils.IsSteamRunningOnSteamDeck() -> bool = utils::no
+
+ISteamFriends.GetPersonaName() -> str = friends::persona_name
+ISteamFriends.GetPersonaState() -> u32 = friends::persona_state
+
+ISteamRemoteStorage.IsCloudEnabledForAccount() -> bool = remote_storage::cloud_enabled
+ISteamRemoteStorage.IsCloudEnabledForApp() -> bool = remote_storage::cloud_enabled

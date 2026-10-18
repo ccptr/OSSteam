@@ -430,7 +430,7 @@ impl Core {
         let (command_line, env, interrupt_first) = match &ready {
             None => (game_line, base_env, false),
             Some(r) => {
-                let data_dir = layout.root.join("compatdata").join(app.0.to_string());
+                let data_dir = layout.compat_data(app);
                 let client_dir = &self.games.client_dir;
                 for d in [&data_dir, &client_dir.join("legacycompat")] {
                     std::fs::create_dir_all(d)

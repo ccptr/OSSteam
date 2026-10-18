@@ -264,7 +264,89 @@ fn info_text(r: &v1::GetAppResponse) -> String {
             let _ = writeln!(out, "{line}");
         }
     }
+    if let Some(c) = &r.compat {
+        compat_text(&mut out, c);
+    }
     out
+}
+
+/// `compat-tools.md` §8.
+fn compat_text(out: &mut String, c: &v1::Compat) {
+    let _ = writeln!(out, "compatibility tool");
+    let mut field = |k: &str, v: &str| {
+        if !v.is_empty() {
+            let _ = writeln!(out, "  {k:<14}{v}");
+        }
+    };
+    let tool = match &c.tool {
+        Some(t) => format!("{} ({})", tool_label(t), source_text(c.source())),
+        None => "none, it runs natively".into(),
+    };
+    field("tool", &tool);
+    let chain: Vec<String> = c
+        .chain
+        .iter()
+        .map(|l| {
+            let t = l.tool.as_ref().map(tool_label).unwrap_or_default();
+            if l.installed {
+                t
+            } else {
+                format!("{t} [not installed]")
+            }
+        })
+        .collect();
+    field("chain", &chain.join(" > "));
+    field("installed for", &c.platform);
+    let choices: Vec<&str> = c.choices.iter().map(|c| c.name.as_str()).collect();
+    field("choices", &choices.join(", "));
+}
+
+fn tool_label(t: &v1::CompatTool) -> String {
+    match (t.name.as_str(), t.display_name.as_str()) {
+        ("", "") => format!("app {}", t.app_id),
+        ("", d) => format!("{d}, app {}", t.app_id),
+        (n, d) if d.is_empty() || d == n => n.to_owned(),
+        (n, d) => format!("{d}, {n}"),
+    }
+}
+
+fn source_text(s: v1::CompatSource) -> &'static str {
+    match s {
+        v1::CompatSource::User => "your choice",
+        v1::CompatSource::Valve => "Valve's mapping",
+        v1::CompatSource::App => "the app's own mapping",
+        v1::CompatSource::Native => "it has a Linux version",
+        v1::CompatSource::Default => "the default for Windows titles",
+        v1::CompatSource::Unspecified => "unknown source",
+    }
+}
+
+fn compat_json(c: &v1::Compat) -> Value {
+    let tool = |t: &v1::CompatTool| {
+        json!({
+            "name": t.name,
+            "app_id": t.app_id,
+            "display_name": t.display_name,
+        })
+    };
+    json!({
+        "tool": c.tool.as_ref().map(tool),
+        "source": c.tool.as_ref().map(|_| {
+            c.source()
+                .as_str_name()
+                .trim_start_matches("COMPAT_SOURCE_")
+                .to_ascii_lowercase()
+        }),
+        "chain": c.chain.iter().map(|l| json!({
+            "tool": l.tool.as_ref().map(tool),
+            "installed": l.installed,
+        })).collect::<Vec<_>>(),
+        "choices": c.choices.iter().map(|c| json!({
+            "name": c.name,
+            "display_name": c.display_name,
+        })).collect::<Vec<_>>(),
+        "platform": (!c.platform.is_empty()).then_some(&c.platform),
+    })
 }
 
 fn app_json(a: &AppSummary) -> Value {
@@ -327,6 +409,7 @@ fn info_json(r: &v1::GetAppResponse) -> Value {
             "osarch": l.osarch,
             "betakey": l.betakey,
         })).collect::<Vec<_>>(),
+        "compat": r.compat.as_ref().map(compat_json),
     })
 }
 
@@ -431,5 +514,49 @@ mod tests {
         assert!(text.contains("  installed     no\n"));
         assert!(text.contains("  public        build 1234      updated 2023-11-14\n"));
         assert!(!text.contains("depots"));
+        assert!(!text.contains("compatibility tool"));
+    }
+
+    #[test]
+    fn info_shows_the_compatibility_tool() {
+        let tool = |name: &str, app_id, display: &str| v1::CompatTool {
+            name: name.into(),
+            app_id,
+            display_name: display.into(),
+        };
+        let r = v1::GetAppResponse {
+            app: Some(app(22, "Windows", "Game")),
+            compat: Some(v1::Compat {
+                tool: Some(tool("proton_experimental", 1493710, "Proton Experimental")),
+                source: v1::CompatSource::Default as i32,
+                chain: vec![
+                    v1::CompatChainTool {
+                        tool: Some(tool("", 1628350, "")),
+                        installed: true,
+                    },
+                    v1::CompatChainTool {
+                        tool: Some(tool("proton_experimental", 1493710, "Proton Experimental")),
+                        installed: false,
+                    },
+                ],
+                choices: vec![v1::CompatChoice {
+                    name: "proton_experimental".into(),
+                    display_name: "Proton Experimental".into(),
+                }],
+                platform: "windows".into(),
+            }),
+            ..Default::default()
+        };
+        let text = info_text(&r);
+        assert!(text.ends_with(
+            "compatibility tool\n\
+             \x20 tool          Proton Experimental, proton_experimental (the default for Windows titles)\n\
+             \x20 chain         app 1628350 > Proton Experimental, proton_experimental [not installed]\n\
+             \x20 installed for windows\n\
+             \x20 choices       proton_experimental\n"
+        ), "{text}");
+        let j = info_json(&r);
+        assert_eq!(j["compat"]["source"], "default");
+        assert_eq!(j["compat"]["chain"][1]["installed"], false);
     }
 }

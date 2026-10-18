@@ -356,7 +356,7 @@ impl Core {
         folder_id: String,
         branch: String,
     ) -> Result<v1::Job, RemoteError> {
-        let mut row = JobRow {
+        self.queue_job(JobRow {
             job_id: 0,
             steam_id,
             app_id: app,
@@ -367,7 +367,13 @@ impl Core {
             branch,
             created: now(),
             error: None,
-        };
+            remove_compat_data: false,
+        })
+    }
+
+    /// Stores and schedules a new job.
+    fn queue_job(&mut self, mut row: JobRow) -> Result<v1::Job, RemoteError> {
+        let (app, kind) = (row.app_id, row.kind);
         row.job_id = self.db.add_job(&row).map_err(|e| internal(&e))?;
         let id = row.job_id;
         tracing::info!(job = id, app = %app, ?kind, "job queued");
@@ -512,7 +518,19 @@ impl Core {
         let (Some(folder_id), Some(branch)) = (folder_id, branch) else {
             return Err(not_found(format!("app {app} is not installed")));
         };
-        let job = self.create_job(steam_id, app, Kind::Uninstall, folder_id, branch)?;
+        let job = self.queue_job(JobRow {
+            job_id: 0,
+            steam_id,
+            app_id: app,
+            kind: v1::JobKind::Uninstall,
+            state: v1::JobState::Queued,
+            priority: 0,
+            folder_id,
+            branch,
+            created: now(),
+            error: None,
+            remove_compat_data: req.remove_compat_data && super::compat::ENABLED,
+        })?;
         Ok(response::Result::Uninstall(v1::JobResponse {
             job: Some(job),
         }))
@@ -813,6 +831,7 @@ impl Core {
                 .cloned()
                 .collect(),
             journal,
+            remove_compat_data: row.remove_compat_data,
             threads: self.config.download_threads(),
             cell_id: self.db.cell_id().unwrap_or(0),
         })
@@ -943,6 +962,16 @@ impl Core {
         Some(chosen.into_iter().map(|c| (c.depot, c.manifest)).collect())
     }
 
+    /// Whether `a`'s tool now runs programs of another platform than the
+    /// one installed (`compat-tools.md` §4); the update records it, even
+    /// when the depots are the same.
+    fn platform_changed(&self, a: &InstalledApp) -> bool {
+        let Some(info) = self.app_info(a.app_id) else {
+            return false;
+        };
+        installed_host(a).os != self.install_host(a.app_id, &info).os
+    }
+
     /// Update detection (`content.md` §10): after the library or product
     /// info changes, compares each installed app's depots with what its
     /// branch names now.
@@ -952,14 +981,16 @@ impl Core {
         };
         let apps: Vec<InstalledApp> = self.content.installed.values().cloned().collect();
         for a in apps {
-            let Some(current) = self.current_manifests(&a) else {
+            // No depots now, as for a platform the app has none for, is
+            // nothing an update could install.
+            let Some(current) = self.current_manifests(&a).filter(|c| !c.is_empty()) else {
                 continue;
             };
             let changed = a.depots.iter().any(|d| {
                 !current
                     .iter()
                     .any(|(depot, manifest)| *depot == d.depot && *manifest == d.manifest)
-            });
+            }) || self.platform_changed(&a);
             if changed == a.update_available {
                 continue;
             }

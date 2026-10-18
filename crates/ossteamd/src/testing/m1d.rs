@@ -229,6 +229,14 @@ fn env_of(p: &Path) -> Vec<String> {
     lines(&p.join("env.txt"))
 }
 
+/// The chain's tools, outermost first, and whether each is installed.
+fn chain(c: &v1::Compat) -> Vec<(u32, bool)> {
+    c.chain
+        .iter()
+        .map(|l| (l.tool.as_ref().map_or(0, |t| t.app_id), l.installed))
+        .collect()
+}
+
 fn has(env: &[String], var: &str) -> bool {
     env.iter().any(|l| l == var)
 }
@@ -253,6 +261,17 @@ fn a_native_game_runs_in_its_runtime_once_it_is_installed() {
         .expect("launched");
     let sniper = PathBuf::from(installed(&c, SNIPER).expect("the runtime").path);
     assert_eq!(sniper.file_name().unwrap(), "SteamLinuxRuntime_sniper");
+    let compat = c.get_app(NATIVE).expect("app").compat.expect("compat");
+    assert_eq!(compat.source(), v1::CompatSource::Valve);
+    assert_eq!(
+        compat.tool.as_ref().unwrap().name,
+        "steamlinuxruntime_sniper"
+    );
+    assert_eq!(chain(&compat), [(SNIPER, true)]);
+    assert_eq!(compat.platform, "linux");
+    // A tool runs as itself.
+    let compat = c.get_app(SNIPER).expect("app").compat.expect("compat");
+    assert!(compat.tool.is_none() && compat.chain.is_empty());
     let e = exited(&c, NATIVE);
     assert_eq!(
         e.status,
@@ -322,6 +341,14 @@ fn a_windows_game_gets_windows_depots_and_proton_in_the_runtime() {
     // Only the Windows depot exists, and the default tool runs it.
     let game = install(&c, WINDOWS);
     assert!(game.join("bin/game.exe").is_file());
+    // Before the tools are installed, the chain is the tool list's.
+    let compat = c.get_app(WINDOWS).expect("app").compat.expect("compat");
+    assert_eq!(compat.source(), v1::CompatSource::Default);
+    assert_eq!(chain(&compat), [(SNIPER, false), (PROTON, false)]);
+    assert_eq!(compat.platform, "windows");
+    // The runtime is unlisted and runs no Windows programs.
+    let choices: Vec<&str> = compat.choices.iter().map(|c| c.name.as_str()).collect();
+    assert_eq!(choices, ["proton_experimental"]);
 
     c.launch(WINDOWS, None, &[], false).expect("launched");
     let proton = PathBuf::from(installed(&c, PROTON).expect("proton").path);
@@ -363,6 +390,25 @@ fn a_windows_game_gets_windows_depots_and_proton_in_the_runtime() {
     ] {
         assert!(has(&env, var), "{var} in {env:#?}");
     }
+
+    let compat = c.get_app(WINDOWS).expect("app").compat.expect("compat");
+    assert_eq!(chain(&compat), [(SNIPER, true), (PROTON, true)]);
+
+    // Uninstalling keeps the prefix unless asked.
+    let data = game
+        .parent()
+        .unwrap()
+        .parent()
+        .unwrap()
+        .join("compatdata")
+        .join(WINDOWS.to_string());
+    std::fs::write(data.join("save"), b"x").unwrap();
+    done(&c, c.uninstall(WINDOWS, false).expect("uninstall"));
+    assert!(data.join("save").is_file());
+    install(&c, WINDOWS);
+    done(&c, c.uninstall(WINDOWS, true).expect("uninstall"));
+    assert!(!data.exists());
+    install(&c, WINDOWS);
 
     // Without a default tool the Windows game has no tool, and no
     // Windows launch option qualifies on Linux.

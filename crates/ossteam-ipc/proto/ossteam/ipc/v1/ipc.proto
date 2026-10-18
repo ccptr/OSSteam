@@ -394,6 +394,52 @@ message GetAppResponse {
   repeated LaunchOption launch_options = 8;
   // Unset when the app is not installed.
   InstalledApp installed = 9;
+  // Linux: the app's compatibility tool; unset elsewhere and while the
+  // tool list is not available.
+  Compat compat = 10;
+}
+
+// docs/spec/compat-tools.md §8.
+message Compat {
+  // Unset when the app runs natively.
+  CompatTool tool = 1;
+  CompatSource source = 2;
+  // The tool and the tools it requires, outermost first.
+  repeated CompatChainTool chain = 3;
+  repeated CompatChoice choices = 4;
+  // The platform its depots are installed for; empty when not installed.
+  string platform = 5;
+}
+
+message CompatTool {
+  // Empty for a tool the list does not name.
+  string name = 1;
+  uint32 app_id = 2;
+  string display_name = 3;
+}
+
+enum CompatSource {
+  COMPAT_SOURCE_UNSPECIFIED = 0;
+  COMPAT_SOURCE_USER = 1;
+  // App 891390's mappings.
+  COMPAT_SOURCE_VALVE = 2;
+  // The app's own info.
+  COMPAT_SOURCE_APP = 3;
+  // The app has a Linux version.
+  COMPAT_SOURCE_NATIVE = 4;
+  // compat.default_tool.
+  COMPAT_SOURCE_DEFAULT = 5;
+}
+
+message CompatChainTool {
+  CompatTool tool = 1;
+  bool installed = 2;
+}
+
+// A value for compat.tool.<app id>.
+message CompatChoice {
+  string name = 1;
+  string display_name = 2;
 }
 
 // An installed app (docs/spec/content.md §8).
@@ -574,6 +620,9 @@ message VerifyRequest {
 
 message UninstallRequest {
   uint32 app_id = 1;
+  // Linux: also delete <library>/compatdata/<app id>
+  // (docs/spec/compat-tools.md §6.1).
+  bool remove_compat_data = 2;
 }
 
 message ListJobsRequest {}

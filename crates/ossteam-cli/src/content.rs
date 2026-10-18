@@ -73,7 +73,13 @@ pub fn verify(cli: &Cli, app: &str, wait: bool) -> Result<(), Failure> {
     finish(cli, &client, vec![job], wait, false)
 }
 
-pub fn uninstall(cli: &Cli, app: &str, yes: bool, wait: bool) -> Result<(), Failure> {
+pub fn uninstall(
+    cli: &Cli,
+    app: &str,
+    yes: bool,
+    remove_compat_data: bool,
+    wait: bool,
+) -> Result<(), Failure> {
     let client = connect(cli, true)?;
     let id = resolve(&client, app)?;
     if !yes {
@@ -83,10 +89,14 @@ pub fn uninstall(cli: &Cli, app: &str, yes: bool, wait: bool) -> Result<(), Fail
             .as_ref()
             .filter(|a| !a.name.is_empty())
             .map_or_else(|| format!("app {id}"), |a| format!("{} ({id})", a.name));
-        let what = match &r.installed {
-            Some(i) => format!("Uninstall {name} and delete {} ({})?", i.path, size(i.size)),
-            None => format!("Uninstall {name} and delete what its install has written?"),
+        let mut what = match &r.installed {
+            Some(i) => format!("Uninstall {name} and delete {} ({})", i.path, size(i.size)),
+            None => format!("Uninstall {name} and delete what its install has written"),
         };
+        if remove_compat_data && r.compat.is_some() {
+            what.push_str(", and its compatibility tool prefix with its saves and settings");
+        }
+        what.push('?');
         if !std::io::stdin().is_terminal() {
             return Err(Failure::new(
                 exit::OTHER,
@@ -100,7 +110,7 @@ pub fn uninstall(cli: &Cli, app: &str, yes: bool, wait: bool) -> Result<(), Fail
     if wait {
         subscribe(&client)?;
     }
-    let job = client.uninstall(id)?;
+    let job = client.uninstall(id, remove_compat_data)?;
     finish(cli, &client, vec![job], wait, false)
 }
 

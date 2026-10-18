@@ -151,6 +151,10 @@ enum Command {
         /// Do not ask first.
         #[arg(long, short)]
         yes: bool,
+        /// Linux: also delete the app's compatibility tool prefix, which
+        /// holds its saves and settings under Proton.
+        #[arg(long)]
+        remove_compat_data: bool,
         /// Wait until the files are deleted.
         #[arg(long)]
         wait: bool,
@@ -397,7 +401,12 @@ fn run(cli: &Cli) -> Result<(), Failure> {
         } => content::install(cli, app, folder.as_deref(), branch.as_deref(), *wait),
         Command::Update { apps, all, wait } => content::update(cli, apps, *all, *wait),
         Command::Verify { app, wait } => content::verify(cli, app, *wait),
-        Command::Uninstall { app, yes, wait } => content::uninstall(cli, app, *yes, *wait),
+        Command::Uninstall {
+            app,
+            yes,
+            remove_compat_data,
+            wait,
+        } => content::uninstall(cli, app, *yes, *remove_compat_data, *wait),
         Command::Jobs { action } => match action.as_ref().unwrap_or(&JobsAction::List) {
             JobsAction::List => content::list_jobs(cli),
             JobsAction::Pause { job } => content::control(cli, *job, content::Control::Pause),

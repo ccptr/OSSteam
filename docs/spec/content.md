@@ -409,7 +409,12 @@ has another manifest on the installed branch, or is no longer chosen, the
 app has an update. A depot that is chosen but not installed does not mark
 it: that is also what a depot whose key Steam refused (§2) looks like, and
 it would mark the app for ever. An update job installs such a depot all
-the same, since it chooses depots afresh. With `content.auto_update` set
+the same, since it chooses depots afresh. When no depot is chosen at all,
+as for a platform the app has no depots for, the app is not marked:
+there is nothing an update could install. On Linux, an installed app
+whose platform is no longer its tool's (`compat-tools.md` §4) has an
+update even when the depots are the same. Changing a `compat.*` setting
+runs the detection again. With `content.auto_update` set
 to `always` (the default) an update job is queued; with `never` the app
 is only marked. *Unverified: the official client's per-app policies
 (always, on launch, high priority) are not reproduced in M1.*

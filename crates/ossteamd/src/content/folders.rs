@@ -128,6 +128,11 @@ impl Layout {
             .join(format!("{}_{}.manifest", depot.0, manifest.0))
     }
 
+    /// `compatdata/<app id>`, the app's prefix (`compat-tools.md` §6.1).
+    pub fn compat_data(&self, app: AppId) -> PathBuf {
+        self.root.join("compatdata").join(app.0.to_string())
+    }
+
     pub fn staging(&self, app: AppId) -> PathBuf {
         self.root
             .join(".ossteam")

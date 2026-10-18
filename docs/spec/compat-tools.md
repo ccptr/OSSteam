@@ -412,7 +412,8 @@ SLR-only chains run Linux games, whose install scripts are not applied
 that have an override, and `SetSetting` accepts any decimal app id. A
 value that names no tool is refused with `INVALID_ARGUMENT`. A change
 that alters an installed app's platform (§4) marks it as having an
-update.
+update, also when its depots are the same for both platforms; the
+update then records the new platform.
 
 `GetApp` gains `compat`, present on Linux:
 
@@ -420,11 +421,13 @@ update.
 |---|---|
 | `tool` | the tool's name, app id and display name; absent when the app runs natively |
 | `source` | `USER`, `VALVE` (891390), `APP` (the app's own info), `NATIVE` (a Linux version) or `DEFAULT` (§2) |
-| `chain` | the chain's tools, outermost first, each with whether it is installed |
-| `choices` | the listed tools and selectable aliases whose `from_oslist` names a platform the app has launch options for |
+| `chain` | the chain's tools, outermost first, each with whether it is installed. A tool that is installed requires what its manifest says, one that is not what the tool list says (§1) |
+| `choices` | the listed tools and selectable aliases whose `from_oslist` names a platform the app has launch options for; a launch option without an `oslist` stands for the platforms of `common/oslist` |
 | `platform` | the platform its depots are installed for, when installed |
 
-`ossteam info <APP>` prints these. `ossteam config set compat.tool.<APP>
+`compat` is unset off Linux, while the tool list is not available, and
+for an app without info. `ossteam info <APP>` prints these; `--json`
+gives `source` in lower case (`user`, `valve`, ...). `ossteam config set compat.tool.<APP>
 <TOOL>` chooses a tool.
 
 ## 9. The shim inside a container

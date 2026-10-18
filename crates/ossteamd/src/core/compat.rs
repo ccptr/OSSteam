@@ -1,16 +1,19 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 //! The core's side of compatibility tools (`compat-tools.md`): which tool
 //! an app gets, which platform its depots are for, and the checks of the
-//! `compat.*` settings.
+//! `compat.*` settings, and `GetApp`'s `compat`.
 
 use std::path::PathBuf;
 
 use ossteam_content::depots::Host;
 use ossteam_ipc::RemoteError;
-use ossteam_ipc::v1::ErrorCode;
+use ossteam_ipc::v1::{self, ErrorCode};
 use ossteam_launch::compat::{
-    ChainTool, CompatEnv, MANIFESTS_APP, Mapping, MappingInput, ToolList, ToolManifest, chain,
+    ChainTool, CompatEnv, MANIFESTS_APP, Mapping, MappingInput, Source, ToolList, ToolManifest,
+    chain,
 };
+use ossteam_launch::options;
+use ossteam_pics::AppInfo;
 use ossteam_types::{AppId, SteamId};
 use ossteam_vdf::Object;
 
@@ -252,4 +255,104 @@ pub(super) fn chain_env(
         }
     }
     vars
+}
+
+impl Core {
+    /// `GetApp`'s `compat` (§8), or `None` off Linux and while the tool
+    /// list is not available.
+    pub(super) fn compat_proto(&self, app: AppId, info: Option<&Object>) -> Option<v1::Compat> {
+        let list = self.tool_list()?;
+        let mapping = self.compat_mapping(&list, app, info);
+        let mut chain: Vec<v1::CompatChainTool> = Vec::new();
+        let mut next = mapping.as_ref().map(|m| m.tool.app);
+        while let Some(a) = next.filter(|a| !chain.iter().any(|c| tool_id(c) == a.0)) {
+            let manifest = self.tool_dir(a).and_then(|d| ToolManifest::read(&d).ok());
+            // A tool not installed requires what the list says (§1).
+            next = match &manifest {
+                Some(m) => m.requires,
+                None => list.by_app(a).and_then(|t| t.requires),
+            };
+            chain.push(v1::CompatChainTool {
+                tool: Some(tool_proto(&list, a)),
+                installed: manifest.is_some(),
+            });
+        }
+        chain.reverse();
+        let platforms = info.map(launch_platforms).unwrap_or_default();
+        let platforms: Vec<&str> = platforms.iter().map(String::as_str).collect();
+        Some(v1::Compat {
+            tool: mapping.as_ref().map(|m| tool_proto(&list, m.tool.app)),
+            source: mapping.map_or(v1::CompatSource::Unspecified, |m| source_proto(m.source))
+                as i32,
+            chain,
+            choices: list
+                .choices(&platforms)
+                .into_iter()
+                .map(|(name, display_name, _)| v1::CompatChoice {
+                    name: name.to_owned(),
+                    display_name: display_name.to_owned(),
+                })
+                .collect(),
+            platform: self
+                .content
+                .installed
+                .get(&app)
+                .map(|i| i.platform.clone())
+                .unwrap_or_default(),
+        })
+    }
+
+    /// The install directory of `app`, when it is installed.
+    fn tool_dir(&self, app: AppId) -> Option<PathBuf> {
+        let inst = self.content.installed.get(&app)?;
+        let folder = self
+            .content
+            .folders
+            .iter()
+            .find(|f| f.id == inst.folder_id)?;
+        Some(Layout::new(&folder.path).app_dir(&inst.install_dir))
+    }
+}
+
+fn tool_id(c: &v1::CompatChainTool) -> u32 {
+    c.tool.as_ref().map_or(0, |t| t.app_id)
+}
+
+fn tool_proto(list: &ToolList, app: AppId) -> v1::CompatTool {
+    let tool = list.by_app(app);
+    v1::CompatTool {
+        name: tool.map(|t| t.name.clone()).unwrap_or_default(),
+        app_id: app.0,
+        display_name: tool_name(list, app),
+    }
+}
+
+fn source_proto(s: Source) -> v1::CompatSource {
+    match s {
+        Source::User => v1::CompatSource::User,
+        Source::Valve => v1::CompatSource::Valve,
+        Source::App => v1::CompatSource::App,
+        Source::Native => v1::CompatSource::Native,
+        Source::Default => v1::CompatSource::Default,
+    }
+}
+
+/// The platforms the app has launch options for (§8). An option without
+/// an `oslist` is for the platforms of `common/oslist`.
+fn launch_platforms(info: &Object) -> Vec<String> {
+    let common = AppInfo(info).oslist();
+    let mut out: Vec<String> = Vec::new();
+    for o in options::parse(info) {
+        let list = if o.oslist.is_empty() {
+            &common
+        } else {
+            &o.oslist
+        };
+        for os in list {
+            if !out.iter().any(|p| p.eq_ignore_ascii_case(os)) {
+                out.push(os.clone());
+            }
+        }
+    }
+    out
 }

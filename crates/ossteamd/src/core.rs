@@ -398,7 +398,11 @@ impl Core {
             request::Method::GetApp(req) => Some(self.snapshot().and_then(|s| {
                 library::get_app(&s, &self.pics_cache, req.app_id, &|a| self.is_installed(a)).map(
                     |mut r| {
-                        r.installed = self.installed_proto(ossteam_types::AppId(req.app_id));
+                        let app = ossteam_types::AppId(req.app_id);
+                        r.installed = self.installed_proto(app);
+                        if r.app.as_ref().is_some_and(|a| a.has_info) {
+                            r.compat = self.compat_proto(app, self.app_info(app).as_ref());
+                        }
                         response::Result::GetApp(r)
                     },
                 )
@@ -676,6 +680,10 @@ impl Core {
         tracing::info!(key = %after.key, value = %after.value, reset = req.reset, "setting changed");
         self.apply_settings();
         self.update_shims();
+        if after != before && def.key.starts_with("compat.") {
+            // An installed app's platform may change (`compat-tools.md` §8).
+            self.check_updates();
+        }
         if after != before {
             self.broadcast(
                 Topic::Daemon,

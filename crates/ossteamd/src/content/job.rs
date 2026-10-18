@@ -57,6 +57,8 @@ pub struct Spec {
     /// Every other installed app, for uninstalling shared depots.
     pub other_installs: Vec<InstalledApp>,
     pub journal: Option<Vec<u8>>,
+    /// An uninstall deletes `compatdata/<app id>` too.
+    pub remove_compat_data: bool,
     pub threads: usize,
     pub cell_id: u32,
 }
@@ -631,6 +633,9 @@ impl Runner<'_> {
     /// `content.md` §12.
     fn uninstall(&self) -> Result<Done, Failure> {
         let spec = self.spec;
+        if spec.remove_compat_data {
+            remove_dir(&spec.folder.compat_data(spec.app))?;
+        }
         let Some(installed) = &spec.installed else {
             // Only an unfinished install was there; its staging goes.
             remove_dir(&spec.folder.staging(spec.app))?;

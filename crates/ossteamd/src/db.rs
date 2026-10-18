@@ -14,7 +14,7 @@ use crate::content::script::{Key, ScriptFile, ValueRef};
 pub const FILE_NAME: &str = "state.db";
 
 /// The schema version this build writes, kept in `PRAGMA user_version`.
-const SCHEMA_VERSION: i64 = 6;
+const SCHEMA_VERSION: i64 = 7;
 
 const SCHEMA_V1: &str = "
     CREATE TABLE accounts (
@@ -113,6 +113,10 @@ const SCHEMA_V6: &str = "
     ALTER TABLE installed_apps ADD COLUMN platform TEXT NOT NULL DEFAULT '';
 ";
 
+const SCHEMA_V7: &str = "
+    ALTER TABLE jobs ADD COLUMN remove_compat_data INTEGER NOT NULL DEFAULT 0;
+";
+
 /// The persona state a user chose (`pics.md` §8). The numbers are stored
 /// and must not change.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -183,6 +187,7 @@ impl Db {
                     (3, SCHEMA_V4),
                     (4, SCHEMA_V5),
                     (5, SCHEMA_V6),
+                    (6, SCHEMA_V7),
                 ] {
                     if version <= from {
                         tx.execute_batch(schema)?;
@@ -392,6 +397,8 @@ pub struct JobRow {
     pub created: u64,
     /// The error a failed job failed with: its IPC code and message.
     pub error: Option<(v1::ErrorCode, String)>,
+    /// An uninstall that deletes the app's prefix too.
+    pub remove_compat_data: bool,
 }
 
 impl Db {
@@ -584,7 +591,7 @@ impl Db {
     pub fn jobs(&self) -> anyhow::Result<Vec<JobRow>> {
         let mut stmt = self.conn.prepare(
             "SELECT job_id, steam_id, app_id, kind, state, priority, folder_id, branch,
-                    created, error_code, error_message
+                    created, error_code, error_message, remove_compat_data
              FROM jobs ORDER BY job_id",
         )?;
         let rows = stmt.query_map([], |r| {
@@ -607,6 +614,7 @@ impl Db {
                         ))
                     })
                     .transpose()?,
+                remove_compat_data: r.get(11)?,
             })
         })?;
         Ok(rows.collect::<Result<_, _>>()?)
@@ -616,8 +624,9 @@ impl Db {
     /// the id.
     pub fn add_job(&self, j: &JobRow) -> anyhow::Result<u64> {
         self.conn.execute(
-            "INSERT INTO jobs (steam_id, app_id, kind, state, priority, folder_id, branch, created)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+            "INSERT INTO jobs (steam_id, app_id, kind, state, priority, folder_id, branch, created,
+                               remove_compat_data)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
             params![
                 j.steam_id.0 as i64,
                 j.app_id.0,
@@ -626,7 +635,8 @@ impl Db {
                 j.priority,
                 j.folder_id,
                 j.branch,
-                j.created as i64
+                j.created as i64,
+                j.remove_compat_data
             ],
         )?;
         Ok(self.conn.last_insert_rowid() as u64)
@@ -857,6 +867,7 @@ mod tests {
             branch: "public".into(),
             created: 1_700_000_000,
             error: None,
+            remove_compat_data: true,
         };
         job.job_id = db.add_job(&job).unwrap();
         db.set_job_journal(job.job_id, Some(b"OSJ1")).unwrap();

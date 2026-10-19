@@ -99,8 +99,12 @@ pub fn job_row(
         .map(str::to_owned)
         .unwrap_or_else(|| format!("App {}", job.app_id));
     let progress = job.progress.unwrap_or_default();
+    // A job that stopped part way, paused or failed or queued again,
+    // shows how far it got.
+    let started = queue::is_unfinished(job) && format::fraction(&progress).is_some();
     let detail = match state {
         JobState::Running => format::progress(&progress),
+        s if started => format!("{}, {}", format::state(s), format::progress(&progress)),
         s => format::state(s).to_owned(),
     };
     let mut speed = String::new();
@@ -194,7 +198,7 @@ pub fn job_row(
                 .child(div().flex_1())
                 .child(buttons),
         )
-        .when(state == JobState::Running, |d| {
+        .when(state == JobState::Running || started, |d| {
             d.child(progress_bar(format::fraction(&progress), cx))
         })
         .child(

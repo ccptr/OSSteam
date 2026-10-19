@@ -459,6 +459,13 @@ fn jobs_text(jobs: &[v1::Job]) -> String {
         let detail = match (&j.error, j.state()) {
             (Some(e), JobState::Failed) => e.message.clone(),
             (_, JobState::Running) => j.progress.as_ref().map(progress_text).unwrap_or_default(),
+            // How far a job that stopped part way got.
+            (_, JobState::Paused | JobState::Queued) => j
+                .progress
+                .as_ref()
+                .filter(|p| p.download_total > 0 || p.bytes_total > 0)
+                .map(progress_text)
+                .unwrap_or_default(),
             _ => String::new(),
         };
         let line = format!(
@@ -617,12 +624,20 @@ mod tests {
             message: "no content server answered".into(),
             ..Default::default()
         });
-        let text = jobs_text(&[job(1, JobKind::Install, JobState::Queued), failed]);
+        let mut paused = job(3, JobKind::Install, JobState::Paused);
+        paused.progress = Some(v1::JobProgressInfo {
+            phase: JobPhase::Downloading.into(),
+            download_total: 4 << 20,
+            downloaded: 1 << 20,
+            ..Default::default()
+        });
+        let text = jobs_text(&[job(1, JobKind::Install, JobState::Queued), failed, paused]);
         assert_eq!(
             text,
             "JOB     APP         KIND       STATE       PRI  PROGRESS\n\
              1       480         install    queued        0\n\
-             2       480         update     failed        0  no content server answered\n"
+             2       480         update     failed        0  no content server answered\n\
+             3       480         install    paused        0  downloading 25% (1.0 MiB of 4.0 MiB)\n"
         );
         assert!(jobs_text(&[]).is_empty());
     }

@@ -29,6 +29,8 @@ pub struct LoginPage {
     username: Entity<TextInput>,
     password: Entity<TextInput>,
     code: Entity<TextInput>,
+    /// A code prompt was drawn last frame.
+    code_shown: bool,
     remember: bool,
     /// The error of this page's last request.
     error: Option<SharedString>,
@@ -68,6 +70,7 @@ impl LoginPage {
             username,
             password,
             code,
+            code_shown: false,
             remember: true,
             error: None,
             busy: false,
@@ -415,6 +418,16 @@ impl Render for LoginPage {
         };
         let reason = (!store.status.session_reason.is_empty() && store.account().is_some())
             .then(|| store.status.session_reason.clone());
+        // A code prompt replaces the password form, whose field had
+        // focus: the code field takes it, unless focus is elsewhere.
+        let code_shown = running && code_prompt_shown(&store.login);
+        if code_shown && !self.code_shown {
+            let here = window.focused(cx).is_none() || self.focus.contains_focused(window, cx);
+            if here {
+                window.focus(&self.code.focus_handle(cx), cx);
+            }
+        }
+        self.code_shown = code_shown;
         let accounts = self.accounts(cx);
         let main = if running {
             self.prompts(cx)

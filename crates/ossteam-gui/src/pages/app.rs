@@ -536,7 +536,7 @@ impl AppPage {
             out = out.child(muted("Not installed.", cx)).child(
                 div().flex().child(
                     button("install", "Install")
-                        .disabled(busy || self.open == Open::Install)
+                        .disabled(busy)
                         .on_click(cx.listener(|page, _, _, cx| page.open_install(cx))),
                 ),
             );
@@ -821,11 +821,13 @@ impl AppPage {
                 .child(
                     button("uninstall", "Uninstall…")
                         .danger()
-                        .disabled(busy || self.open == Open::Uninstall)
+                        .disabled(busy)
                         .on_click(cx.listener(|page, _, _, cx| {
-                            page.open = Open::Uninstall;
-                            page.remove_compat_data = false;
-                            cx.notify();
+                            if page.open != Open::Uninstall {
+                                page.open = Open::Uninstall;
+                                page.remove_compat_data = false;
+                                cx.notify();
+                            }
                         })),
                 ),
         );

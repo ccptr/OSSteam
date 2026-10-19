@@ -40,6 +40,19 @@ pub struct AppDetails {
     pub options: Option<Result<v1::GetLaunchOptionsResponse, CallError>>,
 }
 
+impl AppDetails {
+    /// Whether `app_id` is a compatibility tool of the app's chain.
+    fn chain_has(&self, app_id: u32) -> bool {
+        let Some(Ok(info)) = &self.info else {
+            return false;
+        };
+        info.compat
+            .iter()
+            .flat_map(|c| &c.chain)
+            .any(|l| l.tool.as_ref().is_some_and(|t| t.app_id == app_id))
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum LoginOutcome {
     LoggedOn(v1::Account),
@@ -200,9 +213,13 @@ impl Store {
                     return Vec::new();
                 };
                 let mut reads = vec![Read::Folders];
-                if self.apps.contains_key(&job.app_id) {
-                    reads.push(Read::App(job.app_id));
-                }
+                // The app's page, and those whose tool chain it is in.
+                reads.extend(
+                    self.apps
+                        .iter()
+                        .filter(|&(&id, d)| id == job.app_id || d.chain_has(job.app_id))
+                        .map(|(&id, _)| Read::App(id)),
+                );
                 self.jobs.insert(job.job_id, job);
                 reads
             }
@@ -487,6 +504,32 @@ mod tests {
             ..Default::default()
         }));
         assert!(!s.needs_login());
+    }
+
+    #[test]
+    fn a_tool_job_rereads_the_pages_whose_chain_it_is_in() {
+        let mut s = store();
+        s.open_app(22);
+        s.open_app(480);
+        let tool = |app_id| v1::CompatChainTool {
+            tool: Some(v1::CompatTool {
+                app_id,
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        let info = v1::GetAppResponse {
+            compat: Some(v1::Compat {
+                chain: vec![tool(1628350), tool(1493710)],
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        s.set_app_info(22, Ok(info));
+        let reads = s.apply(event::Kind::JobStateChanged(v1::JobStateChanged {
+            job: Some(job(1, 1493710, JobState::Done)),
+        }));
+        assert_eq!(reads, [Read::Folders, Read::App(22)]);
     }
 
     #[test]

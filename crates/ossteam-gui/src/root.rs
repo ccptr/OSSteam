@@ -194,6 +194,8 @@ impl Root {
         }));
         self.page = Page::Library;
         self.adding_account = false;
+        // A new Login page, whose first field has not had focus yet.
+        self.showed_login = false;
         self.model_changed(window, cx);
     }
 

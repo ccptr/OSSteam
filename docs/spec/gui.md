@@ -307,9 +307,14 @@ a text field shows it whenever it has focus. A page that scrolls scrolls
 by the least that shows the control Tab or Shift-Tab focused, and an
 error when it appears, while focus is on that page: the control whose
 action failed keeps focus, and its error can be below the window's edge.
-Tab out of the account menu closes it, and so does Escape; either way
-focus goes to the account button. A chooser that closes gives focus back
-to the control that opened it.
+The control stays in view as the page changes around it, as when a
+tool's chain appears above the tool chosen, until focus leaves it or the
+page is scrolled some other way. Tab out of the account menu closes it,
+and so does Escape; either way focus goes to the account button. A
+chooser that closes gives focus back to the control that opened it. A
+setting's Reset, which goes once the setting is reset, gives focus to the
+setting's own control; a tool override's whole row goes, and focus goes
+to `compat.default_tool`.
 
 | Keys (Linux, Windows) | macOS | Action |
 |---|---|---|

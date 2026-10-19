@@ -33,6 +33,8 @@ pub struct SettingsPage {
     scroll: ScrollHandle,
     /// Text fields of integer and string settings, made when first shown.
     inputs: HashMap<String, Entity<TextInput>>,
+    /// Switches of boolean settings, to focus after a reset.
+    switches: HashMap<String, FocusHandle>,
     errors: HashMap<String, SharedString>,
     folder_error: Option<SharedString>,
     account_error: Option<SharedString>,
@@ -54,6 +56,7 @@ impl SettingsPage {
             focus: cx.focus_handle(),
             scroll: ScrollHandle::new(),
             inputs: HashMap::new(),
+            switches: HashMap::new(),
             errors: HashMap::new(),
             folder_error: None,
             account_error: None,
@@ -87,7 +90,9 @@ impl SettingsPage {
         if let Some(i) = self.inputs.get(&s.key) {
             return i.clone();
         }
-        let input = TextInput::build(s.default_value.clone(), window, cx);
+        // Not the default: an empty field is an empty value, which for
+        // compat.default_tool means no tool.
+        let input = TextInput::build("empty", window, cx);
         input.update(cx, |i, cx| i.set_text(&s.value, cx));
         let key = s.key.clone();
         cx.subscribe_in(&input, window, move |page, input, e, _, cx| {
@@ -113,6 +118,7 @@ impl SettingsPage {
     /// setting.
     fn set(&mut self, key: String, value: Option<String>, cx: &mut Context<Self>) {
         self.errors.remove(&key);
+        let reset = value.is_none();
         let k = key.clone();
         let call = self
             .model
@@ -123,10 +129,18 @@ impl SettingsPage {
             let r = call.await;
             let _ = this.update(cx, |page, cx| {
                 match r {
-                    Ok(s) => page.model.update(cx, |m, cx| {
-                        m.store.set_setting(s);
-                        cx.notify();
-                    }),
+                    Ok(s) => {
+                        // The field has focus after a reset, so it does
+                        // not follow the store: it would send the old
+                        // value back when it loses focus.
+                        if reset && let Some(i) = page.inputs.get(&s.key) {
+                            i.update(cx, |i, cx| i.set_text(&s.value, cx));
+                        }
+                        page.model.update(cx, |m, cx| {
+                            m.store.set_setting(s);
+                            cx.notify();
+                        })
+                    }
                     Err(e) => {
                         page.errors.insert(key, e.message.into());
                     }
@@ -135,6 +149,22 @@ impl SettingsPage {
             });
         })
         .detach();
+    }
+
+    /// Reset goes away once it works: focus goes to the setting's own
+    /// control, or for a tool override, whose row goes too, to the
+    /// default tool.
+    fn focus_for_reset(&self, key: &str, window: &mut Window, cx: &mut Context<Self>) {
+        let key = if key.starts_with(TOOL_PREFIX) {
+            DEFAULT_TOOL
+        } else {
+            key
+        };
+        if let Some(i) = self.inputs.get(key) {
+            window.focus(&i.focus_handle(cx), cx);
+        } else if let Some(f) = self.switches.get(key) {
+            window.focus(f, cx);
+        }
     }
 
     fn setting(
@@ -156,11 +186,17 @@ impl SettingsPage {
             SettingKind::Bool => {
                 let on = s.value == "true";
                 let k = key.clone();
+                let focus = self
+                    .switches
+                    .entry(key.clone())
+                    .or_insert_with(|| cx.focus_handle().tab_index(0).tab_stop(true))
+                    .clone();
                 switch(
                     SharedString::from(format!("setting-{key}")),
                     label.clone().unwrap_or_else(|| key.clone()),
                     on,
                 )
+                .focus(focus)
                 .on_toggle(cx.listener(move |page, _, _, cx| {
                     page.set(k.clone(), Some((!on).to_string()), cx)
                 }))
@@ -182,7 +218,10 @@ impl SettingsPage {
             let k = key.clone();
             button(SharedString::from(format!("reset-{key}")), "Reset")
                 .ghost()
-                .on_click(cx.listener(move |page, _, _, cx| page.set(k.clone(), None, cx)))
+                .on_click(cx.listener(move |page, _, window, cx| {
+                    page.focus_for_reset(&k, window, cx);
+                    page.set(k.clone(), None, cx)
+                }))
         });
         div()
             .flex()

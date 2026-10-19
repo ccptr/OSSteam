@@ -3,7 +3,9 @@
 
 use std::rc::Rc;
 
-use gpui::{App, ClickEvent, ElementId, SharedString, Window, div, prelude::*, px, relative};
+use gpui::{
+    App, ClickEvent, ElementId, FocusHandle, SharedString, Window, div, prelude::*, px, relative,
+};
 
 use crate::theme::palette;
 use crate::widgets::reveal;
@@ -19,6 +21,7 @@ pub struct Switch {
     label: SharedString,
     on: bool,
     on_toggle: Option<OnClick>,
+    focus: Option<FocusHandle>,
 }
 
 pub fn switch(id: impl Into<ElementId>, label: impl Into<SharedString>, on: bool) -> Switch {
@@ -27,10 +30,18 @@ pub fn switch(id: impl Into<ElementId>, label: impl Into<SharedString>, on: bool
         label: label.into(),
         on,
         on_toggle: None,
+        focus: None,
     }
 }
 
 impl Switch {
+    /// Takes focus through `focus`, which its owner keeps, instead of a
+    /// handle of its own.
+    pub fn focus(mut self, focus: FocusHandle) -> Self {
+        self.focus = Some(focus);
+        self
+    }
+
     pub fn on_toggle(mut self, f: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static) -> Self {
         self.on_toggle = Some(Rc::new(f));
         self
@@ -42,37 +53,41 @@ impl RenderOnce for Switch {
         let p = palette(cx);
         let ring = p.focus_ring;
         let track = if self.on { p.accent } else { p.border };
-        reveal::tab_stop(div().id(self.id.clone()), self.id, true, window, cx)
-            .flex()
-            .items_center()
-            .gap_2()
-            .p_0p5()
-            .rounded_md()
-            .border_2()
-            .border_color(gpui::transparent_black())
-            .focus_visible(move |s| s.border_color(ring))
-            .cursor_pointer()
-            .when_some(self.on_toggle, |d, f| {
-                d.on_click(move |e, w, cx| f(e, w, cx))
-            })
-            .child(
-                div()
-                    .w(px(32.))
-                    .h(px(18.))
-                    .rounded_full()
-                    .bg(track)
-                    .p(px(2.))
-                    .flex()
-                    .when(self.on, |d| d.justify_end())
-                    .child(div().size(px(14.)).rounded_full().bg(p.surface)),
-            )
-            .child(div().text_sm().child(self.label))
-            .child(
-                div()
-                    .text_xs()
-                    .text_color(p.muted)
-                    .child(if self.on { "on" } else { "off" }),
-            )
+        let d = div().id(self.id.clone());
+        match self.focus {
+            Some(focus) => reveal::tab_stop_with(d, focus, true, window),
+            None => reveal::tab_stop(d, self.id, true, window, cx),
+        }
+        .flex()
+        .items_center()
+        .gap_2()
+        .p_0p5()
+        .rounded_md()
+        .border_2()
+        .border_color(gpui::transparent_black())
+        .focus_visible(move |s| s.border_color(ring))
+        .cursor_pointer()
+        .when_some(self.on_toggle, |d, f| {
+            d.on_click(move |e, w, cx| f(e, w, cx))
+        })
+        .child(
+            div()
+                .w(px(32.))
+                .h(px(18.))
+                .rounded_full()
+                .bg(track)
+                .p(px(2.))
+                .flex()
+                .when(self.on, |d| d.justify_end())
+                .child(div().size(px(14.)).rounded_full().bg(p.surface)),
+        )
+        .child(div().text_sm().child(self.label))
+        .child(
+            div()
+                .text_xs()
+                .text_color(p.muted)
+                .child(if self.on { "on" } else { "off" }),
+        )
     }
 }
 

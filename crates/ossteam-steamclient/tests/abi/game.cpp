@@ -12,12 +12,31 @@
 //
 // Usage: game <path to the library>. Prints each failed check and exits
 // with the number of failures.
+//
+// On Windows the game includes no C library or SDK headers, so that a
+// compiler with the MSVC ABI but without the Windows SDK (clang for
+// *-pc-windows-msvc, linked by MinGW) can build it; it declares the few
+// functions it calls itself.
 
-#include <dlfcn.h>
+#include <stddef.h>
 #include <stdint.h>
+
+#ifdef _WIN32
+extern "C" {
+int printf(const char *, ...);
+int strcmp(const char *, const char *);
+void *memset(void *, int, size_t);
+void *memcpy(void *, const void *, size_t);
+__declspec(dllimport) void *__stdcall LoadLibraryA(const char *);
+__declspec(dllimport) void *__stdcall GetProcAddress(void *, const char *);
+__declspec(dllimport) void __stdcall Sleep(uint32_t);
+}
+#else
+#include <dlfcn.h>
 #include <stdio.h>
 #include <string.h>
 #include <time.h>
+#endif
 
 static const uint64_t STEAM_ID = 76561197960287930ull;
 static const uint64_t OTHER = 76561197960287931ull;
@@ -41,9 +60,14 @@ typedef int32_t HSteamPipe;
 typedef int32_t HSteamUser;
 typedef uint64_t SteamAPICall_t;
 
-// Callbacks: 4 bytes on Linux and macOS (§2.2). A pragma's number must be
-// written out: `pack(push, NAME)` pushes a label, not a macro's value.
+// Callbacks: 8 bytes on Windows, 4 on Linux and macOS (§2.2). A pragma's
+// number must be written out: `pack(push, NAME)` pushes a label, not a
+// macro's value.
+#ifdef _WIN32
+#pragma pack(push, 8)
+#else
 #pragma pack(push, 4)
+#endif
 struct CallbackMsg_t {
     HSteamUser m_hSteamUser;
     int m_iCallback;
@@ -137,7 +161,7 @@ static int failures = 0;
 #define CHECK(cond)                                                    \
     do {                                                               \
         if (!(cond)) {                                                 \
-            fprintf(stderr, "game.cpp:%d: failed: %s\n", __LINE__, #cond); \
+            printf("game.cpp:%d: failed: %s\n", __LINE__, #cond);      \
             failures++;                                                \
         }                                                              \
     } while (0)
@@ -146,9 +170,40 @@ static BGetCallbackFn get_callback;
 static FreeLastCallbackFn free_last_callback;
 
 static void sleep_ms(long ms) {
+#ifdef _WIN32
+    Sleep((uint32_t)ms);
+#else
     struct timespec t = {0, ms * 1000000L};
     nanosleep(&t, 0);
+#endif
 }
+
+// The library's exports, as steam_api finds them.
+#ifdef _WIN32
+static void *open_library(const char *path) {
+    void *lib = LoadLibraryA(path);
+    if (!lib) {
+        printf("LoadLibraryA failed\n");
+    }
+    return lib;
+}
+
+static void *symbol(void *lib, const char *name) {
+    return GetProcAddress(lib, name);
+}
+#else
+static void *open_library(const char *path) {
+    void *lib = dlopen(path, RTLD_NOW | RTLD_LOCAL);
+    if (!lib) {
+        printf("dlopen: %s\n", dlerror());
+    }
+    return lib;
+}
+
+static void *symbol(void *lib, const char *name) {
+    return dlsym(lib, name);
+}
+#endif
 
 // Pumps callbacks until `id` arrives, copying it to `out`; false after
 // five seconds.
@@ -159,7 +214,7 @@ static bool wait_callback(HSteamPipe pipe, int id, void *out, size_t size) {
         if (get_callback(pipe, &msg, 0)) {
             bool match = msg.m_iCallback == id;
             if (match && (size_t)msg.m_cubParam != size) {
-                fprintf(stderr, "callback %d has %d bytes, not %u\n", id, msg.m_cubParam, (unsigned)size);
+                printf("callback %d has %d bytes, not %u\n", id, msg.m_cubParam, (unsigned)size);
                 failures++;
             }
             if (match) {
@@ -173,27 +228,26 @@ static bool wait_callback(HSteamPipe pipe, int id, void *out, size_t size) {
             sleep_ms(1);
         }
     }
-    fprintf(stderr, "callback %d did not arrive\n", id);
+    printf("callback %d did not arrive\n", id);
     failures++;
     return false;
 }
 
 int main(int argc, char **argv) {
     if (argc != 2) {
-        fprintf(stderr, "usage: game <library>\n");
+        printf("usage: game <library>\n");
         return 100;
     }
-    void *lib = dlopen(argv[1], RTLD_NOW | RTLD_LOCAL);
+    void *lib = open_library(argv[1]);
     if (!lib) {
-        fprintf(stderr, "dlopen: %s\n", dlerror());
         return 100;
     }
-    CreateInterfaceFn create_interface = (CreateInterfaceFn)dlsym(lib, "CreateInterface");
-    get_callback = (BGetCallbackFn)dlsym(lib, "Steam_BGetCallback");
-    free_last_callback = (FreeLastCallbackFn)dlsym(lib, "Steam_FreeLastCallback");
-    GetAPICallResultFn get_api_call_result = (GetAPICallResultFn)dlsym(lib, "Steam_GetAPICallResult");
+    CreateInterfaceFn create_interface = (CreateInterfaceFn)symbol(lib, "CreateInterface");
+    get_callback = (BGetCallbackFn)symbol(lib, "Steam_BGetCallback");
+    free_last_callback = (FreeLastCallbackFn)symbol(lib, "Steam_FreeLastCallback");
+    GetAPICallResultFn get_api_call_result = (GetAPICallResultFn)symbol(lib, "Steam_GetAPICallResult");
     if (!create_interface || !get_callback || !free_last_callback || !get_api_call_result) {
-        fprintf(stderr, "an export is missing\n");
+        printf("an export is missing\n");
         return 100;
     }
 
@@ -201,14 +255,14 @@ int main(int argc, char **argv) {
     int rc = -1;
     ISteamClient *client = (ISteamClient *)create_interface("SteamClient020", &rc);
     if (!client) {
-        fprintf(stderr, "no SteamClient020\n");
+        printf("no SteamClient020\n");
         return 100;
     }
     CHECK(rc == 0);
     HSteamPipe pipe = client->CreateSteamPipe();
     HSteamUser user = client->ConnectToGlobalUser(pipe);
     if (pipe == 0 || user == 0) {
-        fprintf(stderr, "no pipe (%d) or user (%d)\n", pipe, user);
+        printf("no pipe (%d) or user (%d)\n", pipe, user);
         return 100;
     }
 

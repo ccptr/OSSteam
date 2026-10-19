@@ -230,7 +230,7 @@ as Linux / Windows.
 
 | Id | Structure | Fields | Size |
 |---|---|---|---|
-| 143 | `ValidateAuthTicketResponse_t` | `CSteamID m_SteamID`, `EAuthSessionResponse m_eAuthSessionResponse`, `CSteamID m_OwnerSteamID` | 20 / 24 |
+| 143 | `ValidateAuthTicketResponse_t` | `CSteamID m_SteamID`, `EAuthSessionResponse m_eAuthSessionResponse`, `CSteamID m_OwnerSteamID` | 20 / 20 |
 | 154 | `EncryptedAppTicketResponse_t` | `EResult m_eResult` | 4 / 4 |
 | 163 | `GetAuthSessionTicketResponse_t` | `HAuthTicket m_hAuthTicket`, `EResult m_eResult` | 8 / 8 |
 | 168 | `GetTicketForWebApiResponse_t` | `HAuthTicket m_hAuthTicket`, `EResult m_eResult`, `int m_cubTicket`, `uint8 m_rgubTicket[2560]` | 2572 / 2572 |

@@ -172,6 +172,8 @@ macOS, 8 on Windows. Sizes are given as Linux / Windows.
 | 1109 | `UserAchievementIconFetched_t` | `CGameID m_nGameID`, `char m_rgchAchievementName[128]`, `bool m_bAchieved`, `int m_nIconHandle` | 144 / 144 |
 | 1110 | `GlobalAchievementPercentagesReady_t` | `uint64 m_nGameID`, `EResult m_eResult` | 12 / 16 |
 
+`m_steamIDUser` is at offset 12 on both: `CSteamID` is aligned to 1
+(`steamworks-abi.md` §2.2), and on Windows the `uint64` pads the end.
 `m_steamIDUser` arrived with `RequestUserStats` in version `004`. A
 pipe that has handed out only version `003` objects gets the short
 structure. *Unverified:* that `steam_api` of that age drops a callback

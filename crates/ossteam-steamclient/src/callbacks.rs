@@ -64,13 +64,15 @@ pub fn game_result(game: u64, result: i32) -> Vec<u8> {
 }
 
 /// `UserStatsReceived_t { uint64 m_nGameID; EResult m_eResult; CSteamID
-/// m_steamIDUser; }`.
+/// m_steamIDUser; }`. `CSteamID` is aligned to 1 (§2.2), so it follows
+/// the result at 12 everywhere; the `uint64` pads the end to 24 on
+/// Windows.
 pub fn user_stats_received(game: u64, result: i32, user: u64) -> Vec<u8> {
     let mut out = Vec::with_capacity(24);
     out.extend_from_slice(&game.to_le_bytes());
     out.extend_from_slice(&result.to_le_bytes());
-    pad(&mut out, 8);
     out.extend_from_slice(&user.to_le_bytes());
+    pad(&mut out, 8);
     out
 }
 
@@ -122,12 +124,12 @@ pub const GET_TICKET_FOR_WEB_API_RESPONSE: i32 = 168;
 const WEB_API_TICKET: usize = 2560;
 
 /// `{ CSteamID m_SteamID; EAuthSessionResponse m_eAuthSessionResponse;
-/// CSteamID m_OwnerSteamID; }`.
+/// CSteamID m_OwnerSteamID; }`: 20 bytes everywhere, as `CSteamID` is
+/// aligned to 1 (§2.2).
 pub fn validate_auth_ticket_response(steam_id: u64, response: u32, owner: u64) -> Vec<u8> {
-    let mut out = Vec::with_capacity(24);
+    let mut out = Vec::with_capacity(20);
     out.extend_from_slice(&steam_id.to_le_bytes());
     out.extend_from_slice(&response.to_le_bytes());
-    pad(&mut out, 8);
     out.extend_from_slice(&owner.to_le_bytes());
     out
 }
@@ -193,12 +195,17 @@ mod tests {
         assert_eq!(user_achievement_stored(1, "a", 1, 2).len(), stored);
         assert_eq!(user_achievement_icon_fetched(1, "a", true, 3).len(), icon);
         assert_eq!(file_write_async_complete(1).len(), 4);
-        let validated = if cfg!(windows) { 24 } else { 20 };
-        assert_eq!(validate_auth_ticket_response(1, 0, 2).len(), validated);
+        assert_eq!(validate_auth_ticket_response(1, 0, 2).len(), 20);
         assert_eq!(auth_session_ticket_response(1, 1).len(), 8);
         assert_eq!(ticket_for_web_api_response(1, 1, &[1; 300]).len(), 2572);
         let read = if cfg!(windows) { 24 } else { 20 };
         assert_eq!(file_read_async_complete(1, 1, 0, 0).len(), read);
+        // `CSteamID` follows the result directly (§2.2), on Windows too.
+        assert_eq!(user_stats_received(1, 1, 2)[12..20], 2u64.to_le_bytes());
+        assert_eq!(
+            validate_auth_ticket_response(1, 0, 2)[12..20],
+            2u64.to_le_bytes()
+        );
         // A name too long is cut, with its NUL.
         let long = "x".repeat(200);
         let b = user_achievement_stored(1, &long, 0, 0);

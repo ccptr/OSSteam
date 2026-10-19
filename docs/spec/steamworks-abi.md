@@ -278,8 +278,10 @@ trivially copyable, so they follow the C rules.
   SDK). The Steam Input action data structures and `SteamIPAddress_t`
   are packed to 1 byte. So are `CSteamID` and `CGameID`, which the SDK
   declares inside `pack(1)`: as a member of a callback they are aligned
-  to 1 byte, so `UserStatsReceived_t` (`uint64`, `int`, `CSteamID`) is
-  20 bytes on Linux and macOS, 64-bit included.
+  to 1 byte, so in `UserStatsReceived_t` (`uint64`, `int`, `CSteamID`)
+  the Steam id is at offset 12 on every platform; the struct is 20 bytes
+  on Linux and macOS, 64-bit included, and 24 on Windows, where the
+  `uint64` pads its end.
 
 ### 2.3 Objects, pipes and users
 
@@ -720,7 +722,8 @@ getter and fails under ABI-3.
 | `SteamServersConnected_t` and `SteamServersDisconnected_t` timing (§3.7) | unverified |
 | Play sessions of games not started by the client (§3.5) | unverified |
 | Overloads in declaration order on Linux and macOS (§2.4) | the Itanium C++ ABI; checked by the ABI test (§6.1) against GCC and Clang on Linux x86_64 and i686; still to be checked against a native game |
-| Class returns and arguments, and callback packing, on Linux and macOS (§2.2) | checked by the ABI test (§6.1) on Linux x86_64 and i686 |
+| Overloads in reverse order on Windows (§2.4) | the MSVC C++ ABI; checked by the ABI test (§6.1) with clang's MSVC ABI, x86_64 and i686, under Wine |
+| Class returns and arguments, and callback packing (§2.2) | checked by the ABI test (§6.1) on Linux x86_64 and i686, and for Windows x86_64 and i686 (`thiscall`) under Wine |
 
 ### 6.1 The ABI test
 
@@ -734,12 +737,23 @@ than the shim's tables. It checks a `CSteamID` returned and passed by
 value, `bool`, `float` and `uint64` results, overloads that only work in
 the right slot (`GetStat`, `SetStat`, `GetUserStat`), and the sizes of
 `UserStatsReceived_t` and `SteamAPICallCompleted_t` against what the
-library queues.
+library queues, and where the Steam id sits in `UserStatsReceived_t`.
 
 The declarations are our own. The test checks the platform rules of
 §2.2 and §2.4 against a real compiler. It does not check that the
 Steamworks headers declare the methods in that order; that needs a
 native game. Run with `--target i686-unknown-linux-gnu` for the 32-bit
 library; the game is then built with `-m32`. It passed on 2026-10-19
-with GCC and Clang, x86_64 and i686. macOS first runs it on CI; Windows
-is not covered, as its C++ ABI is MSVC's and needs an MSVC-ABI compiler.
+with GCC and Clang, x86_64 and i686. macOS first runs it on CI.
+
+On Windows the game must be built with the MSVC C++ ABI: the test takes
+a game built beforehand from `$OSSTEAM_ABI_GAME`, or builds one with
+`$CXX`, else `clang-cl`. The game then includes no C library or SDK
+headers, so that clang can build it for `*-pc-windows-msvc` without the
+Windows SDK and MinGW can link it; `abi.rs` gives the commands for a
+run under Wine. The library finds the fake daemon's named pipe through
+`OSSTEAM_TEST_ROOT` (`ipc.md` §1), which only debug builds read. That run
+passed on 2026-10-19 for x86_64 and i686, after it found the Steam id
+of `UserStatsReceived_t` and `ValidateAuthTicketResponse_t` 4 bytes too
+far on Windows. Building with `clang-cl` or MSVC on real Windows has not
+been tried.

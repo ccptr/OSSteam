@@ -4357,6 +4357,7 @@ dependencies = [
 name = "ossteam-steamclient"
 version = "0.1.0"
 dependencies = [
+ "interprocess",
  "ossteam-gameipc",
  "windows-sys 0.61.2",
 ]

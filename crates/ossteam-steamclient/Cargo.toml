@@ -17,5 +17,9 @@ ossteam-gameipc.workspace = true
 [target.'cfg(windows)'.dependencies]
 windows-sys = { workspace = true, features = ["Win32_System_Power"] }
 
+# The ABI test's fake daemon serves the game's named pipe.
+[target.'cfg(windows)'.dev-dependencies]
+interprocess.workspace = true
+
 [lints]
 workspace = true

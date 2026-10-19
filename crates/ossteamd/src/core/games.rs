@@ -118,6 +118,26 @@ fn discovery_error(e: discovery::Error) -> RemoteError {
     }
 }
 
+/// The platform whose launch options `app` runs: the one its tool runs
+/// programs of, or `native` without a tool (`launch.md` §2).
+fn tool_platform(
+    app: AppId,
+    native: Platform,
+    mapping: Option<&ossteam_launch::compat::Mapping<'_>>,
+) -> Result<Platform, RemoteError> {
+    match mapping.and_then(|m| m.tool.platform()) {
+        Some(os) if os.eq_ignore_ascii_case("windows") => Ok(Platform {
+            os: "windows",
+            ..native
+        }),
+        Some(os) if !os.eq_ignore_ascii_case(native.os) => Err(unsupported(format!(
+            "app {app}'s compatibility tool {} runs {os} programs, which ossteam cannot",
+            mapping.map_or("", |m| m.tool.display_name.as_str())
+        ))),
+        _ => Ok(native),
+    }
+}
+
 impl Core {
     fn libraries(&self) -> Result<Libraries, discovery::Error> {
         let dir = self
@@ -193,13 +213,6 @@ impl Core {
             .unwrap_or_else(|| "public".into())
     }
 
-    fn launch_options(&self, app: AppId) -> Result<Vec<LaunchOption>, RemoteError> {
-        let info = self
-            .app_info(app)
-            .ok_or_else(|| not_found(format!("the info of app {app} is not available")))?;
-        Ok(options::parse(&info))
-    }
-
     pub(super) fn get_launch_options(
         &self,
         req: &v1::GetLaunchOptionsRequest,
@@ -209,11 +222,21 @@ impl Core {
         if snapshot.library.find(app).is_none() {
             return Err(not_found(format!("app {app} is not in the library")));
         }
-        let all = self.launch_options(app)?;
+        let info = self
+            .app_info(app)
+            .ok_or_else(|| not_found(format!("the info of app {app} is not available")))?;
+        let all = options::parse(&info);
         let branch = self.branch_of(app);
         let owns = |d: AppId| snapshot.library.find(d).is_some();
         let language = self.config.language();
-        let platform = Platform::native();
+        // The options of the platform the app's tool runs, as `Launch`
+        // chooses from (`launch.md` §2).
+        let list = self.tool_list();
+        let mapping = list
+            .as_ref()
+            .and_then(|l| self.compat_mapping(l, app, Some(&info)));
+        let platform =
+            Platform::native().and_then(|n| tool_platform(app, n, mapping.as_ref()).ok());
         let options: Vec<v1::LaunchOption> = all
             .iter()
             .map(|o| {
@@ -326,21 +349,7 @@ impl Core {
         let mapping = list
             .as_ref()
             .and_then(|l| self.compat_mapping(l, app, Some(&info)));
-        let platform = match mapping.as_ref().and_then(|m| m.tool.platform()) {
-            Some(os) if os.eq_ignore_ascii_case("windows") => Platform {
-                os: "windows",
-                ..native
-            },
-            Some(os) if !os.eq_ignore_ascii_case(native.os) => {
-                return Err(unsupported(format!(
-                    "app {app}'s compatibility tool {} runs {os} programs, which ossteam cannot",
-                    mapping
-                        .as_ref()
-                        .map_or("", |m| m.tool.display_name.as_str())
-                )));
-            }
-            _ => native,
-        };
+        let platform = tool_platform(app, native, mapping.as_ref())?;
         let installed_os = match installed.platform.as_str() {
             "" => native.os,
             os => os,

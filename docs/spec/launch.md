@@ -274,7 +274,7 @@ shim does not answer, and it fails under ABI-3.
 
 | Method | Behaviour |
 |---|---|
-| `GetLaunchOptions{app_id}` | The app's options as §1 reads them, each with `qualifies` set for this OS, branch and account, and `required` set when exactly one qualifies. `NOT_FOUND` when the app is not in the library. |
+| `GetLaunchOptions{app_id}` | The app's options as §1 reads them, each with `qualifies` set for the platform the app runs as (its tool's on Linux, §2), the branch and the account, and `required` set when exactly one qualifies. `NOT_FOUND` when the app is not in the library. |
 | `Launch{app_id, option, extra_args, allow_stale}` | Runs the checks in §2, starts the game and replies with the running game. `option` unset means the only qualifying option. When compatibility tools must be installed first (`compat-tools.md` §4) the reply waits for their jobs, however long they take; the client library waits for this reply without a timeout. |
 | `ListRunning` | The games the daemon launched that are still running. |
 | `StopGame{app_id}` | §5 |

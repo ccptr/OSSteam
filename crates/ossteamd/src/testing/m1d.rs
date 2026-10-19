@@ -349,6 +349,9 @@ fn a_windows_game_gets_windows_depots_and_proton_in_the_runtime() {
     // The runtime is unlisted and runs no Windows programs.
     let choices: Vec<&str> = compat.choices.iter().map(|c| c.name.as_str()).collect();
     assert_eq!(choices, ["proton_experimental"]);
+    // Its Windows option is the one that qualifies, as `Launch` chooses.
+    let options = c.get_launch_options(WINDOWS).expect("options");
+    assert!(options.single && options.options[0].qualifies);
 
     c.launch(WINDOWS, None, &[], false).expect("launched");
     let proton = PathBuf::from(installed(&c, PROTON).expect("proton").path);
@@ -416,6 +419,8 @@ fn a_windows_game_gets_windows_depots_and_proton_in_the_runtime() {
         .expect("setting");
     let err = c.launch(WINDOWS, None, &[], false).unwrap_err();
     assert!(err.to_string().contains("windows"), "{err}");
+    let options = c.get_launch_options(WINDOWS).expect("options");
+    assert!(!options.single && !options.options[0].qualifies);
     // A choice must name a tool.
     assert!(c.set_setting("compat.tool.22", Some("proton_4")).is_err());
     c.set_setting("compat.tool.22", Some("proton-experimental"))

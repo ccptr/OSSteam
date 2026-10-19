@@ -201,8 +201,9 @@ game from the store:
   | Installed | Play |
   | Running | Stop (`StopGame`) |
 
-- **Launch options.** When `GetLaunchOptions.single` is false, Play opens
-  a chooser of the options that qualify, with their descriptions. An
+- **Launch options.** When more than one option qualifies, Play opens a
+  chooser of them, with their descriptions; when none does, Play
+  launches and shows `Launch`'s error, which says why. An
   "Arguments" field adds `extra_args`, split like a shell would split
   them, without expansion.
 - **Details:** install path, folder, branch, build, size, depots, and the

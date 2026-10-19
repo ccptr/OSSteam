@@ -266,11 +266,14 @@ impl AppPage {
         self.act(cx, move |c| c.stop_game(app), |_, (), _| {});
     }
 
-    /// Play: launches the only option that qualifies, or opens the chooser
-    /// when there are several, then launches the chosen one (§4.3).
+    /// Play: opens the chooser when several options qualify, then launches
+    /// the chosen one; otherwise launches, and when none qualifies shows
+    /// why (§4.3).
     fn play(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
-        let single = self.options(cx).is_some_and(|o| o.single);
-        if !single && self.open != Open::Launch {
+        let several = self
+            .options(cx)
+            .is_some_and(|o| o.options.iter().filter(|o| o.qualifies).count() > 1);
+        if several && self.open != Open::Launch {
             self.open = Open::Launch;
             if self.option.is_none() {
                 self.option = self
@@ -293,7 +296,7 @@ impl AppPage {
             return;
         }
         let app = self.app_id;
-        let option = if single { None } else { self.option };
+        let option = if several { self.option } else { None };
         let stale = self.allow_stale;
         self.busy = true;
         self.error = None;

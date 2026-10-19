@@ -258,7 +258,7 @@ that has been described adds a section named `.bind` to the PE image.
 Before a launch the daemon reads the executable's PE headers. An
 executable with a `.bind` section is refused with `UNSUPPORTED`, and the
 message says that Steam DRM support arrives in M2 (SPEC §13). Nothing in
-the file is changed (DRM-2).
+the file is changed (DRM-2). How M2 serves the wrapper is in `drm.md` §1.
 
 The check reads only headers: the DOS header's `e_lfanew`, the PE
 signature, the COFF header and the section table. A file that is not a

@@ -756,7 +756,10 @@ impl Run<'_> {
     fn finish_file(&self, r: &Rebuild) -> Result<(), EngineError> {
         let f = self.file(r);
         let d = &self.p.job.depots[r.depot];
-        fs::File::open(&r.staged)
+        // Windows flushes only through a handle that may write.
+        OpenOptions::new()
+            .write(true)
+            .open(&r.staged)
             .and_then(|h| h.sync_all())
             .map_err(io_err(&r.staged))?;
         apply_flags(&r.staged, f.flags).map_err(io_err(&r.staged))?;

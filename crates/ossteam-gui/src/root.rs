@@ -561,8 +561,8 @@ impl Root {
                 button(SharedString::from(format!("menu-account-{id}")), label)
                     .ghost()
                     .full_width()
-                    .on_click(cx.listener(move |root, _, _, cx| {
-                        root.menu_open = false;
+                    .on_click(cx.listener(move |root, _, window, cx| {
+                        root.close_menu(&CloseMenu, window, cx);
                         model.update(cx, |m, cx| {
                             m.run(cx, move |c| c.switch_account(id), |_, _, _| {})
                         });
@@ -592,8 +592,8 @@ impl Root {
                 button("menu-logout", "Log out")
                     .ghost()
                     .full_width()
-                    .on_click(cx.listener(move |root, _, _, cx| {
-                        root.menu_open = false;
+                    .on_click(cx.listener(move |root, _, window, cx| {
+                        root.close_menu(&CloseMenu, window, cx);
                         model.update(cx, |m, cx| m.run(cx, |c| c.logout(), |_, (), _| {}));
                     })),
             );

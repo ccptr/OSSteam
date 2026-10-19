@@ -433,6 +433,12 @@ impl FakeCm {
         self.state().generation += 1;
     }
 
+    /// Every persona state sent so far, oldest first.
+    #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+    pub fn persona_states(&self) -> Vec<(SteamId, u32)> {
+        self.state().persona_states.clone()
+    }
+
     /// Every logon attempt so far, by account name.
     pub fn logons(&self) -> Vec<String> {
         self.state().logons.clone()

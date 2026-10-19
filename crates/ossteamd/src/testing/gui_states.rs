@@ -3,9 +3,11 @@
 //! keyboard-only check of `docs/acceptance/m1e.md`: an installed game with
 //! two launch options that runs until stopped, a Windows game run through
 //! Proton, one with an update, a download slow enough to watch with
-//! another queued behind it, a game with a DLC, and accounts that sign in with each kind of
-//! Steam Guard. Not a test: it serves a daemon until a client stops it,
-//! so it is ignored unless asked for:
+//! another queued behind it, a game with a DLC, and accounts that sign in
+//! with each kind of Steam Guard. On request, an update of [`NATIVE`]
+//! arrives in a new PICS change; each persona state the CM gets is printed.
+//! Not a test: it serves a daemon until a client stops it, so it is ignored
+//! unless asked for:
 //!
 //! ```text
 //! cargo test -p ossteamd -- --ignored --nocapture gui_bench_states
@@ -227,11 +229,26 @@ fn gui_bench_states() {
     }
     drop(c);
 
+    let trigger = root.path().join("update-sleeper");
     {
         let cm = cm.clone();
+        let trigger = trigger.clone();
         std::thread::spawn(move || {
+            let mut personas = 0;
             loop {
                 cm.approve_waiting("carol", APPROVE_AFTER);
+                if std::fs::remove_file(&trigger).is_ok() {
+                    let update =
+                        game_depot(NATIVE, 2, &[("bin/game.sh", GAME), ("readme.txt", b"2")]);
+                    cm.publish(&update, 2);
+                    cm.app_section(NATIVE, "depots", depots(NATIVE, "linux", 2));
+                    println!("Sleeper has an update in a new PICS change.");
+                }
+                let states = cm.persona_states();
+                for (id, state) in &states[personas..] {
+                    println!("The CM got persona state {state} for {}.", id.0);
+                }
+                personas = states.len();
                 std::thread::sleep(Duration::from_millis(500));
             }
         });
@@ -239,5 +256,9 @@ fn gui_bench_states() {
     println!("Signed in as alice. Other accounts, each with the password <name>-password:");
     println!("  bob (an email code, BOB12), dave (a confirmation, approved after 10 s),");
     println!("  erin (an authenticator code, ERIN5); a QR code signs in carol after 10 s.");
+    println!(
+        "touch {} to publish an update to Sleeper.",
+        trigger.display()
+    );
     serve_gui(d, &root, "A library in every state", "");
 }

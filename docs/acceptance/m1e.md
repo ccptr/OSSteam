@@ -18,6 +18,7 @@ a personal one), the date and the build.
 | Login, Library, App, Downloads and Settings pages; the account menu and status bar (§4) | built 2026-10-18; Login, Settings and Downloads seen on the real install without an account; Library with 10,000 fake-CM apps 2026-10-18 |
 | Keyboard navigation and focus (§6) | built 2026-10-18; Ctrl-2/3 and the Tab focus ring checked by hand |
 | Capsules decoded at cell size, at most 256 kept (§4.2) | built 2026-10-18; unit tests; peak RSS over a 10,000-app scroll went from 11.7 GB to 196 MB |
+| The App page's hero, logo and header decoded at the size drawn, at most 8 kept (§4.3) | built 2026-10-18; seen on the bench daemon at scale factor 1.25; opening 90 App pages one after another with the keyboard, RSS went from 689 MB and growing by about 6 MB a page to a level 297 MB |
 | The scroll bench: `gui_bench_library_of_10k_apps`, `OSSTEAM_GUI_BENCH=library-scroll` (§7) | built 2026-10-18 |
 | Integration test of the GUI's connection and store against a real daemon and the fake CM (§7) | ⏳ the fake CM is test code inside the daemon binary, and gpui's `test-support` pulls a git source `deny.toml` rejects |
 | macOS discovery (§24 Q1): what `steam_api` needs to find a client, in `steamworks-abi.md` §1.3 | written 2026-10-18 from the macOS `libsteam_api.dylib` of SDK 1.65a and one from 2017: the Mach service `com.valvesoftware.steam.ipctool` |
@@ -37,8 +38,8 @@ a personal one), the date and the build.
   cargo test -p ossteamd --release -- --ignored --nocapture gui_bench
   ```
 
-  It serves a daemon with a library of 10,000 apps, each with a capsule
-  already cached, and prints the command that runs the GUI against it
+  It serves a daemon with a library of 10,000 apps, each with a
+  capsule, a hero and a logo already cached, and prints the command that runs the GUI against it
   (with `XDG_RUNTIME_DIR`, `TMPDIR` on macOS, pointing at the test
   daemon) and the one that stops it. Keep the GUI window focused and
   unobscured while it scrolls: gpui draws an inactive window at 30 frames

@@ -17,7 +17,7 @@ use crate::model::{Asset, Model};
 use crate::pages::muted;
 use crate::store::LibraryQuery;
 use crate::theme::palette;
-use crate::thumbnails::{Thumbnail, Thumbnails};
+use crate::thumbnails::{Fit, Thumbnail, Thumbnails};
 use crate::widgets::{TextInput, TextInputEvent, button, switch};
 
 actions!(
@@ -44,6 +44,8 @@ const CELL_HEIGHT: f32 = 225.;
 const GAP: f32 = 16.;
 /// The selection's border around a capsule.
 const BORDER: f32 = 2.;
+/// Capsules kept decoded: more than a 4K display shows at once.
+const CAPSULES_KEPT: usize = 256;
 const LIST_ROW: f32 = 36.;
 /// The rows Page Up and Page Down move by.
 const PAGE_ROWS: usize = 4;
@@ -107,7 +109,7 @@ impl EventEmitter<LibraryEvent> for LibraryPage {}
 impl LibraryPage {
     pub fn new(model: Entity<Model>, window: &mut Window, cx: &mut Context<Self>) -> Self {
         let search = TextInput::build("Search the library", window, cx);
-        let thumbnails = cx.new(|_| Thumbnails::default());
+        let thumbnails = cx.new(|_| Thumbnails::new(CAPSULES_KEPT));
         let subscriptions = vec![
             cx.observe(&model, |_, _, cx| cx.notify()),
             cx.observe(&thumbnails, |_, _, cx| cx.notify()),
@@ -546,7 +548,7 @@ impl Cells<'_> {
                 let w = ((CELL_WIDTH - 2. * BORDER) * scale).round() as u32;
                 let h = ((CELL_HEIGHT - 2. * BORDER) * scale).round() as u32;
                 self.thumbnails
-                    .update(cx, |t, cx| t.get(&path, w, h, window, cx))
+                    .update(cx, |t, cx| t.get(&path, (w, h), Fit::Cover, window, cx))
             }
             Some(Asset::Waiting) | None => Thumbnail::Loading,
             Some(Asset::Missing) => Thumbnail::Failed,

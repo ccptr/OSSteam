@@ -185,7 +185,12 @@ From `GetApp` and `GetLaunchOptions`, plus the app's jobs and running
 game from the store:
 
 - **Header:** `GetAsset{HERO}` with `LOGO` over it; `HEADER` when the app
-  has no hero; the name alone when neither exists.
+  has no hero; the name alone when neither exists. These are decoded as
+  capsules are (§4.2), at the size they are drawn in device pixels: the
+  hero to fill the window's width, rounded up to 64 pixels, and 240
+  points high; the logo to fit in 320 × 140 points without being
+  enlarged; the header to fill 460 × 215 points. The eight most
+  recently drawn are kept, for every App page together.
 - **State and main action:**
 
   | State | Action |

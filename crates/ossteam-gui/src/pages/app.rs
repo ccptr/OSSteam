@@ -1,9 +1,12 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 //! The App page (`gui.md` §4.3).
 
+use std::path::Path;
+use std::sync::Arc;
+
 use gpui::{
     AnyElement, App, Context, Entity, EventEmitter, FocusHandle, Focusable, KeyBinding, ObjectFit,
-    SharedString, Subscription, Window, actions, div, img, prelude::*, px,
+    RenderImage, SharedString, Subscription, Window, actions, div, img, prelude::*, px,
 };
 use ossteam_ipc::v1::{self, AssetKind, CompatSource};
 
@@ -13,11 +16,21 @@ use crate::model::{Asset, Model};
 use crate::pages::downloads::job_row;
 use crate::pages::{error_text, muted, panel, row, section};
 use crate::theme::palette;
+use crate::thumbnails::{Fit, Thumbnail, Thumbnails};
 use crate::widgets::{TextInput, TextInputEvent, button, choice, switch};
 
 actions!(app_page, [Back]);
 
 const CONTEXT: &str = "AppPage";
+
+/// Artwork kept decoded, for every App page together (§4.3).
+pub const ARTWORK_KEPT: usize = 8;
+const HERO_HEIGHT: f32 = 240.;
+/// The hero is decoded for the window's width rounded up to this, so
+/// that resizing the window does not decode it again at every step.
+const HERO_WIDTH_STEP: u32 = 64;
+const LOGO_BOX: (f32, f32) = (320., 140.);
+const HEADER_SIZE: (f32, f32) = (460., 215.);
 
 pub fn bind_keys(cx: &mut App) {
     cx.bind_keys([KeyBinding::new("escape", Back, Some(CONTEXT))]);
@@ -38,6 +51,7 @@ enum Open {
 
 pub struct AppPage {
     model: Entity<Model>,
+    artwork: Entity<Thumbnails>,
     app_id: u32,
     focus: FocusHandle,
     open: Open,
@@ -60,6 +74,7 @@ impl EventEmitter<AppPageEvent> for AppPage {}
 impl AppPage {
     pub fn new(
         model: Entity<Model>,
+        artwork: Entity<Thumbnails>,
         app_id: u32,
         window: &mut Window,
         cx: &mut Context<Self>,
@@ -74,6 +89,7 @@ impl AppPage {
                 }
                 cx.notify();
             }),
+            cx.observe(&artwork, |_, _, cx| cx.notify()),
             cx.subscribe_in(&args, window, |page, _, e, window, cx| {
                 if *e == TextInputEvent::Submitted {
                     page.play(window, cx);
@@ -82,6 +98,7 @@ impl AppPage {
         ];
         Self {
             model,
+            artwork,
             app_id,
             focus: cx.focus_handle(),
             open: Open::None,
@@ -330,12 +347,13 @@ impl AppPage {
         &self,
         name: &str,
         has_info: bool,
-        window: &Window,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let p = palette(cx);
         let id = self.app_id;
-        let high_dpi = window.scale_factor() > 1.;
+        let scale = window.scale_factor();
+        let high_dpi = scale > 1.;
         let (hero, logo, header) = self.model.update(cx, |m, cx| {
             if !has_info {
                 return (None, None, None);
@@ -353,45 +371,98 @@ impl AppPage {
             }
             (hero, logo, header)
         });
+        let device = |points: f32| (points * scale).round() as u32;
         let title = div().text_2xl().text_color(p.text).child(name.to_owned());
         match (hero, logo, header) {
-            (Some(Asset::Ready(hero)), logo, _) => div()
-                .relative()
-                .w_full()
-                .h(px(240.))
-                .rounded_lg()
-                .overflow_hidden()
-                .child(img(hero).size_full().object_fit(ObjectFit::Cover))
-                .child(
-                    div().absolute().left_6().bottom_6().child(match logo {
-                        Some(Asset::Ready(logo)) => img(logo)
-                            .max_w(px(320.))
-                            .max_h(px(140.))
-                            .object_fit(ObjectFit::Contain)
-                            .into_any_element(),
-                        _ => div()
-                            .px_2()
-                            .rounded_md()
-                            .bg(p.surface.opacity(0.8))
-                            .child(title)
-                            .into_any_element(),
-                    }),
-                )
-                .into_any_element(),
-            (_, _, Some(Asset::Ready(header))) => div()
-                .flex()
-                .flex_col()
-                .gap_2()
-                .child(
-                    img(header)
-                        .w(px(460.))
-                        .h(px(215.))
-                        .rounded_lg()
-                        .object_fit(ObjectFit::Cover),
-                )
-                .child(title)
-                .into_any_element(),
+            (Some(Asset::Ready(hero)), logo, _) => {
+                let width = device(f32::from(window.viewport_size().width))
+                    .div_ceil(HERO_WIDTH_STEP)
+                    * HERO_WIDTH_STEP;
+                let hero =
+                    self.decoded(&hero, (width, device(HERO_HEIGHT)), Fit::Cover, window, cx);
+                let logo = match logo {
+                    Some(Asset::Ready(logo)) => self.decoded(
+                        &logo,
+                        (device(LOGO_BOX.0), device(LOGO_BOX.1)),
+                        Fit::Contain,
+                        window,
+                        cx,
+                    ),
+                    _ => None,
+                };
+                div()
+                    .relative()
+                    .w_full()
+                    .h(px(HERO_HEIGHT))
+                    .rounded_lg()
+                    .overflow_hidden()
+                    .when_some(hero, |d, hero| {
+                        d.child(img(hero).size_full().object_fit(ObjectFit::Cover))
+                    })
+                    .child(
+                        div().absolute().left_6().bottom_6().child(match logo {
+                            Some(logo) => {
+                                // Decoded no larger than its box; drawn at
+                                // that size.
+                                let size = logo.size(0);
+                                img(logo)
+                                    .w(px(size.width.0 as f32 / scale))
+                                    .h(px(size.height.0 as f32 / scale))
+                                    .into_any_element()
+                            }
+                            None => div()
+                                .px_2()
+                                .rounded_md()
+                                .bg(p.surface.opacity(0.8))
+                                .child(title)
+                                .into_any_element(),
+                        }),
+                    )
+                    .into_any_element()
+            }
+            (_, _, Some(Asset::Ready(header))) => {
+                let header = self.decoded(
+                    &header,
+                    (device(HEADER_SIZE.0), device(HEADER_SIZE.1)),
+                    Fit::Cover,
+                    window,
+                    cx,
+                );
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap_2()
+                    .child(
+                        div()
+                            .w(px(HEADER_SIZE.0))
+                            .h(px(HEADER_SIZE.1))
+                            .rounded_lg()
+                            .overflow_hidden()
+                            .when_some(header, |d, header| d.child(img(header).size_full())),
+                    )
+                    .child(title)
+                    .into_any_element()
+            }
             _ => title.into_any_element(),
+        }
+    }
+
+    /// `path` decoded for a box of `size` device pixels, or `None` while it
+    /// loads and when it does not decode.
+    fn decoded(
+        &self,
+        path: &Arc<Path>,
+        size: (u32, u32),
+        fit: Fit,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Option<Arc<RenderImage>> {
+        match self
+            .artwork
+            .update(cx, |t, cx| t.get(path, size, fit, window, cx))
+        {
+            Thumbnail::Ready(image) => Some(image),
+            Thumbnail::Loading | Thumbnail::Failed => None,
         }
     }
 

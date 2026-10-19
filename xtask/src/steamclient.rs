@@ -65,7 +65,10 @@ pub fn build(args: Vec<String>) -> anyhow::Result<()> {
     println!("64-bit: {}", out.join(&file).display());
 
     if UNIVERSAL.contains(&triple.as_str()) {
-        let other = UNIVERSAL.iter().find(|t| **t != triple).expect("two targets");
+        let other = UNIVERSAL
+            .iter()
+            .find(|t| **t != triple)
+            .expect("two targets");
         cargo_build(&root, Some(other), release)?;
         let thin = out.join(&file);
         let fat = out.join(format!("{file}.universal"));

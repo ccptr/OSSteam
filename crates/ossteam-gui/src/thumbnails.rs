@@ -1,11 +1,12 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
-//! Library capsules, decoded at the size they are drawn (`gui.md` §4.2).
+//! Library capsules and App page artwork, decoded at the size they are
+//! drawn (`gui.md` §4.2, §4.3).
 //!
 //! gpui's own image loading keeps every image it has decoded, at full
 //! size, until the app exits: scrolling a library of 10,000 apps held
-//! gigabytes. Capsules here are scaled to their cell on a background
-//! thread, and only the most recently drawn are kept; the others leave
-//! the GPU's atlas too.
+//! gigabytes. Images here are scaled to where they are drawn on a
+//! background thread, and only the most recently drawn are kept; the
+//! others leave the GPU's atlas too.
 
 use std::collections::HashMap;
 use std::path::Path;
@@ -14,11 +15,17 @@ use std::sync::Arc;
 use gpui::{AppContext, Context, RenderImage, Task, Window};
 use image::imageops::FilterType;
 
-/// Capsules kept: more than a 4K display shows at once.
-pub const CAPACITY: usize = 256;
+/// How an image is scaled to its box.
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+pub enum Fit {
+    /// Fills the box, cropping what overflows.
+    Cover,
+    /// Fits inside the box, keeping its shape; never enlarged.
+    Contain,
+}
 
-/// An image file at a size in device pixels.
-type Key = (Arc<Path>, u32, u32);
+/// An image file in a box in device pixels.
+type Key = (Arc<Path>, u32, u32, Fit);
 
 enum State {
     /// Dropping the task cancels the load.
@@ -40,26 +47,35 @@ pub enum Thumbnail {
     Failed,
 }
 
-#[derive(Default)]
 pub struct Thumbnails {
     entries: HashMap<Key, Entry>,
     clock: u64,
+    capacity: usize,
 }
 
 impl Thumbnails {
-    /// The image at `path` scaled to fill `width` × `height` device
+    /// A cache of the `capacity` images drawn last.
+    pub fn new(capacity: usize) -> Self {
+        Self {
+            entries: HashMap::new(),
+            clock: 0,
+            capacity,
+        }
+    }
+
+    /// The image at `path` scaled to a box of `width` × `height` device
     /// pixels, loaded in the background on first use. Views call this
     /// while drawing; the entity notifies when a load ends.
     pub fn get(
         &mut self,
         path: &Arc<Path>,
-        width: u32,
-        height: u32,
+        (width, height): (u32, u32),
+        fit: Fit,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Thumbnail {
         self.clock += 1;
-        let key = (path.clone(), width, height);
+        let key = (path.clone(), width, height, fit);
         if let Some(e) = self.entries.get_mut(&key) {
             e.used = self.clock;
             return match &e.state {
@@ -70,10 +86,10 @@ impl Thumbnails {
         }
         let task = {
             let key = key.clone();
-            let (path, w, h) = key.clone();
+            let (path, w, h, fit) = key.clone();
             let load = cx.background_spawn(async move {
                 let bytes = std::fs::read(&path).ok()?;
-                decode(&bytes, w, h).ok()
+                decode(&bytes, w, h, fit).ok()
             });
             cx.spawn(async move |this, cx| {
                 let image = load.await;
@@ -99,10 +115,10 @@ impl Thumbnails {
         Thumbnail::Loading
     }
 
-    /// Drops the least recently drawn beyond [`CAPACITY`]. A dropped load
+    /// Drops the least recently drawn beyond the capacity. A dropped load
     /// is cancelled.
     fn evict(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if self.entries.len() <= CAPACITY {
+        if self.entries.len() <= self.capacity {
             return;
         }
         let mut by_use: Vec<_> = self
@@ -111,7 +127,7 @@ impl Thumbnails {
             .map(|(k, e)| (e.used, k.clone()))
             .collect();
         by_use.sort_unstable_by_key(|(used, _)| *used);
-        let excess = self.entries.len() - CAPACITY;
+        let excess = self.entries.len() - self.capacity;
         for (_, key) in by_use.into_iter().take(excess) {
             if let Some(Entry {
                 state: State::Ready(image),
@@ -124,14 +140,16 @@ impl Thumbnails {
     }
 }
 
-/// Decodes an image and scales it to cover `width` × `height`, cropping
-/// what overflows, into gpui's BGRA.
-pub fn decode(bytes: &[u8], width: u32, height: u32) -> image::ImageResult<RenderImage> {
-    let scaled = image::load_from_memory(bytes)?.resize_to_fill(
-        width.max(1),
-        height.max(1),
-        FilterType::Triangle,
-    );
+/// Decodes an image and scales it to a box of `width` × `height`, into
+/// gpui's BGRA.
+pub fn decode(bytes: &[u8], width: u32, height: u32, fit: Fit) -> image::ImageResult<RenderImage> {
+    let image = image::load_from_memory(bytes)?;
+    let (width, height) = (width.max(1), height.max(1));
+    let scaled = match fit {
+        Fit::Cover => image.resize_to_fill(width, height, FilterType::Triangle),
+        Fit::Contain if image.width() <= width && image.height() <= height => image,
+        Fit::Contain => image.resize(width, height, FilterType::Triangle),
+    };
     let mut pixels = scaled.into_rgba8();
     for p in pixels.as_chunks_mut::<4>().0 {
         p.swap(0, 2);
@@ -153,7 +171,7 @@ mod tests {
 
     #[test]
     fn decoded_at_the_cell_size_in_bgra() {
-        let image = decode(&png(600, 900, [10, 20, 30]), 146, 221).expect("decodes");
+        let image = decode(&png(600, 900, [10, 20, 30]), 146, 221, Fit::Cover).expect("decodes");
         let size = image.size(0);
         assert_eq!((size.width.0, size.height.0), (146, 221));
         assert_eq!(
@@ -164,13 +182,23 @@ mod tests {
 
     #[test]
     fn a_wider_image_is_cropped_to_cover() {
-        let image = decode(&png(920, 430, [0, 0, 0]), 146, 221).expect("decodes");
+        let image = decode(&png(920, 430, [0, 0, 0]), 146, 221, Fit::Cover).expect("decodes");
         let size = image.size(0);
         assert_eq!((size.width.0, size.height.0), (146, 221));
     }
 
     #[test]
+    fn contain_keeps_the_shape_and_never_enlarges() {
+        let image = decode(&png(1280, 720, [0, 0, 0]), 640, 280, Fit::Contain).expect("decodes");
+        let size = image.size(0);
+        assert_eq!((size.width.0, size.height.0), (498, 280));
+        let image = decode(&png(200, 80, [0, 0, 0]), 640, 280, Fit::Contain).expect("decodes");
+        let size = image.size(0);
+        assert_eq!((size.width.0, size.height.0), (200, 80));
+    }
+
+    #[test]
     fn not_an_image_fails() {
-        assert!(decode(b"<html>404</html>", 146, 221).is_err());
+        assert!(decode(b"<html>404</html>", 146, 221, Fit::Cover).is_err());
     }
 }

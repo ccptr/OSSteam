@@ -14,13 +14,14 @@ use ossteam_ipc::v1::{self, ConnectionState, NoticeLevel};
 use crate::daemon::{self, Update};
 use crate::format;
 use crate::model::Model;
-use crate::pages::app::{AppPage, AppPageEvent};
+use crate::pages::app::{ARTWORK_KEPT, AppPage, AppPageEvent};
 use crate::pages::downloads::DownloadsPage;
 use crate::pages::library::{LibraryEvent, LibraryPage};
 use crate::pages::login::{self, LoginPage};
 use crate::pages::settings::SettingsPage;
 use crate::queue;
 use crate::theme::{Palette, palette};
+use crate::thumbnails::Thumbnails;
 use crate::widgets::button;
 
 actions!(
@@ -72,6 +73,8 @@ struct Ui {
     login: Entity<LoginPage>,
     library: Entity<LibraryPage>,
     app: Option<Entity<AppPage>>,
+    /// The App page's artwork, kept across App pages.
+    artwork: Entity<Thumbnails>,
     downloads: Entity<DownloadsPage>,
     settings: Entity<SettingsPage>,
     _subscriptions: Vec<Subscription>,
@@ -164,6 +167,7 @@ impl Root {
         let model = cx.new(|_| Model::new(d, initial));
         let login = cx.new(|cx| LoginPage::new(model.clone(), window, cx));
         let library = cx.new(|cx| LibraryPage::new(model.clone(), window, cx));
+        let artwork = cx.new(|_| Thumbnails::new(ARTWORK_KEPT));
         let downloads = cx.new(|cx| DownloadsPage::new(model.clone(), cx));
         let settings = cx.new(|cx| SettingsPage::new(model.clone(), window, cx));
         let subscriptions = vec![
@@ -183,6 +187,7 @@ impl Root {
             login,
             library,
             app: None,
+            artwork,
             downloads,
             settings,
             _subscriptions: subscriptions,
@@ -243,7 +248,8 @@ impl Root {
             ui.model.update(cx, |m, _| m.close_app(id));
         }
         let model = ui.model.clone();
-        let page = cx.new(|cx| AppPage::new(model, app_id, window, cx));
+        let artwork = ui.artwork.clone();
+        let page = cx.new(|cx| AppPage::new(model, artwork, app_id, window, cx));
         let sub = cx.subscribe_in(
             &page,
             window,

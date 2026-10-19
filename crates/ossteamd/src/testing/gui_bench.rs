@@ -8,8 +8,9 @@
 //! ```
 //!
 //! It prints how to run the GUI against that daemon. Every app has a
-//! capsule, already in the daemon's image cache, so the GUI loads and
-//! draws images as it would for a real library without fetching any.
+//! capsule, a hero and a logo, already in the daemon's image cache, so the
+//! GUI loads and draws images as it would for a real library without
+//! fetching any.
 
 use std::path::Path;
 
@@ -25,6 +26,8 @@ const FIRST_APP: u32 = 100_000;
 /// `common/store_asset_mtime` of every app.
 const MTIME: u64 = 1;
 const CAPSULE: &str = "library_600x900.png";
+const HERO: &str = "library_hero.png";
+const LOGO: &str = "logo.png";
 /// Different images, so that the GUI does not draw one texture throughout.
 const VARIANTS: u32 = 16;
 
@@ -47,7 +50,12 @@ fn steam() -> FakeCm {
     }
     let common = section(&format!(
         r#""store_asset_mtime" "{MTIME}"
-           "library_assets_full" {{ "library_capsule" {{ "image" {{ "english" "{CAPSULE}" }} }} }}"#
+           "library_assets_full"
+           {{
+               "library_capsule" {{ "image" {{ "english" "{CAPSULE}" }} }}
+               "library_hero" {{ "image" {{ "english" "{HERO}" }} }}
+               "library_logo" {{ "image" {{ "english" "{LOGO}" }} }}
+           }}"#
     ));
     for i in 0..APPS {
         cm.app_section(app_id(i), "common", common.clone());
@@ -55,9 +63,9 @@ fn steam() -> FakeCm {
     cm.account(account)
 }
 
-/// A 600 × 900 capsule in shades of one hue.
-fn capsule(variant: u32) -> Vec<u8> {
-    let (w, h) = (600u32, 900u32);
+/// A `w` × `h` image in shades of one hue, the official size of each kind
+/// (a 600 × 900 capsule, a 1920 × 620 hero, a 640 × 360 logo).
+fn picture(variant: u32, w: u32, h: u32) -> Vec<u8> {
     let hue = [
         (variant * 37 % 256) as u8,
         (variant * 91 % 256) as u8,
@@ -76,32 +84,40 @@ fn capsule(variant: u32) -> Vec<u8> {
     enc.set_depth(png::BitDepth::Eight);
     enc.write_header()
         .and_then(|mut wr| wr.write_image_data(&pixels))
-        .expect("encode the capsule");
+        .expect("encode an image");
     out
 }
 
-/// Puts every app's capsule where the daemon caches it (`pics.md` §9).
+/// Puts every app's images where the daemon caches them (`pics.md` §9).
 fn seed_images(root: &Root) {
     let images = root.path().join("images");
     std::fs::create_dir_all(&images).expect("create the image directory");
-    let variants: Vec<_> = (0..VARIANTS)
+    let kinds = [(CAPSULE, 600, 900), (HERO, 1920, 620), (LOGO, 640, 360)];
+    let variants: Vec<Vec<_>> = (0..VARIANTS)
         .map(|v| {
-            let path = images.join(format!("{v}.png"));
-            std::fs::write(&path, capsule(v)).expect("write a capsule");
-            path
+            kinds
+                .iter()
+                .map(|&(name, w, h)| {
+                    let path = images.join(format!("{v}-{name}"));
+                    std::fs::write(&path, picture(v, w, h)).expect("write an image");
+                    (name, path)
+                })
+                .collect()
         })
         .collect();
     let assets = root.path().join("cache").join("assets");
     for i in 0..APPS {
         let dir = assets.join(app_id(i).to_string()).join(MTIME.to_string());
         std::fs::create_dir_all(&dir).expect("create the app's image directory");
-        link(&variants[(i % VARIANTS) as usize], &dir.join(CAPSULE));
+        for (name, path) in &variants[(i % VARIANTS) as usize] {
+            link(path, &dir.join(name));
+        }
     }
 }
 
 fn link(from: &Path, to: &Path) {
     if std::fs::hard_link(from, to).is_err() {
-        std::fs::copy(from, to).expect("copy a capsule");
+        std::fs::copy(from, to).expect("copy an image");
     }
 }
 

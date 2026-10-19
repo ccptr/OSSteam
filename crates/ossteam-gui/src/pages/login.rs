@@ -13,7 +13,7 @@ use crate::model::Model;
 use crate::pages::{error_text, muted, panel, section};
 use crate::store::LoginOutcome;
 use crate::theme::palette;
-use crate::widgets::{TextInput, TextInputEvent, button, qr, reveal, switch};
+use crate::widgets::{TextInput, TextInputEvent, button, page_scroll, qr, reveal, switch};
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Tab {
@@ -445,8 +445,7 @@ impl Render for LoginPage {
         } else {
             self.form(cx)
         };
-        div()
-            .id("login-page")
+        page_scroll::by_keyboard(div().id("login-page"), &self.scroll, None)
             .track_focus(&self.focus)
             .size_full()
             .overflow_y_scroll()

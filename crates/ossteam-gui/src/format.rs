@@ -124,6 +124,19 @@ pub fn persona_state(s: v1::PersonaState) -> &'static str {
     }
 }
 
+/// How a game ended, as `ossteam events` says it.
+pub fn exited(e: &v1::GameExited) -> String {
+    let how = match e.status {
+        Some(v1::game_exited::Status::ExitCode(c)) => format!("with exit code {c}"),
+        Some(v1::game_exited::Status::Signal(s)) => format!("by signal {s}"),
+        None => "for a reason this client does not know".into(),
+    };
+    format!(
+        "Exited {how} after {}.",
+        duration(Duration::from_secs(e.seconds))
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -136,6 +149,19 @@ mod tests {
         assert_eq!(duration(Duration::from_secs(125)), "2 min 5 s");
         assert_eq!(duration(Duration::from_secs(7322)), "2 h 2 min");
         assert_eq!(date(1_700_000_000), "2023-11-14");
+        let exit = |status, seconds| v1::GameExited {
+            app_id: 480,
+            status: Some(status),
+            seconds,
+        };
+        assert_eq!(
+            exited(&exit(v1::game_exited::Status::ExitCode(3), 0)),
+            "Exited with exit code 3 after 0 s."
+        );
+        assert_eq!(
+            exited(&exit(v1::game_exited::Status::Signal(9), 125)),
+            "Exited by signal 9 after 2 min 5 s."
+        );
         let p = v1::JobProgressInfo {
             phase: JobPhase::Downloading as i32,
             download_total: 4 << 20,

@@ -99,6 +99,7 @@ events (GUI-2):
 | jobs | `ListJobs` | `JobStateChanged` replaces or adds the job; `JobProgress` replaces its progress; read again when the active account changes |
 | running games | `ListRunning` | `GameStarted` adds, `GameExited` removes |
 | shim reports | `GetApp.last_shim_report` (§5) | `ShimReport` replaces the app's |
+| game exits | none: the daemon keeps no record | `GameExited` replaces the app's |
 | settings | `GetSettings` | `SettingChanged` replaces the setting |
 | folders | `ListLibraryFolders` | read again after a job of any app changes state, and after adding or removing a folder |
 
@@ -106,7 +107,7 @@ Views keep only view state: the page shown, text typed, selection,
 scroll position, which menus are open, and the download rates of §4.4.
 
 When the active account changes, the store drops the library, jobs,
-app details and shim reports of the old one and reads them again; an
+app details, shim reports and game exits of the old one and reads them again; an
 open App page closes.
 
 A reply and the event about the same change reach the store by
@@ -214,9 +215,12 @@ game from the store:
   `SetSetting`, or resets it.
 - **Manage:** Verify; Uninstall, which asks for confirmation, with "Also
   delete the Proton prefix" on Linux (`remove_compat_data`).
-- **Last run:** the app's last `ShimReport` (§5): interfaces used, versions
-  not provided, and unimplemented calls with their counts. Nothing is
-  shown for an app with no report.
+- **Last run:** how the game last ended, if the GUI saw its `GameExited`
+  (exit code or signal, and how long it ran, as `ossteam events` says),
+  and the app's last `ShimReport` (§5): interfaces used, versions not
+  provided, and unimplemented calls with their counts. A report whose
+  pid is not that of the run that ended, which sent none, is said to be
+  from an earlier run. Nothing is shown for an app with neither.
 
 Escape or Back returns to the library with its scroll position and
 search kept.
@@ -312,6 +316,7 @@ to the control that opened it.
 | Ctrl-1, Ctrl-2, Ctrl-3 | Cmd-1, Cmd-2, Cmd-3 | Library, Downloads, Settings |
 | Ctrl-F | Cmd-F | Focus the library search |
 | Arrows, Home, End, Page Up, Page Down | same | Move the library selection |
+| Page Up, Page Down, Home, End | same | Scroll the App, Downloads, Settings or Login page (Home and End in a text field move its cursor) |
 | Enter | Return | Open the selected app |
 | Ctrl-Enter | Cmd-Return | Play or install the selected or open app |
 | Ctrl-Q | Cmd-Q | Quit (the daemon keeps running) |

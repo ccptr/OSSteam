@@ -34,6 +34,7 @@ pub fn run() {
         widgets::text_input::bind_keys(cx);
         pages::library::bind_keys(cx);
         pages::app::bind_keys(cx);
+        widgets::page_scroll::bind_keys(cx);
         cx.on_window_closed(|cx, _| {
             if cx.windows().is_empty() {
                 cx.quit();

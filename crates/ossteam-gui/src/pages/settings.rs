@@ -15,7 +15,7 @@ use crate::model::Model;
 use crate::pages::{error_text, muted, panel, row, section};
 use crate::store::Read;
 use crate::theme::palette;
-use crate::widgets::{TextInput, TextInputEvent, button, choice, reveal, switch};
+use crate::widgets::{TextInput, TextInputEvent, button, choice, page_scroll, reveal, switch};
 
 const DOWNLOAD_KEYS: [&str; 5] = [
     "content.bandwidth_limit",
@@ -551,8 +551,7 @@ impl Render for SettingsPage {
         let folders = self.folders(cx);
         let account = self.account(cx);
         let daemon = self.daemon(others, window, cx);
-        div()
-            .id("settings-page")
+        page_scroll::by_keyboard(div().id("settings-page"), &self.scroll, None)
             .track_focus(&self.focus)
             .size_full()
             .overflow_y_scroll()

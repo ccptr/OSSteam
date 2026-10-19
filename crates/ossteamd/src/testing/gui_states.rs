@@ -50,10 +50,26 @@ const APPROVE_AFTER: Duration = Duration::from_secs(10);
 const POLL: Duration = Duration::from_secs(1);
 
 /// The game: runs until stopped, or exits with 3 when given `-quick`.
-const GAME: &[u8] = br#"#!/bin/sh
-case " $* " in *" -quick "*) exit 3 ;; esac
+/// Given `-report`, it connects to the daemon as the shim does, sends a
+/// report and exits (`m1c::shim_in_a_game`), so that the App page has a
+/// last shim report to show.
+fn game(root: &Root) -> Vec<u8> {
+    let exe = std::env::current_exe().expect("the test binary");
+    format!(
+        r#"#!/bin/sh
+case " $* " in
+  *" -quick "*) exit 3 ;;
+  *" -report "*)
+    printf '%s' '{socket}' > shim-address.txt
+    exec '{exe}' --exact testing::m1c::shim_in_a_game --ignored --nocapture ;;
+esac
 exec sleep 600
-"#;
+"#,
+        socket = root.socket_dir().display(),
+        exe = exe.display(),
+    )
+    .into_bytes()
+}
 
 fn game_depot(app: u32, manifest: u64, files: &[(&'static str, &[u8])]) -> Depot {
     let id = app * 10 + 1;
@@ -77,7 +93,7 @@ fn depots(app: u32, os: &str, manifest: u64) -> ossteam_vdf::Object {
     ))
 }
 
-fn steam(cdn: &Arc<FakeCdn>, big: &[u8]) -> FakeCm {
+fn steam(cdn: &Arc<FakeCdn>, big: &[u8], game: &[u8]) -> FakeCm {
     let cm = FakeCm::new()
         .package(0, &[MANIFESTS, SNIPER, PROTON])
         .package(
@@ -139,7 +155,7 @@ fn steam(cdn: &Arc<FakeCdn>, big: &[u8]) -> FakeCm {
         "linux",
         "Proton - Experimental",
     );
-    let big_files: [(&'static str, &[u8]); 2] = [("bin/game.sh", GAME), ("data.pak", big)];
+    let big_files: [(&'static str, &[u8]); 2] = [("bin/game.sh", game), ("data.pak", big)];
     for (app, os, exe, dir) in [
         (NATIVE, "linux", "bin/game.sh", "Sleeper"),
         (WINDOWS, "windows", "bin/game.exe", "Windows Sleeper"),
@@ -148,7 +164,7 @@ fn steam(cdn: &Arc<FakeCdn>, big: &[u8]) -> FakeCm {
         (QUEUED, "linux", "bin/game.sh", "Queued"),
         (FRESH, "linux", "bin/game.sh", "Fresh"),
     ] {
-        let exe_only: [(&'static str, &[u8]); 1] = [(exe, GAME)];
+        let exe_only: [(&'static str, &[u8]); 1] = [(exe, game)];
         let files: &[(&'static str, &[u8])] = if app == BIG { &big_files } else { &exe_only };
         let depot = game_depot(app, 1, files);
         cm.publish(&depot, 1);
@@ -208,7 +224,8 @@ fn gui_bench_states() {
     seed_images(&root, GAMES);
     let cdn = Arc::new(FakeCdn::new());
     let big = data(4, BIG_SIZE);
-    let cm = steam(&cdn, &big);
+    let game = game(&root);
+    let cm = steam(&cdn, &big, &game);
     let d = TestDaemon::start_with_cdn(&root, &cm, POLL, cdn.clone());
     login(&d);
     let c = d.subscribed(&[Topic::Jobs]);
@@ -217,7 +234,7 @@ fn gui_bench_states() {
     for app in [NATIVE, UPDATER] {
         done(&c, c.install(app, "", "").expect("install queued"));
     }
-    let update = game_depot(UPDATER, 2, &[("bin/game.sh", GAME), ("readme.txt", b"2")]);
+    let update = game_depot(UPDATER, 2, &[("bin/game.sh", &game), ("readme.txt", b"2")]);
     cm.publish(&update, 2);
     cm.app_section(UPDATER, "depots", depots(UPDATER, "linux", 2));
     wait_until("the update", || {
@@ -239,7 +256,7 @@ fn gui_bench_states() {
                 cm.approve_waiting("carol", APPROVE_AFTER);
                 if std::fs::remove_file(&trigger).is_ok() {
                     let update =
-                        game_depot(NATIVE, 2, &[("bin/game.sh", GAME), ("readme.txt", b"2")]);
+                        game_depot(NATIVE, 2, &[("bin/game.sh", &game), ("readme.txt", b"2")]);
                     cm.publish(&update, 2);
                     cm.app_section(NATIVE, "depots", depots(NATIVE, "linux", 2));
                     println!("Sleeper has an update in a new PICS change.");
@@ -256,6 +273,7 @@ fn gui_bench_states() {
     println!("Signed in as alice. Other accounts, each with the password <name>-password:");
     println!("  bob (an email code, BOB12), dave (a confirmation, approved after 10 s),");
     println!("  erin (an authenticator code, ERIN5); a QR code signs in carol after 10 s.");
+    println!("Launched with -report, a game sends a shim report and exits.");
     println!(
         "touch {} to publish an update to Sleeper.",
         trigger.display()

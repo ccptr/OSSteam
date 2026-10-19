@@ -84,6 +84,21 @@ pub struct Notice {
     pub at: Instant,
 }
 
+/// How a game ended (`GameExited`), and the pid it ran as when the GUI
+/// knew it was running.
+pub struct Exit {
+    pub exited: v1::GameExited,
+    pub pid: Option<u32>,
+}
+
+impl Exit {
+    /// Whether `r` is this run's report: a launched game's comes just
+    /// before its `GameExited`, with the pid the daemon started.
+    pub fn reported(&self, r: &v1::ShimReport) -> bool {
+        r.launched && self.pid == Some(r.pid)
+    }
+}
+
 pub struct Store {
     pub status: v1::GetStatusResponse,
     pub version: v1::GetVersionResponse,
@@ -99,6 +114,9 @@ pub struct Store {
     pub jobs: BTreeMap<u64, v1::Job>,
     pub running: BTreeMap<u32, v1::RunningGame>,
     pub shim_reports: HashMap<u32, v1::ShimReport>,
+    /// How each app's game last ended, of those seen to end since the GUI
+    /// connected: the daemon keeps no record of it.
+    pub exits: HashMap<u32, Exit>,
     pub settings: BTreeMap<String, v1::Setting>,
     pub folders: Vec<v1::LibraryFolder>,
     pub login: Login,
@@ -126,6 +144,7 @@ impl Store {
                 .collect(),
             running: i.running.into_iter().map(|g| (g.app_id, g)).collect(),
             shim_reports: HashMap::new(),
+            exits: HashMap::new(),
             settings: i.settings.into_iter().map(|s| (s.key.clone(), s)).collect(),
             folders: i.folders,
             login: Login::default(),
@@ -236,7 +255,8 @@ impl Store {
                 Vec::new()
             }
             event::Kind::GameExited(e) => {
-                self.running.remove(&e.app_id);
+                let pid = self.running.remove(&e.app_id).map(|g| g.pid);
+                self.exits.insert(e.app_id, Exit { exited: e, pid });
                 Vec::new()
             }
             event::Kind::ShimReport(r) => {
@@ -264,10 +284,12 @@ impl Store {
         self.login_required = s.login_required && !s.logged_on;
         let mut reads = vec![Read::Accounts];
         if old != new {
-            // Library, jobs, details and shim reports are the account's.
+            // Library, jobs, details, shim reports and exits are the
+            // account's.
             self.apps.clear();
             self.names.clear();
             self.shim_reports.clear();
+            self.exits.clear();
             self.jobs.clear();
             self.library = None;
             if new.is_some() {
@@ -471,6 +493,13 @@ mod tests {
         let mut s = store();
         s.open_app(480);
         s.shim_reports.insert(480, v1::ShimReport::default());
+        s.exits.insert(
+            480,
+            Exit {
+                exited: v1::GameExited::default(),
+                pid: None,
+            },
+        );
         // The same account going offline keeps everything.
         assert_eq!(s.apply(session(Some(1), false)), [Read::Accounts]);
         assert_eq!(s.jobs.len(), 1);
@@ -479,6 +508,7 @@ mod tests {
         let reads = s.apply(session(Some(2), true));
         assert_eq!(reads, [Read::Accounts, Read::Library, Read::Jobs]);
         assert!(s.jobs.is_empty() && s.apps.is_empty() && s.shim_reports.is_empty());
+        assert!(s.exits.is_empty());
         assert!(s.library.is_none());
 
         assert_eq!(s.apply(session(None, false)), [Read::Accounts]);
@@ -675,9 +705,21 @@ mod tests {
         assert_eq!(s.running[&480].pid, 9);
         s.apply(event::Kind::GameExited(v1::GameExited {
             app_id: 480,
+            seconds: 7,
             ..Default::default()
         }));
         assert!(s.running.is_empty());
+        assert_eq!(s.exits[&480].exited.seconds, 7);
+        assert_eq!(s.exits[&480].pid, Some(9));
+        let report = |pid, launched| v1::ShimReport {
+            app_id: 480,
+            pid,
+            launched,
+            ..Default::default()
+        };
+        assert!(s.exits[&480].reported(&report(9, true)));
+        assert!(!s.exits[&480].reported(&report(8, true)));
+        assert!(!s.exits[&480].reported(&report(9, false)));
 
         s.apply(event::Kind::SettingChanged(v1::SettingChanged {
             setting: Some(v1::Setting {

@@ -18,7 +18,7 @@ use crate::pages::downloads::job_row;
 use crate::pages::{error_text, muted, panel, row, section};
 use crate::theme::palette;
 use crate::thumbnails::{Fit, Thumbnail, Thumbnails};
-use crate::widgets::{TextInput, TextInputEvent, button, choice, reveal, switch};
+use crate::widgets::{TextInput, TextInputEvent, button, choice, page_scroll, reveal, switch};
 
 actions!(app_page, [Back]);
 
@@ -895,18 +895,32 @@ impl AppPage {
         Some(out.into_any_element())
     }
 
-    /// The app's last ShimReport (§4.3, §5).
+    /// How the game last ended and its last ShimReport (§4.3, §5).
     fn last_run(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
-        let r = self
-            .model
-            .read(cx)
-            .store
-            .shim_reports
-            .get(&self.app_id)?
-            .clone();
+        let store = &self.model.read(cx).store;
+        let exit = store.exits.get(&self.app_id);
+        let report = store.shim_reports.get(&self.app_id).cloned();
+        let earlier = match (exit, &report) {
+            (Some(e), Some(r)) => !e.reported(r),
+            _ => false,
+        };
+        let exit = exit.map(|e| format::exited(&e.exited));
+        if exit.is_none() && report.is_none() {
+            return None;
+        }
+        let mut out = panel(cx).when_some(exit, |d, e| d.child(div().child(e)));
+        let Some(r) = report else {
+            return Some(out.into_any_element());
+        };
         let p = palette(cx);
         let n = r.interfaces.len();
-        let mut out = panel(cx).child(muted(
+        if earlier {
+            out = out.child(muted(
+                "This run sent no report; the last one is from an earlier run.",
+                cx,
+            ));
+        }
+        out = out.child(muted(
             format!(
                 "The Steamworks library handed out {n} interface version{}.",
                 if n == 1 { "" } else { "s" }
@@ -1036,9 +1050,7 @@ impl Render for AppPage {
         if let Some(r) = self.last_run(cx) {
             body = body.child(section("Last run", cx).child(r));
         }
-        div()
-            .id("app-page")
-            .key_context(CONTEXT)
+        page_scroll::by_keyboard(div().id("app-page"), &self.scroll, Some(CONTEXT))
             .track_focus(&self.focus)
             .on_action(cx.listener(Self::back))
             .size_full()

@@ -3,6 +3,7 @@
 
 mod button;
 mod controls;
+pub mod page_scroll;
 pub mod qr;
 pub mod reveal;
 pub mod text_input;

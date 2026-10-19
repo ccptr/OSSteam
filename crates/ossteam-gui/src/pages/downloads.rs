@@ -15,7 +15,7 @@ use crate::pages::{error_text, muted, panel, section};
 use crate::queue::{self, Move};
 use crate::rate;
 use crate::theme::palette;
-use crate::widgets::{button, progress_bar, reveal};
+use crate::widgets::{button, page_scroll, progress_bar, reveal};
 
 pub struct DownloadsPage {
     model: Entity<Model>,
@@ -238,8 +238,7 @@ impl Render for DownloadsPage {
             history_list = history_list.child(job_row(&self.model, j, None, cx));
         }
 
-        div()
-            .id("downloads-page")
+        page_scroll::by_keyboard(div().id("downloads-page"), &self.scroll, None)
             .track_focus(&self.focus)
             .size_full()
             .overflow_y_scroll()

@@ -121,11 +121,13 @@ pub fn job_row(
         .map(|e| e.message.clone());
     let call_error = m.job_errors.get(&id).cloned();
 
+    // Pause and Resume share an id, and so a focus handle: the one that
+    // replaces the other keeps the focus.
     let mut buttons = div().flex().gap_1();
     if matches!(state, JobState::Queued | JobState::Running) {
         let model = model.clone();
         buttons = buttons.child(
-            button(("pause", id as usize), "Pause")
+            button(("pause-resume", id as usize), "Pause")
                 .secondary()
                 .on_click(move |_, _, cx| {
                     model.update(cx, |m, cx| {
@@ -137,7 +139,7 @@ pub fn job_row(
     if matches!(state, JobState::Paused | JobState::Failed) {
         let model = model.clone();
         buttons = buttons.child(
-            button(("resume", id as usize), "Resume")
+            button(("pause-resume", id as usize), "Resume")
                 .secondary()
                 .on_click(move |_, _, cx| {
                     model.update(cx, |m, cx| {

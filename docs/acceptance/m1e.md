@@ -23,7 +23,7 @@ a personal one), the date and the build.
 | Integration test of the GUI's connection and store against a real daemon and the fake CM (§7) | built 2026-10-19: `testing::gui::connection_and_store_follow_the_daemon` in the daemon's tests, on gpui's test platform: a wrong password, a login, the library, an App page with a DLC depot, Install and Uninstall, and `daemon stop`, each compared with what a leaf client reads. gpui's `test-support` takes proptest from git; the workspace patches it to the crates.io release, so `deny.toml` is unchanged |
 | macOS discovery (§24 Q1): what `steam_api` needs to find a client, in `steamworks-abi.md` §1.3 | written 2026-10-18 from the macOS `libsteam_api.dylib` of SDK 1.65a and one from 2017: the Mach service `com.valvesoftware.steam.ipctool` |
 | macOS discovery entries: the Mach service and `<data>/steam-sdk/osx/steamclient.dylib`; `build-steamclient` makes a universal library | built 2026-10-18; type-checked for aarch64-apple-darwin; the unit tests (a client that does what `steam_api` does) have not run on a Mac, and nothing has been loaded by a game |
-| `docs/acceptance/reference-hw.md` | ⏳ not written; the numbers below are from the development machine |
+| `docs/acceptance/reference-hw.md` | drafted 2026-10-19 for review: proposed machines and measurement conditions, no machine chosen yet; the numbers below are from the development machine |
 
 ## Setup
 

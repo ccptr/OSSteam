@@ -82,7 +82,7 @@ date and the build.
 The §20 check runs `cargo test --release -p ossteam-steamclient --test
 pump -- --nocapture` on the reference hardware and records the median it
 prints. `docs/acceptance/reference-hw.md`, which defines that hardware,
-is not written yet.
+is a draft with no machine chosen yet.
 
 `ConnectToGlobalUser` refuses an app the account does not own
 (`steamworks-abi.md` §2.3, *unverified*). If the test account has no

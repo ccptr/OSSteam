@@ -187,7 +187,8 @@ fn info_text(r: &v1::GetAppResponse) -> String {
     if !a.dlc.is_empty() {
         let _ = writeln!(out, "DLC");
         for d in &a.dlc {
-            let _ = writeln!(out, "  {:<10}{}", d.app_id, label(d, true));
+            let installed = if d.installed { " (installed)" } else { "" };
+            let _ = writeln!(out, "  {:<10}{}{installed}", d.app_id, label(d, true));
         }
     }
     if !r.depots.is_empty() {

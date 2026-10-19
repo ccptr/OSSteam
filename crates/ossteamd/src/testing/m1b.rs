@@ -167,6 +167,12 @@ fn install_update_verify_and_uninstall_with_dlc() {
     depots_installed.sort();
     assert_eq!(depots_installed, [(BASE, 1001), (DLC, 2001)]);
     assert!(!i.update_available);
+    let dlc_installed = |c: &Client| {
+        let app = c.get_app(ALPHA).expect("the app").app.expect("its summary");
+        assert_eq!(app.dlc.len(), 1);
+        app.dlc[0].installed
+    };
+    assert!(dlc_installed(&c), "the DLC's depot is installed");
     assert_eq!(i.size, (game.len() + config.len() + extra.len()) as u64);
     assert_eq!(remote(c.install(ALPHA, "", "")), ErrorCode::Conflict);
     let folders = c.list_library_folders().expect("folders");
@@ -218,6 +224,7 @@ fn install_update_verify_and_uninstall_with_dlc() {
     done(&c, c.uninstall(ALPHA, false).expect("uninstall queued"));
     assert!(!dir.exists());
     assert!(installed(&c, ALPHA).is_none());
+    assert!(!dlc_installed(&c));
     assert!(c.list_library_folders().unwrap()[0].app_ids.is_empty());
     assert_eq!(remote(c.verify(ALPHA)), ErrorCode::NotFound);
 }

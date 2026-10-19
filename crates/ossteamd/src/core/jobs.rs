@@ -11,9 +11,11 @@ use ossteam_content::depots::{self, Host, Wanted};
 use ossteam_ipc::RemoteError;
 use ossteam_ipc::v1::{self, ErrorCode, Topic, event, response};
 use ossteam_pics::cache::Kind as CacheKind;
+use ossteam_pics::{AppInfo, LibraryApp};
 use ossteam_types::{AppId, DepotId, ManifestId, SteamId};
 use ossteam_vdf::{Object, Value};
 
+use super::shim::dlc_installed;
 use super::{Core, internal, invalid};
 use crate::content::folders::{self, Layout};
 use crate::content::job::{self, Failure, Spec};
@@ -104,9 +106,17 @@ impl Core {
         self.content.installed.contains_key(&app)
     }
 
-    /// For `library::InstallState`.
-    pub(super) fn install_state(&self, app: AppId) -> Option<bool> {
-        self.content.installed.get(&app).map(|a| a.update_available)
+    /// For `library::InstallState`. A DLC is installed with its parent,
+    /// when one of its depots is (`shim::dlc_installed`).
+    pub(super) fn install_state(&self, app: &LibraryApp) -> Option<bool> {
+        if let Some(a) = self.content.installed.get(&app.id) {
+            return Some(a.update_available);
+        }
+        let parent = app.parent?;
+        let installed = self.content.installed.get(&parent)?;
+        let info = self.app_info(parent)?;
+        let depots: Vec<u32> = installed.depots.iter().map(|d| d.depot.0).collect();
+        dlc_installed(&AppInfo(&info).depots(), &depots, app.id).then_some(false)
     }
 
     pub(super) fn installed_proto(&self, app: AppId) -> Option<v1::InstalledApp> {

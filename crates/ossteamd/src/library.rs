@@ -18,9 +18,9 @@ use crate::pics::Snapshot;
 /// The language images are chosen in, until there is a language setting.
 const ASSET_LANGUAGE: &str = "english";
 
-/// Whether an app is installed: `None` when it is not, otherwise whether an
-/// update is known for it.
-pub type InstallState<'a> = &'a dyn Fn(AppId) -> Option<bool>;
+/// Whether an app or DLC is installed: `None` when it is not, otherwise
+/// whether an update is known for it.
+pub type InstallState<'a> = &'a dyn Fn(&LibraryApp) -> Option<bool>;
 
 pub fn list_apps(
     snapshot: &Snapshot,
@@ -31,7 +31,7 @@ pub fn list_apps(
     let matches = |a: &LibraryApp| {
         filter.is_empty() || a.name.to_lowercase().contains(&filter) || a.id.to_string() == filter
     };
-    let installed = |a: &LibraryApp| install_state(a.id).is_some();
+    let installed = |a: &LibraryApp| install_state(a).is_some();
     let keep = |a: &LibraryApp| matches(a) && (!req.installed_only || installed(a));
 
     let apps = snapshot
@@ -191,7 +191,7 @@ pub fn changed_apps(old: Option<&Snapshot>, new: Option<&Snapshot>) -> BTreeSet<
 }
 
 fn summary(a: &LibraryApp, dlc: &[&LibraryApp], install_state: InstallState) -> v1::AppSummary {
-    let state = install_state(a.id);
+    let state = install_state(a);
     v1::AppSummary {
         app_id: a.id.0,
         name: a.name.clone(),
@@ -280,7 +280,7 @@ mod tests {
                     filter: String::new(),
                     installed_only: true,
                 },
-                &|a| installed.contains(&a.0).then_some(false),
+                &|a| installed.contains(&a.id.0).then_some(false),
             );
             assert!(r.complete);
             ids(&r)

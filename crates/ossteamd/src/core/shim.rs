@@ -14,6 +14,7 @@ use ossteam_gameipc::{
 };
 use ossteam_ipc::v1::{self, Topic, event};
 use ossteam_pics::AppInfo;
+use ossteam_pics::info::Depot;
 use ossteam_types::{AppId, SteamId};
 
 use super::{Command, Core};
@@ -407,14 +408,8 @@ impl Core {
                 .into_iter()
                 .map(|d| {
                     let own = owns(d);
-                    let of_dlc: Vec<u32> = all_depots
-                        .iter()
-                        .filter(|x| x.dlc_app_id == Some(d))
-                        .map(|x| x.id.0)
-                        .collect();
-                    let installed = own
-                        && installed.is_some()
-                        && (of_dlc.is_empty() || of_dlc.iter().any(|x| depots.contains(x)));
+                    let installed =
+                        own && installed.is_some() && dlc_installed(&all_depots, &depots, d);
                     let dlc_info = self.app_info(d);
                     let dlc_view = dlc_info.as_ref().map(AppInfo);
                     Dlc {
@@ -653,4 +648,15 @@ fn shim_report(
             })
             .collect(),
     }
+}
+
+/// Whether a DLC of an installed app counts as installed, given the app's
+/// depots and those installed: one of the DLC's depots is installed, or it
+/// has none. Games are told so (`BIsDlcInstalled`), and the library shows it.
+pub(super) fn dlc_installed(depots: &[Depot], installed: &[u32], dlc: AppId) -> bool {
+    let mut of_dlc = depots
+        .iter()
+        .filter(|x| x.dlc_app_id == Some(dlc))
+        .peekable();
+    of_dlc.peek().is_none() || of_dlc.any(|x| installed.contains(&x.id.0))
 }

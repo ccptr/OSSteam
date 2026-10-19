@@ -24,7 +24,7 @@ date and the build.
 | SteamStub detection (`launch.md` §7) | built 2026-10-17; unit tests on synthetic PE images |
 | Discovery entries and conflicts (`steamworks-abi.md` §1) | built 2026-10-17; Linux tested; Windows registry code type-checked only |
 | Game IPC, protocol 4 (`steamworks-abi.md` §3) | built 2026-10-17; Unix sockets tested; Windows named pipes type-checked only |
-| `ossteam-steamclient`: exports, pipes, users, vtables from Proton, callbacks and API calls (`steamworks-abi.md` §2) | built 2026-10-17; unit tests; overloads reversed outside Windows 2026-10-18, unverified against a game |
+| `ossteam-steamclient`: exports, pipes, users, vtables from Proton, callbacks and API calls (`steamworks-abi.md` §2) | built 2026-10-17; unit tests; overloads reversed outside Windows 2026-10-18, unverified against a game; C++ ABI test (§19.1 level 4, `steamworks-abi.md` §6.1) 2026-10-19 passes with GCC and Clang, x86_64 and i686 |
 | ShimReports (ABI-5, `steamworks-abi.md` §4) | built 2026-10-17; daemon test |
 | `ISteamClient`, `ISteamUser` (logon state), `ISteamApps`, `ISteamUtils`, `ISteamFriends` | built 2026-10-17; unit tests |
 | `ISteamUserStats`: stats, achievements, schema, icons, global percentages (`isteamuserstats.md`) | built 2026-10-18; unit tests and a daemon test against the fake CM |

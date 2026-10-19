@@ -276,7 +276,10 @@ trivially copyable, so they follow the C rules.
   are packed to 4 bytes on Linux and macOS and to 8 bytes on Windows
   (`VALVE_CALLBACK_PACK_SMALL` and `VALVE_CALLBACK_PACK_LARGE` in the
   SDK). The Steam Input action data structures and `SteamIPAddress_t`
-  are packed to 1 byte.
+  are packed to 1 byte. So are `CSteamID` and `CGameID`, which the SDK
+  declares inside `pack(1)`: as a member of a callback they are aligned
+  to 1 byte, so `UserStatsReceived_t` (`uint64`, `int`, `CSteamID`) is
+  20 bytes on Linux and macOS, 64-bit included.
 
 ### 2.3 Objects, pipes and users
 
@@ -709,11 +712,34 @@ getter and fails under ABI-3.
 |---|---|
 | The exports `steam_api` uses (§2.1) | found in the official library and in `libsteam_api.so`; signatures from Proton |
 | The calling conventions (§2.2) | the platforms' C++ ABIs; Windows from Proton's wrappers |
-| The vtables (§2.4) | from Proton's `lsteamclient`; to be checked by the ABI tests against games |
+| The vtables (§2.4) | from Proton's `lsteamclient`; to be checked against games |
 | Pipe and user handle values (§2.3) | unverified |
 | `ConnectToGlobalUser` for an app the account does not own (§2.3) | unverified |
 | Results kept after a mismatched `Steam_GetAPICallResult` (§2.5) | unverified |
 | The empty string for unimplemented `const char *` methods (§2.4) | unverified |
 | `SteamServersConnected_t` and `SteamServersDisconnected_t` timing (§3.7) | unverified |
 | Play sessions of games not started by the client (§3.5) | unverified |
-| Overloads in declaration order on Linux and macOS (§2.4) | the Itanium C++ ABI; to be checked against a native game |
+| Overloads in declaration order on Linux and macOS (§2.4) | the Itanium C++ ABI; checked by the ABI test (§6.1) against GCC and Clang on Linux x86_64 and i686; still to be checked against a native game |
+| Class returns and arguments, and callback packing, on Linux and macOS (§2.2) | checked by the ABI test (§6.1) on Linux x86_64 and i686 |
+
+### 6.1 The ABI test
+
+SPEC §19.1 level 4. `ossteam-steamclient/tests/abi.rs` builds a small
+C++ game, `tests/abi/game.cpp`, with the platform's C++ compiler (`$CXX`,
+else `c++`), and runs it against the library and a fake daemon. The game
+declares `ISteamClient`, `ISteamUser`, `ISteamUtils` and `ISteamUserStats`
+(version 013) itself, in the order the Steamworks headers declare their
+methods, overloads included, so the compiler lays out the vtables rather
+than the shim's tables. It checks a `CSteamID` returned and passed by
+value, `bool`, `float` and `uint64` results, overloads that only work in
+the right slot (`GetStat`, `SetStat`, `GetUserStat`), and the sizes of
+`UserStatsReceived_t` and `SteamAPICallCompleted_t` against what the
+library queues.
+
+The declarations are our own. The test checks the platform rules of
+§2.2 and §2.4 against a real compiler. It does not check that the
+Steamworks headers declare the methods in that order; that needs a
+native game. Run with `--target i686-unknown-linux-gnu` for the 32-bit
+library; the game is then built with `-m32`. It passed on 2026-10-19
+with GCC and Clang, x86_64 and i686. macOS first runs it on CI; Windows
+is not covered, as its C++ ABI is MSVC's and needs an MSVC-ABI compiler.

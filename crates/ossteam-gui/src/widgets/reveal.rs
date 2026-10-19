@@ -53,6 +53,12 @@ pub fn tab_stop(
         })
         .read(cx)
         .clone();
+    tab_stop_with(d, focus, enabled)
+}
+
+/// [`tab_stop`] with a focus handle its owner keeps, to focus it from
+/// outside.
+pub fn tab_stop_with(d: Stateful<Div>, focus: FocusHandle, enabled: bool) -> Stateful<Div> {
     if enabled {
         d.track_focus(&focus).relative().child(marker(focus))
     } else {

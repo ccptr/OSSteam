@@ -85,6 +85,8 @@ pub struct Root {
     first_frame_reported: bool,
     autostart: bool,
     focus: FocusHandle,
+    /// The account button, where Tab out of its menu goes on from.
+    account_focus: FocusHandle,
     menu_focus: FocusHandle,
     connection: Connection,
     _connection_task: Option<Task<()>>,
@@ -133,6 +135,7 @@ impl Root {
             first_frame_reported: false,
             autostart,
             focus,
+            account_focus: cx.focus_handle().tab_index(0).tab_stop(true),
             menu_focus,
             connection: Connection::Connecting,
             _connection_task: None,
@@ -373,18 +376,41 @@ impl Root {
     }
 
     fn focus_next(&mut self, _: &FocusNext, window: &mut Window, cx: &mut Context<Self>) {
+        let in_menu = self.menu_focus.contains_focused(window, cx);
         window.focus_next(cx);
+        if in_menu && self.left_menu(window, cx) {
+            window.focus_next(cx);
+        }
         reveal::focus_moved(window, cx);
     }
 
     fn focus_prev(&mut self, _: &FocusPrev, window: &mut Window, cx: &mut Context<Self>) {
+        let in_menu = self.menu_focus.contains_focused(window, cx);
         window.focus_prev(cx);
+        if in_menu {
+            self.left_menu(window, cx);
+        }
         reveal::focus_moved(window, cx);
+    }
+
+    /// The menu is drawn over the window, after everything else, so Tab
+    /// order puts it last: Tab out of it would wrap to the window's
+    /// start, and Shift-Tab out of it reach the page's end. When focus
+    /// has left it, the menu closes and focus goes back to the account
+    /// button, from where Tab goes on.
+    fn left_menu(&mut self, window: &mut Window, cx: &mut Context<Self>) -> bool {
+        if self.menu_focus.contains_focused(window, cx) {
+            return false;
+        }
+        self.menu_open = false;
+        window.focus(&self.account_focus, cx);
+        cx.notify();
+        true
     }
 
     fn close_menu(&mut self, _: &CloseMenu, window: &mut Window, cx: &mut Context<Self>) {
         self.menu_open = false;
-        window.focus(&self.focus, cx);
+        window.focus(&self.account_focus, cx);
         cx.notify();
     }
 
@@ -459,6 +485,7 @@ impl Root {
                 div()
                     .child(
                         button("account-menu", account_label)
+                            .focus(self.account_focus.clone())
                             .ghost()
                             .selected(self.menu_open)
                             .on_click(

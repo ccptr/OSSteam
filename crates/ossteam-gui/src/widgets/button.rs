@@ -5,7 +5,7 @@
 
 use std::rc::Rc;
 
-use gpui::{App, ClickEvent, ElementId, SharedString, Window, div, prelude::*};
+use gpui::{App, ClickEvent, ElementId, FocusHandle, SharedString, Window, div, prelude::*};
 
 use crate::theme::palette;
 use crate::widgets::reveal;
@@ -30,6 +30,7 @@ pub struct Button {
     disabled: bool,
     selected: bool,
     full_width: bool,
+    focus: Option<FocusHandle>,
     on_click: Option<OnClick>,
 }
 
@@ -41,6 +42,7 @@ pub fn button(id: impl Into<ElementId>, label: impl Into<SharedString>) -> Butto
         disabled: false,
         selected: false,
         full_width: false,
+        focus: None,
         on_click: None,
     }
 }
@@ -80,6 +82,13 @@ impl Button {
         self
     }
 
+    /// Takes focus through `focus`, which its owner keeps, instead of a
+    /// handle of its own.
+    pub fn focus(mut self, focus: FocusHandle) -> Self {
+        self.focus = Some(focus);
+        self
+    }
+
     pub fn on_click(mut self, f: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static) -> Self {
         self.on_click = Some(Rc::new(f));
         self
@@ -102,13 +111,11 @@ impl RenderOnce for Button {
         };
         let ring = p.focus_ring;
         let clickable = !self.disabled && self.on_click.is_some();
-        reveal::tab_stop(
-            div().id(self.id.clone()),
-            self.id,
-            !self.disabled,
-            window,
-            cx,
-        )
+        let d = div().id(self.id.clone());
+        match self.focus {
+            Some(focus) => reveal::tab_stop_with(d, focus, !self.disabled),
+            None => reveal::tab_stop(d, self.id, !self.disabled, window, cx),
+        }
         .flex()
         .items_center()
         .justify_center()

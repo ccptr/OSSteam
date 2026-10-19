@@ -9,6 +9,7 @@
 //! clients do. All of this is compiled for tests only (FAITH-4).
 
 mod fake_cm;
+mod gui;
 #[cfg(unix)]
 mod gui_bench;
 mod gui_states;
@@ -257,6 +258,11 @@ impl TestDaemon {
             endpoint,
             thread: Some(thread),
         }
+    }
+
+    /// Where the daemon listens for leaf clients.
+    pub fn endpoint(&self) -> &Endpoint {
+        &self.endpoint
     }
 
     pub fn client(&self) -> Client {

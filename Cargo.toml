@@ -51,6 +51,7 @@ ossteam-content = { path = "crates/ossteam-content" }
 ossteam-launch = { path = "crates/ossteam-launch" }
 ossteam-gameipc = { path = "crates/ossteam-gameipc" }
 ossteam-ipc = { path = "crates/ossteam-ipc" }
+ossteam-gui = { path = "crates/ossteam-gui" }
 
 aes = "0.8.4"
 anyhow = "1.0.104"
@@ -115,6 +116,12 @@ async-process = { git = "https://github.com/zed-industries/async-process.git", r
 async-task = { git = "https://github.com/zed-industries/async-task.git", rev = "015845a19fc31752c02367567d3b8900a406f9da" }
 calloop = { git = "https://github.com/zed-industries/calloop", rev = "3759371fee14c40066d64777e2a36b6ffcc22590" }
 khronos-egl = { git = "https://github.com/zed-industries/khronos-egl", rev = "42214b36347b108fd9630ca6254b96dde59e04fe" }
+
+# gpui's `test-support` (the GUI's integration test) takes proptest from git at
+# a rev that calls itself 1.10.0; the crates.io release is used instead so no
+# git source beyond gpui's own is pulled in.
+[patch."https://github.com/proptest-rs/proptest"]
+proptest = "1.10.0"
 
 [profile.dev.package."*"]
 opt-level = 1

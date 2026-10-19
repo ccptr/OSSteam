@@ -9,7 +9,7 @@ use std::sync::Arc;
 use std::thread;
 
 use ossteam_ipc::v1::{self, ErrorCode, PeerKind, Topic, event};
-use ossteam_ipc::{Client, ClientError, ClientInfo, ConnectOptions};
+use ossteam_ipc::{Client, ClientError, ClientInfo, ConnectOptions, Endpoint};
 
 /// Call threads; a call can block for its whole timeout (§2.1).
 const CALL_THREADS: usize = 4;
@@ -167,11 +167,26 @@ impl Daemon {
 /// Connects on a new thread (starting the daemon unless `autostart` is
 /// off) and reports what happens until the connection ends.
 pub fn connect(autostart: bool) -> async_channel::Receiver<Update> {
+    spawn(move |info| {
+        let mut opts = ConnectOptions::new(info);
+        opts.autostart = autostart;
+        Client::connect(&opts)
+    })
+}
+
+/// As [`connect`], to the daemon at `endpoint` and without starting one.
+pub fn connect_endpoint(endpoint: Endpoint) -> async_channel::Receiver<Update> {
+    spawn(move |info| Client::connect_endpoint(&endpoint, &info))
+}
+
+fn spawn(
+    connect: impl FnOnce(ClientInfo) -> Result<Client, ClientError> + Send + 'static,
+) -> async_channel::Receiver<Update> {
     let (tx, rx) = async_channel::unbounded();
     let on_spawn_error = tx.clone();
     let spawned = thread::Builder::new()
         .name("daemon-connection".into())
-        .spawn(move || run(autostart, &tx));
+        .spawn(move || run(connect, &tx));
     if let Err(e) = spawned {
         let _ = on_spawn_error.try_send(Update::Closed(format!(
             "cannot start the connection thread: {e}"
@@ -180,15 +195,16 @@ pub fn connect(autostart: bool) -> async_channel::Receiver<Update> {
     rx
 }
 
-fn run(autostart: bool, tx: &async_channel::Sender<Update>) {
+fn run(
+    connect: impl FnOnce(ClientInfo) -> Result<Client, ClientError>,
+    tx: &async_channel::Sender<Update>,
+) {
     let info = ClientInfo {
         kind: PeerKind::Gui,
         name: "ossteam-gui".into(),
         version: env!("CARGO_PKG_VERSION").into(),
     };
-    let mut opts = ConnectOptions::new(info);
-    opts.autostart = autostart;
-    let client = match Client::connect(&opts) {
+    let client = match connect(info) {
         Ok(c) => Arc::new(c),
         Err(e) => {
             let _ = tx.send_blocking(Update::Closed(e.to_string()));

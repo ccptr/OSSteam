@@ -328,7 +328,11 @@ size when the scale factor is above 1.
 - Store tests drive the event handling with recorded events.
 - An integration test runs the GUI's connection and store against a real
   daemon with the fake CM (FAITH-4), with gpui's test platform instead of
-  a window.
+  a window. It is a daemon test (`testing/gui.rs`), since the fake CM and
+  the in-process daemon exist only in the daemon's tests; the GUI crate is
+  a library for it, with a binary that only calls `run`. The test calls
+  the daemon through the model as the pages do, and after each step the
+  store must hold what a leaf client reads from the same daemon (LEAF-3).
 - The §20 budgets are measured with `OSSTEAM_GUI_STARTUP_TIMING` (first
   frame) and with a library of 10,000 apps from the fake CM (scrolling),
   on the reference hardware. The library is served by the ignored daemon

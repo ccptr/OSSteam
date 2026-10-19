@@ -18,12 +18,12 @@ use ossteam_vdf::Object;
 
 use super::*;
 
-const ALPHA: u32 = 10;
-const ALPHA_DLC: u32 = 11;
-const BASE: u32 = 101;
-const DLC: u32 = 102;
+pub(super) const ALPHA: u32 = 10;
+pub(super) const ALPHA_DLC: u32 = 11;
+pub(super) const BASE: u32 = 101;
+pub(super) const DLC: u32 = 102;
 /// PICS polling for these tests: updates are found by a PICS change.
-const POLL: Duration = Duration::from_millis(200);
+pub(super) const POLL: Duration = Duration::from_millis(200);
 
 pub(super) fn key(depot: u32) -> DepotKey {
     DepotKey::new(&[depot as u8; 32]).expect("32 bytes")
@@ -61,7 +61,7 @@ pub(super) fn section(body: &str) -> Object {
 }
 
 /// Alpha's `depots` section with these public manifests.
-fn depots(base: u64, dlc: u64) -> Object {
+pub(super) fn depots(base: u64, dlc: u64) -> Object {
     section(&format!(
         r#""{BASE}" {{ "manifests" {{ "public" {{ "gid" "{base}" "size" "1" }} }} }}
            "{DLC}" {{ "dlcappid" "{ALPHA_DLC}" "manifests" {{ "public" {{ "gid" "{dlc}" "size" "1" }} }} }}
@@ -69,7 +69,7 @@ fn depots(base: u64, dlc: u64) -> Object {
     ))
 }
 
-fn steam(cdn: &Arc<FakeCdn>) -> FakeCm {
+pub(super) fn steam(cdn: &Arc<FakeCdn>) -> FakeCm {
     let cm = FakeCm::new()
         .package(100, &[ALPHA, ALPHA_DLC])
         .app(ALPHA, "Alpha", "Game", None)

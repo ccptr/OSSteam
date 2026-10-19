@@ -48,7 +48,16 @@ fn steam() -> FakeCm {
     for i in 0..APPS {
         cm = cm.app(app_id(i), &format!("Bench Game {i:05}"), "Game", None);
     }
-    let common = section(&format!(
+    let common = section(&assets());
+    for i in 0..APPS {
+        cm.app_section(app_id(i), "common", common.clone());
+    }
+    cm.account(account)
+}
+
+/// The keys of an app's `common` section that name its images.
+pub(super) fn assets() -> String {
+    format!(
         r#""store_asset_mtime" "{MTIME}"
            "library_assets_full"
            {{
@@ -56,11 +65,7 @@ fn steam() -> FakeCm {
                "library_hero" {{ "image" {{ "english" "{HERO}" }} }}
                "library_logo" {{ "image" {{ "english" "{LOGO}" }} }}
            }}"#
-    ));
-    for i in 0..APPS {
-        cm.app_section(app_id(i), "common", common.clone());
-    }
-    cm.account(account)
+    )
 }
 
 /// A `w` × `h` image in shades of one hue, the official size of each kind
@@ -88,8 +93,8 @@ fn picture(variant: u32, w: u32, h: u32) -> Vec<u8> {
     out
 }
 
-/// Puts every app's images where the daemon caches them (`pics.md` §9).
-fn seed_images(root: &Root) {
+/// Puts the images of `apps` where the daemon caches them (`pics.md` §9).
+pub(super) fn seed_images(root: &Root, apps: impl IntoIterator<Item = u32>) {
     let images = root.path().join("images");
     std::fs::create_dir_all(&images).expect("create the image directory");
     let kinds = [(CAPSULE, 600, 900), (HERO, 1920, 620), (LOGO, 640, 360)];
@@ -106,10 +111,10 @@ fn seed_images(root: &Root) {
         })
         .collect();
     let assets = root.path().join("cache").join("assets");
-    for i in 0..APPS {
-        let dir = assets.join(app_id(i).to_string()).join(MTIME.to_string());
+    for (i, app) in apps.into_iter().enumerate() {
+        let dir = assets.join(app.to_string()).join(MTIME.to_string());
         std::fs::create_dir_all(&dir).expect("create the app's image directory");
-        for (name, path) in &variants[(i % VARIANTS) as usize] {
+        for (name, path) in &variants[i % VARIANTS as usize] {
             link(path, &dir.join(name));
         }
     }
@@ -125,7 +130,7 @@ fn link(from: &Path, to: &Path) {
 #[ignore = "serves a daemon for the GUI until stopped"]
 fn gui_bench_library_of_10k_apps() {
     let root = Root::new();
-    seed_images(&root);
+    seed_images(&root, (0..APPS).map(app_id));
     let cm = steam();
     let d = TestDaemon::start(&root, &cm);
     let c = d.subscribed(&[Topic::Session]);
@@ -142,6 +147,17 @@ fn gui_bench_library_of_10k_apps() {
     });
     drop(c);
 
+    serve_gui(
+        d,
+        &root,
+        &format!("A library of {APPS} apps"),
+        "OSSTEAM_GUI_BENCH=library-scroll ",
+    );
+}
+
+/// Prints how to run the GUI against `d`, and serves it until a client
+/// stops it.
+pub(super) fn serve_gui(d: TestDaemon, root: &Root, what: &str, gui_env: &str) {
     let runtime = root.runtime_dir();
     let rt = runtime.display();
     let var = if cfg!(target_os = "macos") {
@@ -158,8 +174,8 @@ fn gui_bench_library_of_10k_apps() {
         (Ok(d), Ok(dir)) if !d.starts_with('/') => format!(" WAYLAND_DISPLAY={dir}/{d}"),
         _ => String::new(),
     };
-    println!("A library of {APPS} apps is ready. Run the GUI against it with");
-    println!("  {var}={rt}{wayland} OSSTEAM_GUI_BENCH=library-scroll ossteam-gui --no-autostart");
+    println!("{what} is ready. Run the GUI against it with");
+    println!("  {var}={rt}{wayland} {gui_env}ossteam-gui --no-autostart");
     println!("and stop this daemon with");
     println!("  {var}={rt} ossteam daemon stop");
     d.wait();

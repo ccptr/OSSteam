@@ -11,6 +11,7 @@
 mod fake_cm;
 #[cfg(unix)]
 mod gui_bench;
+mod gui_states;
 mod loopback;
 mod m1a;
 mod m1b;

@@ -22,12 +22,12 @@ use super::*;
 const ACCOUNT_ID: u32 = 1001;
 const POLL: Duration = Duration::from_millis(200);
 /// A Linux game that Valve maps to the sniper runtime.
-const NATIVE: u32 = 20;
+pub(super) const NATIVE: u32 = 20;
 /// A Windows-only game, run by the default tool.
-const WINDOWS: u32 = 22;
-const MANIFESTS: u32 = 891390;
-const SNIPER: u32 = 1628350;
-const PROTON: u32 = 1493710;
+pub(super) const WINDOWS: u32 = 22;
+pub(super) const MANIFESTS: u32 = 891390;
+pub(super) const SNIPER: u32 = 1628350;
+pub(super) const PROTON: u32 = 1493710;
 
 /// The game: writes how it was started into its working directory and
 /// exits with 3.
@@ -40,7 +40,7 @@ exit 3
 /// A tool's entry point: writes its arguments and environment next to
 /// itself, skips its own arguments up to `--` (the runtime) or the verb
 /// (Proton), and runs the rest.
-const TOOL: &[u8] = br#"#!/bin/sh
+pub(super) const TOOL: &[u8] = br#"#!/bin/sh
 here="${0%/*}"
 printf '%s\n' "$@" > "$here/args.txt"
 env > "$here/env.txt"
@@ -52,7 +52,7 @@ esac
 exec "$@"
 "#;
 
-fn manifests_section() -> ossteam_vdf::Object {
+pub(super) fn manifests_section() -> ossteam_vdf::Object {
     section(&format!(
         r#""compat_tools"
            {{
@@ -81,7 +81,7 @@ fn manifests_section() -> ossteam_vdf::Object {
     ))
 }
 
-fn tool_depot(app: u32, manifest: &str, entry: &'static str) -> Depot {
+pub(super) fn tool_depot(app: u32, manifest: &str, entry: &'static str) -> Depot {
     let id = app + 1;
     let manifest: &'static [u8] = Box::leak(manifest.as_bytes().to_vec().into_boxed_slice());
     Depot::build(
@@ -118,7 +118,7 @@ fn game_depot(app: u32, exe: &'static str) -> Depot {
 }
 
 /// An app with one depot for `os` and its install directory.
-fn add_app(cm: &FakeCm, depot: &Depot, os: &str, installdir: &str) {
+pub(super) fn add_app(cm: &FakeCm, depot: &Depot, os: &str, installdir: &str) {
     let id = depot.manifest.depot.0;
     let app = depot_app(id);
     cm.publish(depot, u64::from(id));

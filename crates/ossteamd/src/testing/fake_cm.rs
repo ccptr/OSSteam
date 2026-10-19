@@ -143,6 +143,7 @@ struct AuthSession {
     qr: bool,
     /// QR challenges still to rotate, one per poll.
     rotations: u32,
+    started: Instant,
 }
 
 #[derive(Default)]
@@ -396,6 +397,28 @@ impl FakeCm {
             .expect("a pending sign-in to approve");
         session.account = Some(account.into());
         session.approved = true;
+    }
+
+    /// Approves, as the mobile app would, every sign-in that has waited
+    /// at least `after`: QR codes, as signed in to `qr_account`, and device
+    /// confirmations. Sign-ins waiting for a code are left to the code.
+    pub fn approve_waiting(&self, qr_account: &str, after: Duration) {
+        let mut s = self.state();
+        let confirming: Vec<String> = s
+            .accounts
+            .iter()
+            .filter(|a| a.guard == Guard::DeviceConfirmation)
+            .map(|a| a.name.clone())
+            .collect();
+        for a in s.sessions.values_mut() {
+            let due = !a.approved && a.rotations == 0 && a.started.elapsed() >= after;
+            if due && a.qr {
+                a.account = Some(qr_account.into());
+                a.approved = true;
+            } else if due && a.account.as_ref().is_some_and(|n| confirming.contains(n)) {
+                a.approved = true;
+            }
+        }
     }
 
     /// Revokes every refresh token of `account`.
@@ -868,6 +891,7 @@ impl FakeCm {
                     approved: false,
                     qr: true,
                     rotations,
+                    started: Instant::now(),
                 },
             );
             service_reply(
@@ -1015,6 +1039,7 @@ impl FakeCm {
                 ),
                 qr: false,
                 rotations: 0,
+                started: Instant::now(),
             },
         );
         let mut allowed = CAuthenticationAllowedConfirmation {

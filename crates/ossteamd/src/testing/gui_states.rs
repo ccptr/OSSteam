@@ -1,0 +1,217 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
+//! A small library in every state the GUI draws (`gui.md` §4), for the
+//! keyboard-only check of `docs/acceptance/m1e.md`: an installed game with
+//! two launch options that runs until stopped, a Windows game run through
+//! Proton, one with an update, a download slow enough to watch with
+//! another queued behind it, and accounts that sign in with each kind of
+//! Steam Guard. Not a test: it serves a daemon until a client stops it,
+//! so it is ignored unless asked for:
+//!
+//! ```text
+//! cargo test -p ossteamd -- --ignored --nocapture gui_bench_states
+//! ```
+
+#![cfg(target_os = "linux")]
+
+use std::sync::Arc;
+use std::time::Duration;
+
+use ossteam_content::fake::{Depot, Entry};
+use ossteam_content::manifest::flags;
+use ossteam_ipc::v1::Topic;
+use ossteam_types::{DepotId, ManifestId};
+
+use super::gui_bench::{assets, seed_images, serve_gui};
+use super::m1b::{data, done, installed, key, login, section};
+use super::m1d::{
+    MANIFESTS, NATIVE, PROTON, SNIPER, WINDOWS, add_app, manifests_section, tool_depot,
+};
+use super::*;
+
+/// Installed, with an update.
+const UPDATER: u32 = 30;
+/// Installing, slowly.
+const BIG: u32 = 40;
+/// Queued behind [`BIG`].
+const QUEUED: u32 = 50;
+/// Not installed.
+const FRESH: u32 = 60;
+const GAMES: [u32; 6] = [NATIVE, WINDOWS, UPDATER, BIG, QUEUED, FRESH];
+/// Each chunk of [`BIG`]'s 40 MiB takes this long: about two minutes
+/// with the daemon's eight download threads.
+const PACE: Duration = Duration::from_millis(100);
+const BIG_SIZE: usize = 40 << 20;
+/// The QR code and device confirmations are approved after this long.
+const APPROVE_AFTER: Duration = Duration::from_secs(10);
+const POLL: Duration = Duration::from_secs(1);
+
+/// The game: runs until stopped, or exits with 3 when given `-quick`.
+const GAME: &[u8] = br#"#!/bin/sh
+case " $* " in *" -quick "*) exit 3 ;; esac
+exec sleep 600
+"#;
+
+fn game_depot(app: u32, manifest: u64, files: &[(&'static str, &[u8])]) -> Depot {
+    let id = app * 10 + 1;
+    let entries: Vec<Entry<'_>> = files
+        .iter()
+        .map(|&(name, data)| Entry::File {
+            name,
+            data,
+            flags: flags::EXECUTABLE,
+        })
+        .collect();
+    Depot::build(DepotId(id), ManifestId(manifest), key(id), &entries)
+}
+
+fn depots(app: u32, os: &str, manifest: u64) -> ossteam_vdf::Object {
+    let id = app * 10 + 1;
+    section(&format!(
+        r#""{id}" {{ "config" {{ "oslist" "{os}" }}
+                     "manifests" {{ "public" {{ "gid" "{manifest}" "size" "1" }} }} }}
+           "branches" {{ "public" {{ "buildid" "{manifest}" }} }}"#
+    ))
+}
+
+fn steam(cdn: &Arc<FakeCdn>, big: &[u8]) -> FakeCm {
+    let cm = FakeCm::new()
+        .package(0, &[MANIFESTS, SNIPER, PROTON])
+        .package(200, &GAMES)
+        .package(300, &[UPDATER, FRESH])
+        .app(MANIFESTS, "SteamPlay 2.0 Manifests", "Config", None)
+        .app(SNIPER, "Steam Linux Runtime 3.0 (sniper)", "Tool", None)
+        .app(PROTON, "Proton Experimental", "Tool", None)
+        .app(NATIVE, "Sleeper", "Game", None)
+        .app(WINDOWS, "Windows Sleeper", "Game", None)
+        .app(UPDATER, "Updater", "Game", None)
+        .app(BIG, "Big Download", "Game", None)
+        .app(QUEUED, "Queued", "Game", None)
+        .app(FRESH, "Fresh", "Game", None)
+        .cdn(cdn.clone())
+        .qr_rotations(1)
+        .account(Account::new("alice", 1001).license(0, 0).license(200, 0))
+        .account(
+            Account::new("bob", 1002)
+                .guard(Guard::EmailCode("BOB12".into()))
+                .license(300, 0),
+        )
+        .account(Account::new("carol", 1003).license(300, 0))
+        .account(
+            Account::new("dave", 1004)
+                .guard(Guard::DeviceConfirmation)
+                .license(300, 0),
+        )
+        .account(
+            Account::new("erin", 1005)
+                .guard(Guard::DeviceCode("ERIN5".into()))
+                .license(300, 0),
+        );
+    cm.app_section(MANIFESTS, "extended", manifests_section());
+    add_app(
+        &cm,
+        &tool_depot(
+            SNIPER,
+            r#""manifest" { "version" "2" "commandline" "/_v2-entry-point --verb=%verb% --"
+                            "use_tool_subprocess_reaper" "1" }"#,
+            "_v2-entry-point",
+        ),
+        "linux",
+        "SteamLinuxRuntime_sniper",
+    );
+    add_app(
+        &cm,
+        &tool_depot(
+            PROTON,
+            &format!(
+                r#""manifest" {{ "version" "2" "commandline" "/proton %verb%"
+                                "require_tool_appid" "{SNIPER}" }}"#
+            ),
+            "proton",
+        ),
+        "linux",
+        "Proton - Experimental",
+    );
+    let big_files: [(&'static str, &[u8]); 2] = [("bin/game.sh", GAME), ("data.pak", big)];
+    for (app, os, exe, dir) in [
+        (NATIVE, "linux", "bin/game.sh", "Sleeper"),
+        (WINDOWS, "windows", "bin/game.exe", "Windows Sleeper"),
+        (UPDATER, "linux", "bin/game.sh", "Updater"),
+        (BIG, "linux", "bin/game.sh", "Big Download"),
+        (QUEUED, "linux", "bin/game.sh", "Queued"),
+        (FRESH, "linux", "bin/game.sh", "Fresh"),
+    ] {
+        let exe_only: [(&'static str, &[u8]); 1] = [(exe, GAME)];
+        let files: &[(&'static str, &[u8])] = if app == BIG { &big_files } else { &exe_only };
+        let depot = game_depot(app, 1, files);
+        cm.publish(&depot, 1);
+        cm.app_section(app, "depots", depots(app, os, 1));
+        cm.app_section(
+            app,
+            "common",
+            section(&format!(r#""oslist" "{os}" {}"#, assets())),
+        );
+        // Two launch options for the first game, so that Play asks.
+        let quick = if app == NATIVE {
+            format!(
+                r#""1" {{ "executable" "{exe}" "arguments" "-quick" "description" "Quick exit"
+                         "config" {{ "oslist" "{os}" }} }}"#
+            )
+        } else {
+            String::new()
+        };
+        cm.app_section(
+            app,
+            "config",
+            section(&format!(
+                r#""installdir" "{dir}"
+                   "launch" {{ "0" {{ "executable" "{exe}" "arguments" "-steam"
+                                     "config" {{ "oslist" "{os}" }} }} {quick} }}"#
+            )),
+        );
+    }
+    cm
+}
+
+#[test]
+#[ignore = "serves a daemon for the GUI until stopped"]
+fn gui_bench_states() {
+    let root = Root::new();
+    root.install_client_libraries();
+    seed_images(&root, GAMES);
+    let cdn = Arc::new(FakeCdn::new());
+    let big = data(4, BIG_SIZE);
+    let cm = steam(&cdn, &big);
+    let d = TestDaemon::start_with_cdn(&root, &cm, POLL, cdn.clone());
+    login(&d);
+    let c = d.subscribed(&[Topic::Jobs]);
+    c.set_setting("content.auto_update", Some("never"))
+        .expect("setting");
+    for app in [NATIVE, UPDATER] {
+        done(&c, c.install(app, "", "").expect("install queued"));
+    }
+    let update = game_depot(UPDATER, 2, &[("bin/game.sh", GAME), ("readme.txt", b"2")]);
+    cm.publish(&update, 2);
+    cm.app_section(UPDATER, "depots", depots(UPDATER, "linux", 2));
+    wait_until("the update", || {
+        installed(&c, UPDATER).is_some_and(|i| i.update_available)
+    });
+    cdn.pace(PACE);
+    for app in [BIG, QUEUED] {
+        c.install(app, "", "").expect("install queued");
+    }
+    drop(c);
+
+    {
+        let cm = cm.clone();
+        std::thread::spawn(move || {
+            loop {
+                cm.approve_waiting("carol", APPROVE_AFTER);
+                std::thread::sleep(Duration::from_millis(500));
+            }
+        });
+    }
+    println!("Signed in as alice. Other accounts, each with the password <name>-password:");
+    println!("  bob (an email code, BOB12), dave (a confirmation, approved after 10 s),");
+    println!("  erin (an authenticator code, ERIN5); a QR code signs in carol after 10 s.");
+    serve_gui(d, &root, "A library in every state", "");
+}

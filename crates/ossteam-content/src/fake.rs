@@ -33,6 +33,8 @@ struct State {
     corrupt: HashMap<String, usize>,
     /// Chunk requests after this many wait until [`FakeCdn::release`].
     hold_after: Option<usize>,
+    /// How long each chunk request takes.
+    pace: Option<std::time::Duration>,
 }
 
 #[derive(Default)]
@@ -84,6 +86,12 @@ impl FakeCdn {
 
     pub fn release(&self) {
         self.state().hold_after = None;
+    }
+
+    /// Each chunk request takes `per_chunk`, or until it is cancelled: a
+    /// download slow enough to watch.
+    pub fn pace(&self, per_chunk: std::time::Duration) {
+        self.state().pace = Some(per_chunk);
     }
 
     /// Requests served so far, failed ones included.
@@ -139,6 +147,16 @@ impl Fetch for FakeCdn {
                     return Err(FetchError::Cancelled);
                 }
                 std::thread::sleep(std::time::Duration::from_millis(5));
+            }
+            let pace = self.state().pace;
+            if let Some(pace) = pace {
+                let until = std::time::Instant::now() + pace;
+                while std::time::Instant::now() < until {
+                    if cancel.is_cancelled() {
+                        return Err(FetchError::Cancelled);
+                    }
+                    std::thread::sleep(pace.min(std::time::Duration::from_millis(5)));
+                }
             }
         }
         let mut s = self.state();

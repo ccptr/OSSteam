@@ -8,7 +8,7 @@ use std::sync::{Arc, Mutex};
 
 use ossteam_content::cdn::{Rotation, Server};
 use ossteam_content::download::Downloader;
-use ossteam_content::engine::{self, DepotWork, EngineError, Hooks, Job, Mode, Removal};
+use ossteam_content::engine::{self, DepotWork, EngineError, Hooks, Job, Mode, Progress, Removal};
 use ossteam_content::fake::{CHUNK, Depot, Entry, FakeCdn};
 use ossteam_content::manifest::flags;
 use ossteam_content::{DepotKey, Manifest};
@@ -276,8 +276,10 @@ fn resumes_from_the_journal() {
     let j = job(&l, Mode::Install, m, None);
     let journal = Mutex::new(Vec::new());
     let save = |b: Vec<u8>| *journal.lock().unwrap() = b;
+    let last_progress = Mutex::new(Progress::default());
+    let keep = |p: &Progress| *last_progress.lock().unwrap() = p.clone();
     let hooks = Hooks {
-        progress: &|_| {},
+        progress: &keep,
         journal: &save,
     };
     let cancel = CancelToken::new();
@@ -287,6 +289,11 @@ fn resumes_from_the_journal() {
         .unwrap_err();
     assert!(matches!(err, EngineError::Download(_)), "{err}");
     assert!(!l.install.join("bin/game").exists());
+    let first = last_progress.lock().unwrap().clone();
+    assert!(
+        0 < first.downloaded && first.downloaded < first.download_total,
+        "{first:?}"
+    );
 
     cdn.fail(&path, 503, 0);
     let before = cdn.chunk_requests();
@@ -294,8 +301,22 @@ fn resumes_from_the_journal() {
     let p = engine::prepare(&j, Some(&saved), &Hooks::none(), &cancel).unwrap();
     // Staged chunks need not be written again.
     assert!(p.bytes_to_write < big.len() as u64, "{}", p.bytes_to_write);
-    p.run(&downloader(&cdn), 1, &Hooks::none(), &cancel)
-        .unwrap();
+    let seen = Mutex::new(Vec::new());
+    let watch = |p: &Progress| seen.lock().unwrap().push(p.clone());
+    let hooks = Hooks {
+        progress: &watch,
+        journal: &|_| {},
+    };
+    p.run(&downloader(&cdn), 1, &hooks, &cancel).unwrap();
+    // The download goes on from where the first run left it.
+    let seen = seen.into_inner().unwrap();
+    assert!(
+        seen.iter().all(|p| p.downloaded >= first.downloaded),
+        "{seen:?}"
+    );
+    let end = seen.last().unwrap();
+    assert_eq!(end.download_total, first.download_total, "{end:?}");
+    assert_eq!(end.downloaded, end.download_total, "{end:?}");
     assert_eq!(read(&l.install.join("bin/game")), big);
     assert!(
         cdn.chunk_requests() - before < 6,
@@ -305,6 +326,9 @@ fn resumes_from_the_journal() {
     // A journal for other manifests is ignored.
     let other = engine::Journal::decode(&saved).unwrap();
     assert!(engine::Journal::decode(&saved[..saved.len() - 1]).is_none());
+    // The format before the downloaded count is still read.
+    let old = [&b"OSJ1"[..], &saved[12..]].concat();
+    assert!(engine::Journal::decode(&old).is_some());
     assert_eq!(engine::Journal::decode(&other.encode()), Some(other));
 }
 

@@ -99,7 +99,7 @@ pub struct Progress {
     pub bytes_total: u64,
     pub bytes_done: u64,
     /// Bytes to download as served, once known (after `Copying`), and how
-    /// many are downloaded.
+    /// many are downloaded, counting earlier runs of a resumed job.
     pub download_total: u64,
     pub downloaded: u64,
     pub files_total: u64,
@@ -170,15 +170,19 @@ impl Hooks<'_> {
 
 // --- The journal -----------------------------------------------------------
 
-const JOURNAL_MAGIC: &[u8; 4] = b"OSJ1";
+const JOURNAL_MAGIC: &[u8; 4] = b"OSJ2";
+/// The journal before it counted downloaded bytes.
+const JOURNAL_MAGIC_1: &[u8; 4] = b"OSJ1";
 
-/// The chunks a job has written to staging, by depot, file and offset
-/// (`content.md` §9). It is only trusted for the manifests it was made
-/// with; each chunk is checked again before it is used.
+/// The chunks a job has written to staging, by depot, file and offset,
+/// and the bytes it has downloaded (`content.md` §9). It is only trusted
+/// for the manifests it was made with; each chunk is checked again before
+/// it is used.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct Journal {
     manifests: Vec<(DepotId, ManifestId)>,
     staged: HashSet<(DepotId, [u8; 20], u64)>,
+    downloaded: u64,
 }
 
 impl Journal {
@@ -186,11 +190,13 @@ impl Journal {
         Self {
             manifests: manifests_of(job),
             staged: HashSet::new(),
+            downloaded: 0,
         }
     }
 
     pub fn encode(&self) -> Vec<u8> {
         let mut out = JOURNAL_MAGIC.to_vec();
+        out.extend(self.downloaded.to_le_bytes());
         out.extend((self.manifests.len() as u32).to_le_bytes());
         for (d, m) in &self.manifests {
             out.extend(d.0.to_le_bytes());
@@ -207,9 +213,13 @@ impl Journal {
         out
     }
 
-    /// `None` for anything that is not a journal this build wrote.
+    /// `None` for anything that is not a journal this build wrote, or one
+    /// of the format before it (which counts nothing downloaded).
     pub fn decode(data: &[u8]) -> Option<Self> {
-        let mut r = data.strip_prefix(JOURNAL_MAGIC)?;
+        let (mut r, counted) = match data.strip_prefix(JOURNAL_MAGIC) {
+            Some(r) => (r, true),
+            None => (data.strip_prefix(JOURNAL_MAGIC_1)?, false),
+        };
         fn take<'a>(r: &mut &'a [u8], n: usize) -> Option<&'a [u8]> {
             let (head, rest) = (r.get(..n)?, r.get(n..)?);
             *r = rest;
@@ -218,6 +228,9 @@ impl Journal {
         let u32_ = |r: &mut &[u8]| take(r, 4).map(|b| u32::from_le_bytes(b.try_into().unwrap()));
         let u64_ = |r: &mut &[u8]| take(r, 8).map(|b| u64::from_le_bytes(b.try_into().unwrap()));
         let mut j = Journal::default();
+        if counted {
+            j.downloaded = u64_(&mut r)?;
+        }
         for _ in 0..u32_(&mut r)? {
             j.manifests
                 .push((DepotId(u32_(&mut r)?), ManifestId(u64_(&mut r)?)));
@@ -717,6 +730,7 @@ impl Run<'_> {
         let due = {
             let mut j = self.journal.lock().unwrap_or_else(|e| e.into_inner());
             j.0.staged.insert((self.depot_id(r), r.name, offset));
+            j.0.downloaded = self.rep.downloaded.load(Ordering::Relaxed);
             if j.1.elapsed() >= JOURNAL_INTERVAL {
                 j.1 = Instant::now();
                 Some(j.0.encode())
@@ -730,12 +744,11 @@ impl Run<'_> {
     }
 
     fn flush_journal(&self) {
-        let bytes = self
-            .journal
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .0
-            .encode();
+        let bytes = {
+            let mut j = self.journal.lock().unwrap_or_else(|e| e.into_inner());
+            j.0.downloaded = self.rep.downloaded.load(Ordering::Relaxed);
+            j.0.encode()
+        };
         (self.rep.hooks.journal)(bytes);
     }
 
@@ -854,13 +867,13 @@ impl Run<'_> {
         let c = &self.file(r).chunks[ci];
         let data = dl.chunk(self.depot_id(r), c, key, cancel)?;
         write_at(&r.staged, c.offset, &data).map_err(io_err(&r.staged))?;
+        self.rep
+            .downloaded
+            .fetch_add(u64::from(c.compressed), Ordering::Relaxed);
         self.record(r, c.offset);
         self.rep
             .bytes_done
             .fetch_add(u64::from(c.original), Ordering::Relaxed);
-        self.rep
-            .downloaded
-            .fetch_add(u64::from(c.compressed), Ordering::Relaxed);
         self.outcome
             .lock()
             .unwrap_or_else(|e| e.into_inner())
@@ -932,6 +945,13 @@ impl Prepared<'_> {
         run.rep
             .files_total
             .store(self.rebuilds.len() as u64, Ordering::Relaxed);
+        // A resumed job counts what its earlier runs downloaded too.
+        run.rep
+            .downloaded
+            .store(self.journal.downloaded, Ordering::Relaxed);
+        run.rep
+            .download_total
+            .store(self.journal.downloaded, Ordering::Relaxed);
 
         // Staging holds only what the journal knows of (`content.md` §9).
         let keep: HashSet<PathBuf> = self
@@ -983,9 +1003,12 @@ impl Prepared<'_> {
         run.rep.phase(Phase::Downloading);
         if !downloads.is_empty() {
             // The journal is stored on failure too, so a resumed job keeps
-            // what was downloaded.
+            // what was downloaded, and a stopped job shows how far it got.
             let result = download_all(&run, dl, threads, downloads, cancel);
             run.flush_journal();
+            if result.is_err() {
+                run.rep.report(true);
+            }
             result?;
         }
 

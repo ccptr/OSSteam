@@ -252,12 +252,18 @@ fn a_stopped_download_resumes_after_a_restart() {
     cdn.hold_after(15);
     let job = c.install(ALPHA, "", "").expect("install queued");
     let fetched = 15;
+    let mut stopped = None;
     wait_until("part of the download", || {
-        c.list_jobs()
+        stopped = c
+            .list_jobs()
             .expect("jobs")
-            .iter()
-            .any(|j| j.job_id == job.job_id && j.progress.is_some_and(|p| p.files_done >= fetched))
+            .into_iter()
+            .find(|j| j.job_id == job.job_id)
+            .and_then(|j| j.progress)
+            .filter(|p| p.files_done >= fetched);
+        stopped.is_some()
     });
+    let stopped = stopped.unwrap();
     drop(c);
     d.stop();
 
@@ -279,6 +285,13 @@ fn a_stopped_download_resumes_after_a_restart() {
     };
     assert_eq!(j.state(), JobState::Done, "{:?}", j.error);
     assert_eq!((cdn.chunk_requests() - before) as u64, 41 - fetched);
+    // Its progress counts the download from the start, not from the restart.
+    let p = j.progress.expect("progress");
+    assert_eq!(
+        (p.downloaded, p.download_total),
+        (stopped.download_total, stopped.download_total),
+        "{p:?}"
+    );
     let i = installed(&c, ALPHA).expect("installed");
     // The DLC's depot too: the resumed job waited for the library, which
     // says the DLC is owned.

@@ -261,7 +261,7 @@ not active wait.
 | `app_id`, `kind` | `INSTALL`, `UPDATE`, `VERIFY` or `UNINSTALL` |
 | `state` | `QUEUED`, `RUNNING`, `PAUSED`, `DONE`, `FAILED` or `CANCELLED` |
 | `priority` | Higher runs first; jobs of equal priority run in the order they were created. Default 0 |
-| `progress` | The engine's progress (`content.md` §9): the phase, file bytes to write and written, bytes to download and downloaded, files to write and written |
+| `progress` | The engine's progress (`content.md` §9): the phase, file bytes to write and written, bytes to download and downloaded (counting earlier runs of a resumed job), files to write and written |
 | `error` | Why a `FAILED` job failed, as an `Error` whose code is the one the job would have failed a request with |
 | `folder`, `branch` | Where the app goes and from which branch |
 

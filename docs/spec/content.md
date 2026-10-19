@@ -367,8 +367,9 @@ default (`content.concurrent_jobs`). A job is `queued`, `running`,
 `paused`, `done`, `failed` or `cancelled`. Jobs that were `running` when
 the daemon stopped are `queued` again at the next start and resume.
 
-The **journal** records, per job, the manifests it is installing and the
-chunks already written to staging. It is written in batches, at most once
+The **journal** records, per job, the manifests it is installing, the
+chunks already written to staging and the bytes downloaded so far, so
+that a resumed job's progress counts what its earlier runs downloaded. It is written in batches, at most once
 per second, so it may lag the files, and once more when the download step
 ends, whether or not it succeeded. A journal made for other manifests
 than the job's is discarded with the staging. On resume, each journaled chunk is

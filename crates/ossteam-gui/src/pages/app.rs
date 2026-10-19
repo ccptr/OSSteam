@@ -487,11 +487,13 @@ impl AppPage {
         let installed = info.and_then(|i| i.installed.clone());
         let busy = self.busy;
 
+        // Play, Play anyway and Stop share an id, and so a focus handle: the
+        // one that replaces another keeps the focus.
         let mut out = panel(cx);
         if running {
             out = out.child(muted("Running.", cx)).child(
                 div().flex().child(
-                    button("stop", "Stop")
+                    button("play-stop", "Stop")
                         .danger()
                         .disabled(busy)
                         .on_click(cx.listener(|page, _, _, cx| page.stop(cx))),
@@ -514,7 +516,7 @@ impl AppPage {
                             .on_click(cx.listener(|page, _, _, cx| page.update(cx))),
                     )
                     .child(
-                        button("play-anyway", "Play anyway")
+                        button("play-stop", "Play anyway")
                             .secondary()
                             .disabled(busy)
                             .on_click(cx.listener(|page, _, window, cx| {
@@ -524,7 +526,7 @@ impl AppPage {
                     );
             } else {
                 buttons = buttons.child(
-                    button("play", play_label)
+                    button("play-stop", play_label)
                         .disabled(busy)
                         .on_click(cx.listener(|page, _, window, cx| page.play(window, cx))),
                 );

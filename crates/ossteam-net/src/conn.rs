@@ -397,7 +397,7 @@ fn stamp(shared: &Shared, packet: &mut Packet) {
     }
 }
 
-fn run(shared: &Shared, mut transport: Box<dyn Transport>, cancel: &CancelToken) {
+fn run(shared: &Arc<Shared>, mut transport: Box<dyn Transport>, cancel: &CancelToken) {
     // SAFETY: the socket stays registered only while `transport` is alive:
     // it is deleted below before `transport` is dropped, panic or not.
     if let Err(e) = unsafe {
@@ -435,9 +435,17 @@ fn finish(shared: &Shared, reason: CloseReason) {
     let _ = shared.events.send(Incoming::Closed(reason));
 }
 
-fn io_loop(shared: &Shared, t: &mut dyn Transport, cancel: &CancelToken) -> CloseReason {
+fn io_loop(shared: &Arc<Shared>, t: &mut dyn Transport, cancel: &CancelToken) -> CloseReason {
     let mut events = Events::new();
     let mut next_heartbeat: Option<Instant> = None;
+    // A cancel wakes the poller, so an idle connection sleeps until its
+    // next heartbeat instead of waking every CANCEL_SLICE (ADR 0001).
+    let _wake = {
+        let shared = shared.clone();
+        cancel.on_cancel(move || {
+            let _ = shared.poller.notify();
+        })
+    };
     loop {
         if shared.close_requested.load(Ordering::Acquire) {
             t.close();
@@ -475,12 +483,9 @@ fn io_loop(shared: &Shared, t: &mut dyn Transport, cancel: &CancelToken) -> Clos
         if let Err(e) = shared.poller.modify(t.socket(), interest) {
             return CloseReason::Io(format!("poller: {e}"));
         }
-        let mut wait = CANCEL_SLICE;
-        if let Some(due) = next_heartbeat {
-            wait = wait.min(due.saturating_duration_since(Instant::now()));
-        }
+        let wait = next_heartbeat.map(|due| due.saturating_duration_since(Instant::now()));
         events.clear();
-        match shared.poller.wait(&mut events, Some(wait)) {
+        match shared.poller.wait(&mut events, wait) {
             Ok(_) => {}
             Err(e) if e.kind() == ErrorKind::Interrupted => {}
             Err(e) => return CloseReason::Io(format!("poller: {e}")),
@@ -621,5 +626,62 @@ mod tests {
         r.forget(job);
         dispatch(&shared, &reply_to(job), 0);
         assert!(matches!(events.try_recv(), Ok(Incoming::Message(_))));
+    }
+
+    /// A transport over an idle socket. The I/O loop reads after every
+    /// wakeup, so its reads count the wakeups.
+    struct Idle {
+        stream: std::net::TcpStream,
+        reads: Arc<AtomicU64>,
+    }
+
+    impl Transport for Idle {
+        fn send(&mut self, _: Vec<u8>) -> std::io::Result<()> {
+            Ok(())
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+        fn recv(&mut self) -> std::io::Result<Option<Vec<u8>>> {
+            self.reads.fetch_add(1, Ordering::Relaxed);
+            Ok(None)
+        }
+        fn wants_write(&self) -> bool {
+            false
+        }
+        fn socket(&self) -> &std::net::TcpStream {
+            &self.stream
+        }
+        fn close(&mut self) {}
+    }
+
+    #[test]
+    fn an_idle_connection_sleeps_until_cancelled() {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let stream = std::net::TcpStream::connect(listener.local_addr().unwrap()).unwrap();
+        let _peer = listener.accept().unwrap();
+        let reads = Arc::new(AtomicU64::new(0));
+        let server = CmServer {
+            endpoint: "127.0.0.1:0".into(),
+            kind: crate::directory::CmKind::Netfilter,
+            dc: String::new(),
+        };
+        let (events, rx) = crossbeam_channel::unbounded();
+        let cancel = CancelToken::new();
+        let transport = Box::new(Idle {
+            stream,
+            reads: reads.clone(),
+        });
+        let _conn = Connection::with_transport(&server, transport, events, &cancel).unwrap();
+
+        // Longer than CANCEL_SLICE, which used to wake the loop.
+        std::thread::sleep(CANCEL_SLICE + Duration::from_millis(500));
+        assert_eq!(reads.load(Ordering::Relaxed), 0, "woke while idle");
+
+        let start = Instant::now();
+        cancel.cancel();
+        let closed = rx.recv_timeout(Duration::from_secs(5)).unwrap();
+        assert!(matches!(closed, Incoming::Closed(CloseReason::Cancelled)));
+        assert!(start.elapsed() < Duration::from_millis(500));
     }
 }

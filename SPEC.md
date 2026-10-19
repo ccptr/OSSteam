@@ -299,8 +299,11 @@ Adding an async runtime (tokio, async-std, smol) to the daemon requires an ADR
   - **launch**: one supervisor thread per running game. It waits on the
     process and reports its exit.
 - **[CONC-2]** Cancellation is cooperative. Cloneable `CancelToken`s
-  (`Arc<AtomicBool>`) are combined with socket read timeouts of at most 1 s,
-  so every blocking loop notices cancellation within that bound.
+  (a shared flag) are combined with socket read timeouts of at most 1 s,
+  so every blocking loop notices cancellation within that bound. A loop
+  that waits while the daemon is idle registers a wake-up on the token
+  instead (`CancelToken::on_cancel`) and waits without a timeout, so that
+  the slice does not spend the §20 wakeup budget (ADR 0001).
 - **[CONC-3]** Async is accepted for the following, and nowhere else without
   an ADR:
   1. **The GUI.** gpui is async-native. Views use `cx.spawn` and the

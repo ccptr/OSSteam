@@ -52,6 +52,17 @@ the date and the build.
 | `persona online / invisible / offline` shows on a friend's client | ⏳ | ⏳ |
 | §20: CLI round trip ≤ 50 ms p95, idle RSS ≤ 60 MB, idle wakeups ≤ 1/s | ⏳ | ⏳ |
 
+Development machine, for comparison only (`reference-hw.md` §4; not
+results): on 2026-10-19 the release `gui_bench_library_of_10k_apps`
+daemon, logged on to the fake CM (heartbeat every 9 s, PICS polled every
+60 s), idle for 5 minutes, woke 0.23 times a second across its own
+threads (CM I/O 0.14, PICS 0.08), from voluntary context switches in
+`/proc/<pid>/task/*/status`. Before ADR 0001's amendment its CM I/O
+thread alone woke 1.03 times a second. 100 runs of `ossteam status`
+(release) took 2.4 ms at p95. Its RSS (80 MB) is not the daemon's: the
+fake CM and its 10,000-app fixture share the process. The real daemon,
+logged out, sat at 11 MB with no wakeups in a minute.
+
 The fake-CM tests check the daemon against our spec pages, not against
 Steam. They do not tick any box here: each check still needs a live run
 that matches the official client (§19.3).

@@ -6,8 +6,8 @@
 use std::fmt;
 use std::num::ParseIntError;
 use std::str::FromStr;
-use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::{Arc, Mutex, MutexGuard};
 
 mod eresult;
 mod secret;
@@ -236,9 +236,20 @@ impl FromStr for SteamId {
 
 /// Cooperative cancellation (SPEC CONC-2).
 ///
-/// Clones share one flag. Blocking loops check it at least once a second.
-#[derive(Clone, Debug, Default)]
-pub struct CancelToken(Arc<AtomicBool>);
+/// Clones share one flag. Blocking loops check it at least once a second,
+/// or register a wake-up with [`on_cancel`](Self::on_cancel) and wait
+/// without a slice.
+#[derive(Clone, Default)]
+pub struct CancelToken(Arc<CancelInner>);
+
+type Wake = Arc<dyn Fn() + Send + Sync>;
+
+#[derive(Default)]
+struct CancelInner {
+    cancelled: AtomicBool,
+    next_hook: AtomicU64,
+    hooks: Mutex<Vec<(u64, Wake)>>,
+}
 
 impl CancelToken {
     pub fn new() -> Self {
@@ -246,12 +257,55 @@ impl CancelToken {
     }
 
     pub fn cancel(&self) {
-        self.0.store(true, Ordering::Release);
+        self.0.cancelled.store(true, Ordering::Release);
+        // Called outside the lock, so a hook may use this token.
+        let hooks: Vec<_> = lock(&self.0.hooks).iter().map(|(_, f)| f.clone()).collect();
+        for wake in hooks {
+            wake();
+        }
     }
 
     pub fn is_cancelled(&self) -> bool {
-        self.0.load(Ordering::Acquire)
+        self.0.cancelled.load(Ordering::Acquire)
     }
+
+    /// Calls `wake` when the token is cancelled, until the returned hook
+    /// is dropped. `wake` only interrupts a wait; the waiter still checks
+    /// [`is_cancelled`](Self::is_cancelled), and must check it after
+    /// registering, since a token cancelled earlier calls no hook.
+    pub fn on_cancel(&self, wake: impl Fn() + Send + Sync + 'static) -> CancelHook {
+        let id = self.0.next_hook.fetch_add(1, Ordering::Relaxed);
+        lock(&self.0.hooks).push((id, Arc::new(wake)));
+        CancelHook {
+            token: self.clone(),
+            id,
+        }
+    }
+}
+
+impl fmt::Debug for CancelToken {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_tuple("CancelToken")
+            .field(&self.is_cancelled())
+            .finish()
+    }
+}
+
+/// Keeps a [`CancelToken::on_cancel`] wake-up registered while it lives.
+#[must_use = "the wake-up is unregistered when the hook is dropped"]
+pub struct CancelHook {
+    token: CancelToken,
+    id: u64,
+}
+
+impl Drop for CancelHook {
+    fn drop(&mut self) {
+        lock(&self.token.0.hooks).retain(|(id, _)| *id != self.id);
+    }
+}
+
+fn lock<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
+    m.lock().unwrap_or_else(|p| p.into_inner())
 }
 
 #[cfg(test)]
@@ -282,5 +336,40 @@ mod tests {
         assert_eq!("480".parse::<AppId>().unwrap(), AppId(480));
         assert_eq!(AppId(480).to_string(), "480");
         assert!("x".parse::<DepotId>().is_err());
+    }
+
+    #[test]
+    fn cancel_wakes_registered_hooks_until_dropped() {
+        let token = CancelToken::new();
+        let woken = Arc::new(AtomicU64::new(0));
+        let w = woken.clone();
+        let hook = token.on_cancel(move || {
+            w.fetch_add(1, Ordering::Relaxed);
+        });
+        let w = woken.clone();
+        let dropped = token.clone().on_cancel(move || {
+            w.fetch_add(10, Ordering::Relaxed);
+        });
+        drop(dropped);
+        assert!(!token.is_cancelled());
+        token.clone().cancel();
+        assert!(token.is_cancelled());
+        assert_eq!(woken.load(Ordering::Relaxed), 1);
+        drop(hook);
+        token.cancel();
+        assert_eq!(woken.load(Ordering::Relaxed), 1);
+    }
+
+    #[test]
+    fn a_hook_sees_the_flag_and_may_use_its_token() {
+        let token = CancelToken::new();
+        let seen = Arc::new(AtomicBool::new(false));
+        let (t, s) = (token.clone(), seen.clone());
+        let _hook = token.on_cancel(move || {
+            drop(t.on_cancel(|| {}));
+            s.store(t.is_cancelled(), Ordering::Relaxed);
+        });
+        token.cancel();
+        assert!(seen.load(Ordering::Relaxed));
     }
 }

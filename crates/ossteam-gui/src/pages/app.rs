@@ -57,6 +57,9 @@ pub struct AppPage {
     focus: FocusHandle,
     scroll: ScrollHandle,
     open: Open,
+    /// What had focus when the chooser opened, to get it back when the
+    /// chooser closes.
+    opener: Option<FocusHandle>,
     folder: Option<String>,
     branch: Option<String>,
     option: Option<u32>,
@@ -105,6 +108,7 @@ impl AppPage {
             focus: cx.focus_handle(),
             scroll: ScrollHandle::new(),
             open: Open::None,
+            opener: None,
             folder: None,
             branch: None,
             option: None,
@@ -169,14 +173,15 @@ impl AppPage {
         }
         match &info.installed {
             None if self.open == Open::Install => self.install(cx),
-            None => self.open_install(cx),
+            None => self.open_install(window, cx),
             Some(i) if i.update_available => self.update(cx),
             Some(_) => self.play(window, cx),
         }
     }
 
-    fn open_install(&mut self, cx: &mut Context<Self>) {
+    fn open_install(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.open = Open::Install;
+        self.opener = window.focused(cx);
         cx.notify();
     }
 
@@ -269,12 +274,13 @@ impl AppPage {
     /// Play: opens the chooser when several options qualify, then launches
     /// the chosen one; otherwise launches, and when none qualifies shows
     /// why (§4.3).
-    fn play(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
+    fn play(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let several = self
             .options(cx)
             .is_some_and(|o| o.options.iter().filter(|o| o.qualifies).count() > 1);
         if several && self.open != Open::Launch {
             self.open = Open::Launch;
+            self.opener = window.focused(cx);
             if self.option.is_none() {
                 self.option = self
                     .options(cx)
@@ -537,7 +543,7 @@ impl AppPage {
                 div().flex().child(
                     button("install", "Install")
                         .disabled(busy)
-                        .on_click(cx.listener(|page, _, _, cx| page.open_install(cx))),
+                        .on_click(cx.listener(|page, _, window, cx| page.open_install(window, cx))),
                 ),
             );
             if self.open == Open::Install {
@@ -822,9 +828,10 @@ impl AppPage {
                     button("uninstall", "Uninstall…")
                         .danger()
                         .disabled(busy)
-                        .on_click(cx.listener(|page, _, _, cx| {
+                        .on_click(cx.listener(|page, _, window, cx| {
                             if page.open != Open::Uninstall {
                                 page.open = Open::Uninstall;
+                                page.opener = window.focused(cx);
                                 page.remove_compat_data = false;
                                 cx.notify();
                             }
@@ -961,6 +968,14 @@ impl Focusable for AppPage {
 
 impl Render for AppPage {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        // A chooser closed, by Escape, Cancel or its call: focus that was
+        // in it goes back to what opened it.
+        if self.open == Open::None
+            && let Some(opener) = self.opener.take()
+            && self.focus.contains_focused(window, cx)
+        {
+            window.focus(&opener, cx);
+        }
         reveal::scroll_to_focus(&self.focus, &self.scroll, window, cx);
         let store = &self.model.read(cx).store;
         let details = store.apps.get(&self.app_id);

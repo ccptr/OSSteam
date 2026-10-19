@@ -118,6 +118,16 @@ impl Root {
             cx.notify();
         })
         .detach();
+        // A focused control that goes away, such as Launch once the game
+        // runs, leaves focus nowhere in the tree, where Tab reaches no
+        // handler: focus goes to what held the control, or to the window.
+        cx.on_focus_lost(window, |root, window, cx| {
+            let target = window
+                .focus_lost_restore_target(cx)
+                .unwrap_or_else(|| root.focus.clone());
+            window.focus(&target, cx);
+        })
+        .detach();
         let mut root = Self {
             started,
             first_frame_reported: false,

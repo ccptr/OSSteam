@@ -79,6 +79,9 @@ pub struct Store {
     /// frame without copying it.
     pub library: Option<Arc<v1::ListAppsResponse>>,
     pub library_query: LibraryQuery,
+    /// Every name a `ListApps` reply has given, whatever its filter: jobs
+    /// and pages name apps that the shown library may leave out.
+    names: HashMap<u32, String>,
     pub apps: HashMap<u32, AppDetails>,
     pub jobs: BTreeMap<u64, v1::Job>,
     pub running: BTreeMap<u32, v1::RunningGame>,
@@ -98,6 +101,7 @@ impl Store {
             status: i.status,
             version: i.version,
             accounts: i.accounts,
+            names: i.library.as_ref().map(names).unwrap_or_default(),
             library: i.library.map(Arc::new),
             library_query: LibraryQuery::default(),
             apps: HashMap::new(),
@@ -139,18 +143,13 @@ impl Store {
         self.settings.get(key)
     }
 
-    /// The app's name from the library, if listed.
+    /// The app's name from the library, if any `ListApps` reply listed
+    /// it, or from its details.
     pub fn app_name(&self, app_id: u32) -> Option<&str> {
-        let lib = self.library.as_ref()?;
-        lib.apps
-            .iter()
-            .flat_map(|a| std::iter::once(a).chain(a.dlc.iter()))
-            .find(|a| a.app_id == app_id && !a.name.is_empty())
-            .map(|a| a.name.as_str())
-            .or_else(|| {
-                let info = self.apps.get(&app_id)?.info.as_ref()?.as_ref().ok()?;
-                info.app.as_ref().map(|a| a.name.as_str())
-            })
+        self.names.get(&app_id).map(String::as_str).or_else(|| {
+            let info = self.apps.get(&app_id)?.info.as_ref()?.as_ref().ok()?;
+            info.app.as_ref().map(|a| a.name.as_str())
+        })
     }
 
     /// The unfinished job of an app, if any.
@@ -250,6 +249,7 @@ impl Store {
         if old != new {
             // Library, jobs, details and shim reports are the account's.
             self.apps.clear();
+            self.names.clear();
             self.shim_reports.clear();
             self.jobs.clear();
             self.library = None;
@@ -268,6 +268,9 @@ impl Store {
 
     /// A `ListApps` reply for `query`; dropped when the query changed since.
     pub fn set_library(&mut self, query: &LibraryQuery, r: Option<v1::ListAppsResponse>) {
+        if let Some(r) = &r {
+            self.names.extend(names(r));
+        }
         if *query == self.library_query {
             self.library = r.map(Arc::new);
         }
@@ -377,6 +380,16 @@ impl Store {
         });
         self.notices.len() != before
     }
+}
+
+/// The named apps of a `ListApps` reply, their DLC included.
+fn names(r: &v1::ListAppsResponse) -> HashMap<u32, String> {
+    r.apps
+        .iter()
+        .flat_map(|a| std::iter::once(a).chain(a.dlc.iter()))
+        .filter(|a| !a.name.is_empty())
+        .map(|a| (a.app_id, a.name.clone()))
+        .collect()
 }
 
 #[cfg(test)]
@@ -533,6 +546,19 @@ mod tests {
         let q = s.library_query.clone();
         s.set_library(&q, None);
         assert!(s.library.is_none());
+    }
+
+    #[test]
+    fn apps_keep_their_names_when_a_filter_leaves_them_out() {
+        let mut s = store();
+        s.library_query.filter = "other".into();
+        let q = s.library_query.clone();
+        s.set_library(&q, Some(v1::ListAppsResponse::default()));
+        assert!(s.library.as_ref().is_some_and(|l| l.apps.is_empty()));
+        assert_eq!(s.app_name(480), Some("Spacewar"));
+
+        s.apply(session(Some(2), true));
+        assert_eq!(s.app_name(480), None);
     }
 
     #[test]

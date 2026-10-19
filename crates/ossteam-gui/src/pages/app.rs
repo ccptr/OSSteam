@@ -6,7 +6,8 @@ use std::sync::Arc;
 
 use gpui::{
     AnyElement, App, Context, Entity, EventEmitter, FocusHandle, Focusable, KeyBinding, ObjectFit,
-    RenderImage, SharedString, Subscription, Window, actions, div, img, prelude::*, px,
+    RenderImage, ScrollHandle, SharedString, Subscription, Window, actions, div, img, prelude::*,
+    px,
 };
 use ossteam_ipc::v1::{self, AssetKind, CompatSource};
 
@@ -17,7 +18,7 @@ use crate::pages::downloads::job_row;
 use crate::pages::{error_text, muted, panel, row, section};
 use crate::theme::palette;
 use crate::thumbnails::{Fit, Thumbnail, Thumbnails};
-use crate::widgets::{TextInput, TextInputEvent, button, choice, switch};
+use crate::widgets::{TextInput, TextInputEvent, button, choice, reveal, switch};
 
 actions!(app_page, [Back]);
 
@@ -54,6 +55,7 @@ pub struct AppPage {
     artwork: Entity<Thumbnails>,
     app_id: u32,
     focus: FocusHandle,
+    scroll: ScrollHandle,
     open: Open,
     folder: Option<String>,
     branch: Option<String>,
@@ -101,6 +103,7 @@ impl AppPage {
             artwork,
             app_id,
             focus: cx.focus_handle(),
+            scroll: ScrollHandle::new(),
             open: Open::None,
             folder: None,
             branch: None,
@@ -953,6 +956,7 @@ impl Focusable for AppPage {
 
 impl Render for AppPage {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        reveal::scroll_to_focus(&self.focus, &self.scroll, window, cx);
         let store = &self.model.read(cx).store;
         let details = store.apps.get(&self.app_id);
         let load_error = details
@@ -1007,6 +1011,7 @@ impl Render for AppPage {
             .on_action(cx.listener(Self::back))
             .size_full()
             .overflow_y_scroll()
+            .track_scroll(&self.scroll)
             .p_6()
             .child(body)
     }

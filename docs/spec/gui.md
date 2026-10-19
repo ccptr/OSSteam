@@ -297,7 +297,11 @@ Every action is reachable from the keyboard. Tab and Shift-Tab move
 focus through the page in reading order; Enter and Space activate the
 focused control; Escape closes a menu, a chooser or the App page. While
 focus moves by keyboard, the focused control has a visible focus ring;
-a text field shows it whenever it has focus.
+a text field shows it whenever it has focus. A page that scrolls scrolls
+by the least that shows the control Tab or Shift-Tab focused, and an
+error when it appears, while focus is on that page: the control whose
+action failed keeps focus, and its error can be below the window's edge.
+Tab out of the account menu closes it.
 
 | Keys (Linux, Windows) | macOS | Action |
 |---|---|---|

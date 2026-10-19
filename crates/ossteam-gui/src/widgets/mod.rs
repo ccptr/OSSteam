@@ -4,6 +4,7 @@
 mod button;
 mod controls;
 pub mod qr;
+pub mod reveal;
 pub mod text_input;
 
 pub use button::button;

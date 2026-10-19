@@ -3,8 +3,8 @@
 //! sign-in, and Steam Guard prompts.
 
 use gpui::{
-    App, Context, Entity, FocusHandle, Focusable, SharedString, Subscription, Window, div,
-    prelude::*, px,
+    App, Context, Entity, FocusHandle, Focusable, ScrollHandle, SharedString, Subscription, Window,
+    div, prelude::*, px,
 };
 use ossteam_ipc::v1::{self, LoginPromptKind};
 use ossteam_types::Secret;
@@ -13,7 +13,7 @@ use crate::model::Model;
 use crate::pages::{error_text, muted, panel, section};
 use crate::store::LoginOutcome;
 use crate::theme::palette;
-use crate::widgets::{TextInput, TextInputEvent, button, qr, switch};
+use crate::widgets::{TextInput, TextInputEvent, button, qr, reveal, switch};
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Tab {
@@ -24,6 +24,7 @@ enum Tab {
 pub struct LoginPage {
     model: Entity<Model>,
     focus: FocusHandle,
+    scroll: ScrollHandle,
     tab: Tab,
     username: Entity<TextInput>,
     password: Entity<TextInput>,
@@ -62,6 +63,7 @@ impl LoginPage {
         Self {
             model,
             focus: cx.focus_handle(),
+            scroll: ScrollHandle::new(),
             tab: Tab::Password,
             username,
             password,
@@ -402,7 +404,8 @@ impl Focusable for LoginPage {
 }
 
 impl Render for LoginPage {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        reveal::scroll_to_focus(&self.focus, &self.scroll, window, cx);
         let p = palette(cx);
         let store = &self.model.read(cx).store;
         let running = store.login.running;
@@ -423,6 +426,7 @@ impl Render for LoginPage {
             .track_focus(&self.focus)
             .size_full()
             .overflow_y_scroll()
+            .track_scroll(&self.scroll)
             .flex()
             .justify_center()
             .p_6()

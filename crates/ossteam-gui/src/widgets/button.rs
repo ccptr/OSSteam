@@ -8,6 +8,7 @@ use std::rc::Rc;
 use gpui::{App, ClickEvent, ElementId, SharedString, Window, div, prelude::*};
 
 use crate::theme::palette;
+use crate::widgets::reveal;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum Kind {
@@ -86,7 +87,7 @@ impl Button {
 }
 
 impl RenderOnce for Button {
-    fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
+    fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
         let p = palette(cx);
         let (bg, fg, border) = match self.kind {
             Kind::Primary => (p.accent, p.on_accent, p.accent),
@@ -101,30 +102,34 @@ impl RenderOnce for Button {
         };
         let ring = p.focus_ring;
         let clickable = !self.disabled && self.on_click.is_some();
-        div()
-            .id(self.id)
-            .flex()
-            .items_center()
-            .justify_center()
-            .when(self.full_width, |d| d.w_full())
-            .px_3()
-            .py_1()
-            .rounded_md()
-            .border_2()
-            .border_color(border)
-            .bg(bg)
-            .text_color(fg)
-            .text_sm()
-            .whitespace_nowrap()
-            .when(!self.disabled, |d| d.tab_index(0))
-            .focus_visible(move |s| s.border_color(ring))
-            .when(self.disabled, |d| d.opacity(0.5))
-            .when(clickable, |d| {
-                let f = self.on_click.clone().expect("clickable");
-                d.cursor_pointer()
-                    .hover(move |s| s.bg(hover_bg))
-                    .on_click(move |e, w, cx| f(e, w, cx))
-            })
-            .child(self.label)
+        reveal::tab_stop(
+            div().id(self.id.clone()),
+            self.id,
+            !self.disabled,
+            window,
+            cx,
+        )
+        .flex()
+        .items_center()
+        .justify_center()
+        .when(self.full_width, |d| d.w_full())
+        .px_3()
+        .py_1()
+        .rounded_md()
+        .border_2()
+        .border_color(border)
+        .bg(bg)
+        .text_color(fg)
+        .text_sm()
+        .whitespace_nowrap()
+        .focus_visible(move |s| s.border_color(ring))
+        .when(self.disabled, |d| d.opacity(0.5))
+        .when(clickable, |d| {
+            let f = self.on_click.clone().expect("clickable");
+            d.cursor_pointer()
+                .hover(move |s| s.bg(hover_bg))
+                .on_click(move |e, w, cx| f(e, w, cx))
+        })
+        .child(self.label)
     }
 }

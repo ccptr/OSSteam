@@ -20,6 +20,7 @@ use unicode_segmentation::UnicodeSegmentation;
 use zeroize::Zeroizing;
 
 use crate::theme::palette;
+use crate::widgets::reveal;
 
 actions!(
     text_input,
@@ -723,7 +724,9 @@ impl Render for TextInput {
             .text_sm()
             .focus(move |s| s.border_color(ring))
             .overflow_hidden()
+            .relative()
             .child(TextElement { input: cx.entity() })
+            .child(reveal::marker(self.focus.clone()))
     }
 }
 

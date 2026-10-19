@@ -10,6 +10,7 @@ pub mod settings;
 use gpui::{App, Div, SharedString, div, prelude::*};
 
 use crate::theme::palette;
+use crate::widgets::reveal;
 
 /// A page section: a heading over its content.
 pub fn section(title: impl Into<SharedString>, cx: &App) -> Div {
@@ -40,11 +41,15 @@ pub fn row(label: impl Into<SharedString>, value: impl Into<SharedString>, cx: &
         .child(div().flex_1().child(value.into()))
 }
 
+/// An error; it scrolls into view when it appears (`reveal`).
 pub fn error_text(message: impl Into<SharedString>, cx: &App) -> Div {
+    let message = message.into();
     div()
+        .relative()
         .text_sm()
         .text_color(palette(cx).error)
-        .child(message.into())
+        .child(message.clone())
+        .child(reveal::when_new(message))
 }
 
 pub fn muted(text: impl Into<SharedString>, cx: &App) -> Div {

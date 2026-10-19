@@ -22,7 +22,7 @@ use crate::pages::settings::SettingsPage;
 use crate::queue;
 use crate::theme::{Palette, palette};
 use crate::thumbnails::Thumbnails;
-use crate::widgets::button;
+use crate::widgets::{button, reveal};
 
 actions!(
     ossteam,
@@ -111,12 +111,19 @@ impl Root {
         })
         .detach();
         cx.set_global(Palette::for_appearance(window.appearance()));
+        let menu_focus = cx.focus_handle();
+        // Tab out of the open account menu closes it, as Escape does.
+        cx.on_focus_out(&menu_focus, window, |root, _, _, cx| {
+            root.menu_open = false;
+            cx.notify();
+        })
+        .detach();
         let mut root = Self {
             started,
             first_frame_reported: false,
             autostart,
             focus,
-            menu_focus: cx.focus_handle(),
+            menu_focus,
             connection: Connection::Connecting,
             _connection_task: None,
             page: Page::Library,
@@ -357,10 +364,12 @@ impl Root {
 
     fn focus_next(&mut self, _: &FocusNext, window: &mut Window, cx: &mut Context<Self>) {
         window.focus_next(cx);
+        reveal::focus_moved(window, cx);
     }
 
     fn focus_prev(&mut self, _: &FocusPrev, window: &mut Window, cx: &mut Context<Self>) {
         window.focus_prev(cx);
+        reveal::focus_moved(window, cx);
     }
 
     fn close_menu(&mut self, _: &CloseMenu, window: &mut Window, cx: &mut Context<Self>) {

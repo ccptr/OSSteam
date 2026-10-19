@@ -4,8 +4,8 @@
 use std::time::Instant;
 
 use gpui::{
-    AnyElement, App, Context, Entity, FocusHandle, Focusable, SharedString, Subscription, Window,
-    div, prelude::*,
+    AnyElement, App, Context, Entity, FocusHandle, Focusable, ScrollHandle, SharedString,
+    Subscription, Window, div, prelude::*,
 };
 use ossteam_ipc::v1::{self, JobState};
 
@@ -15,11 +15,12 @@ use crate::pages::{error_text, muted, panel, section};
 use crate::queue::{self, Move};
 use crate::rate;
 use crate::theme::palette;
-use crate::widgets::{button, progress_bar};
+use crate::widgets::{button, progress_bar, reveal};
 
 pub struct DownloadsPage {
     model: Entity<Model>,
     focus: FocusHandle,
+    scroll: ScrollHandle,
     update_all_error: Option<SharedString>,
     _subscriptions: Vec<Subscription>,
 }
@@ -30,6 +31,7 @@ impl DownloadsPage {
         Self {
             model,
             focus: cx.focus_handle(),
+            scroll: ScrollHandle::new(),
             update_all_error: None,
             _subscriptions: subscriptions,
         }
@@ -212,7 +214,8 @@ impl Focusable for DownloadsPage {
 }
 
 impl Render for DownloadsPage {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        reveal::scroll_to_focus(&self.focus, &self.scroll, window, cx);
         let m = self.model.read(cx);
         let logged_in = m.store.account().is_some();
         let jobs = m.store.jobs.clone();
@@ -234,6 +237,7 @@ impl Render for DownloadsPage {
             .track_focus(&self.focus)
             .size_full()
             .overflow_y_scroll()
+            .track_scroll(&self.scroll)
             .p_6()
             .flex()
             .flex_col()

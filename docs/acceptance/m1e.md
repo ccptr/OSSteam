@@ -60,7 +60,7 @@ a personal one), the date and the build.
 | M1d through the GUI: the compatibility tool, its chain and the choice of tool on the App page, `compat.default_tool` in Settings, the first Play installing tools as jobs, uninstall with *Also delete the Proton prefix* | ⏳ | n/a | n/a |
 | The library, the App page's artwork and every job look the same as the official client's for the same account | ⏳ | ⏳ | ⏳ |
 | Without a daemon: the GUI says so and starts one; *Retry* reconnects after `ossteam daemon stop` | ✅ 2026-10-18, real install, no account: started a daemon; *Cannot reach ossteamd* with no reconnect of its own; Tab, Enter on *Retry* started one and the Login page's first field had focus again | ⏳ | ⏳ |
-| Keyboard only: every page and control reachable with Tab and the §6 shortcuts | ⏳ | ⏳ | ⏳ |
+| Keyboard only: every page and control reachable with Tab and the §6 shortcuts | ⏳ 2026-10-18, partly: the bench daemon's library (grid and list, arrows, Home, End, Page Down, Enter, Ctrl-F, Ctrl-Enter, Ctrl-1/2/3), a not-installed App page with its install chooser and an install error, the account menu with one account, Settings, and on the real install with no account the Login page's password form and an empty Downloads page, in a window of 1,007 × 537 points. Fixed: a control Tab focused below a page's edge, and an error appearing there, were out of sight; Tab out of the account menu left it open. Left: the App page installed, running and with an update, its launch, compatibility and uninstall controls, job rows, QR and guard prompts, two accounts | ⏳ | ⏳ |
 | M1a checklist on macOS (CLI) | n/a | n/a | ⏳ |
 | M1b checklist on macOS (CLI) | n/a | n/a | ⏳ |
 | M1c checklist on macOS (CLI), with the macOS discovery entries | n/a | n/a | ⏳ |

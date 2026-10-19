@@ -6,6 +6,7 @@ use std::rc::Rc;
 use gpui::{App, ClickEvent, ElementId, SharedString, Window, div, prelude::*, px, relative};
 
 use crate::theme::palette;
+use crate::widgets::reveal;
 
 type OnClick = Rc<dyn Fn(&ClickEvent, &mut Window, &mut App)>;
 
@@ -37,12 +38,11 @@ impl Switch {
 }
 
 impl RenderOnce for Switch {
-    fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
+    fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
         let p = palette(cx);
         let ring = p.focus_ring;
         let track = if self.on { p.accent } else { p.border };
-        div()
-            .id(self.id)
+        reveal::tab_stop(div().id(self.id.clone()), self.id, true, window, cx)
             .flex()
             .items_center()
             .gap_2()
@@ -50,7 +50,6 @@ impl RenderOnce for Switch {
             .rounded_md()
             .border_2()
             .border_color(gpui::transparent_black())
-            .tab_index(0)
             .focus_visible(move |s| s.border_color(ring))
             .cursor_pointer()
             .when_some(self.on_toggle, |d, f| {
@@ -118,13 +117,12 @@ impl Choice {
 }
 
 impl RenderOnce for Choice {
-    fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
+    fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
         let p = palette(cx);
         let ring = p.focus_ring;
         let hover = p.surface_raised;
         let enabled = !self.disabled;
-        div()
-            .id(self.id)
+        reveal::tab_stop(div().id(self.id.clone()), self.id, enabled, window, cx)
             .flex()
             .items_start()
             .gap_2()
@@ -135,8 +133,7 @@ impl RenderOnce for Choice {
             .border_color(gpui::transparent_black())
             .when(self.chosen, |d| d.bg(p.selection))
             .when(enabled, |d| {
-                d.tab_index(0)
-                    .cursor_pointer()
+                d.cursor_pointer()
                     .when(!self.chosen, |d| d.hover(move |s| s.bg(hover)))
             })
             .when(self.disabled, |d| d.opacity(0.5))

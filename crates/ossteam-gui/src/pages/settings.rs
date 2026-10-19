@@ -5,8 +5,8 @@ use std::collections::HashMap;
 use std::time::Duration;
 
 use gpui::{
-    AnyElement, App, Context, Entity, FocusHandle, Focusable, PathPromptOptions, SharedString,
-    Subscription, Window, div, prelude::*,
+    AnyElement, App, Context, Entity, FocusHandle, Focusable, PathPromptOptions, ScrollHandle,
+    SharedString, Subscription, Window, div, prelude::*,
 };
 use ossteam_ipc::v1::{self, ErrorCode, PersonaState, SettingKind, SettingSource};
 
@@ -15,7 +15,7 @@ use crate::model::Model;
 use crate::pages::{error_text, muted, panel, row, section};
 use crate::store::Read;
 use crate::theme::palette;
-use crate::widgets::{TextInput, TextInputEvent, button, choice, switch};
+use crate::widgets::{TextInput, TextInputEvent, button, choice, reveal, switch};
 
 const DOWNLOAD_KEYS: [&str; 5] = [
     "content.bandwidth_limit",
@@ -30,6 +30,7 @@ const TOOL_PREFIX: &str = "compat.tool.";
 pub struct SettingsPage {
     model: Entity<Model>,
     focus: FocusHandle,
+    scroll: ScrollHandle,
     /// Text fields of integer and string settings, made when first shown.
     inputs: HashMap<String, Entity<TextInput>>,
     errors: HashMap<String, SharedString>,
@@ -51,6 +52,7 @@ impl SettingsPage {
         Self {
             model,
             focus: cx.focus_handle(),
+            scroll: ScrollHandle::new(),
             inputs: HashMap::new(),
             errors: HashMap::new(),
             folder_error: None,
@@ -503,6 +505,7 @@ impl Focusable for SettingsPage {
 
 impl Render for SettingsPage {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        reveal::scroll_to_focus(&self.focus, &self.scroll, window, cx);
         let settings: Vec<v1::Setting> = self
             .model
             .read(cx)
@@ -553,6 +556,7 @@ impl Render for SettingsPage {
             .track_focus(&self.focus)
             .size_full()
             .overflow_y_scroll()
+            .track_scroll(&self.scroll)
             .p_6()
             .flex()
             .flex_col()

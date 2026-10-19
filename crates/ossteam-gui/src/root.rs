@@ -570,6 +570,7 @@ impl Root {
             );
         }
         let model = ui.model.clone();
+        let login = ui.login.clone();
         menu = menu.child(
             button("menu-add-account", "Add account")
                 .ghost()
@@ -579,6 +580,7 @@ impl Root {
                         m.store.login_stopped(None);
                         cx.notify();
                     });
+                    login.update(cx, |l, cx| l.reset(cx));
                     root.menu_open = false;
                     root.adding_account = true;
                     root.show(Page::Library, window, cx);

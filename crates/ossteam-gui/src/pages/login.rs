@@ -78,6 +78,17 @@ impl LoginPage {
         }
     }
 
+    /// An empty form, for another account than the last one signed in.
+    pub fn reset(&mut self, cx: &mut Context<Self>) {
+        for field in [&self.username, &self.password, &self.code] {
+            field.update(cx, |f, cx| f.clear(cx));
+        }
+        self.tab = Tab::Password;
+        self.remember = true;
+        self.error = None;
+        cx.notify();
+    }
+
     /// The field the cursor goes to: the first one still empty.
     pub fn first_field(&self, cx: &App) -> FocusHandle {
         if self.username.read(cx).text().is_empty() {

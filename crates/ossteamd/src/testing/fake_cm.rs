@@ -143,6 +143,7 @@ struct AuthSession {
     qr: bool,
     /// QR challenges still to rotate, one per poll.
     rotations: u32,
+    #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
     started: Instant,
 }
 
@@ -402,6 +403,7 @@ impl FakeCm {
     /// Approves, as the mobile app would, every sign-in that has waited
     /// at least `after`: QR codes, as signed in to `qr_account`, and device
     /// confirmations. Sign-ins waiting for a code are left to the code.
+    #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
     pub fn approve_waiting(&self, qr_account: &str, after: Duration) {
         let mut s = self.state();
         let confirming: Vec<String> = s

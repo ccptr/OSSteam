@@ -618,9 +618,11 @@ impl AppPage {
         }
 
         div()
+            .relative()
             .flex()
             .flex_col()
             .gap_3()
+            .child(reveal::when_new("install-chooser"))
             .child(section("Folder", cx).child(folder_list))
             .when(branches.len() > 1, |d| {
                 d.child(section("Branch", cx).child(branch_list))
@@ -678,6 +680,8 @@ impl AppPage {
             );
         }
         section("Launch option", cx)
+            .relative()
+            .child(reveal::when_new("launch-chooser"))
             .child(list)
             .child(
                 div()
@@ -846,7 +850,12 @@ impl AppPage {
                 .as_ref()
                 .map(|a| a.name.clone())
                 .unwrap_or_default();
-            out = out
+            let confirm = div()
+                .relative()
+                .flex()
+                .flex_col()
+                .gap_3()
+                .child(reveal::when_new("uninstall-confirm"))
                 .child(muted(
                     format!("Uninstall {name}? Its files are deleted."),
                     cx,
@@ -881,6 +890,7 @@ impl AppPage {
                             }),
                         )),
                 );
+            out = out.child(confirm);
         }
         Some(out.into_any_element())
     }

@@ -292,9 +292,10 @@ fn discovery_entries_follow_the_account() {
 
     // Removed at logout, and when the daemon stops.
     c.logout().expect("logout");
-    wait_until("the entries to go", || !exists(&pid_file));
-    assert!(!exists(&steam.join("sdk64")));
-    assert!(!exists(&steam.join("sdk32")));
+    // The pid file goes first, so wait for all of them.
+    wait_until("the entries to go", || {
+        !exists(&pid_file) && !exists(&steam.join("sdk64")) && !exists(&steam.join("sdk32"))
+    });
     login(&d);
     wait_until("the entries", || exists(&pid_file));
     d.stop();

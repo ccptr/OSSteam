@@ -2,11 +2,9 @@
 //! Daemon integration tests: a real `ossteamd` driven through `ossteam-ipc`
 //! (SPEC §19.1 level 3).
 //!
-//! Unix only for now: the daemon is isolated by pointing `XDG_RUNTIME_DIR`
-//! (Linux) or `TMPDIR` (macOS) and `HOME` at a temporary directory. The
-//! Windows endpoint is derived from the user's SID and cannot be isolated
-//! that way yet.
-#![cfg(unix)]
+//! The daemon is isolated by pointing `XDG_RUNTIME_DIR` (Linux) or
+//! `TMPDIR` (macOS) and `HOME` at a temporary directory, and on Windows
+//! `OSSTEAM_TEST_ROOT`, which debug builds honour (`ipc.md` §1).
 
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
@@ -38,6 +36,7 @@ fn env_for(root: &Path) -> Vec<(&'static str, PathBuf)> {
         ("XDG_CONFIG_HOME", root.join("config")),
         ("XDG_DATA_HOME", root.join("data")),
         ("XDG_CACHE_HOME", root.join("cache")),
+        (ossteam_ipc::endpoint::TEST_ROOT_ENV, root.to_owned()),
     ]
 }
 
@@ -224,11 +223,15 @@ fn shutdown_notifies_subscribers_and_exits() {
 
     let status = daemon.child.wait().unwrap();
     assert!(status.success());
-    let ep = Endpoint::client().unwrap();
-    assert!(
-        !std::path::Path::new(&ep.address).exists(),
-        "socket file left behind"
-    );
+    // A named pipe goes with its last handle; a socket file must be removed.
+    #[cfg(unix)]
+    {
+        let ep = Endpoint::client().unwrap();
+        assert!(
+            !std::path::Path::new(&ep.address).exists(),
+            "socket file left behind"
+        );
+    }
 }
 
 fn remote_code<T: std::fmt::Debug>(r: Result<T, ClientError>) -> ErrorCode {
@@ -282,6 +285,8 @@ fn session_methods_without_an_account() {
 fn config_dir(root: &Path) -> PathBuf {
     if cfg!(target_os = "macos") {
         root.join("home/Library/Application Support/dev.ccptr.ossteam")
+    } else if cfg!(windows) {
+        root.join("config")
     } else {
         root.join("config/ossteam")
     }

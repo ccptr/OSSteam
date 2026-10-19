@@ -35,6 +35,18 @@ error that says so. They do not fall back to `/tmp`.
 generic-all to the user's SID. There is nothing to clean up, because a
 named pipe disappears with its last handle.
 
+**Test isolation (Windows, debug builds).** Unix tests give a daemon its
+own endpoint and folders by pointing `XDG_RUNTIME_DIR` or `TMPDIR` and the
+XDG variables at a temporary directory. Windows takes the pipe name from
+the SID and the folders from the shell's known folders, so no variable
+moves them. Debug builds therefore read `OSSTEAM_TEST_ROOT`, an absolute
+directory path. When it is set, the pipe is `ossteam-test-<directory name>`,
+the game pipe is `ossteam-game-test-<directory name>`, the lock file is
+`<directory>\data\daemon.lock`, and the daemon's config, data, cache and
+state folders are `config`, `data`, `cache` and `state` under it. The
+pipes keep the same security descriptor. Release builds ignore the
+variable.
+
 **Peer check (IPC-2).** After `accept`, before reading anything, the daemon
 checks the peer:
 

@@ -62,6 +62,16 @@ fn wide(s: &str) -> Vec<u16> {
 }
 
 pub fn locate() -> io::Result<Address> {
+    // Debug builds: the test directory of `ossteam_ipc::endpoint::TEST_ROOT_ENV`.
+    #[cfg(debug_assertions)]
+    if let Some(root) = std::env::var_os("OSSTEAM_TEST_ROOT").map(std::path::PathBuf::from)
+        && root.is_absolute()
+        && let Some(name) = root.file_name()
+    {
+        return Ok(Address {
+            name: format!("ossteam-game-test-{}", name.to_string_lossy()),
+        });
+    }
     Ok(Address {
         name: format!("ossteam-game-{}", current_user_sid()?),
     })

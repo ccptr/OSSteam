@@ -45,6 +45,14 @@ impl Paths {
 
         #[cfg(windows)]
         {
+            if let Some(root) = ossteam_ipc::endpoint::test_root() {
+                return Ok(Self {
+                    config: root.join("config"),
+                    data: root.join("data"),
+                    cache: root.join("cache"),
+                    state: root.join("state"),
+                });
+            }
             let dirs = ProjectDirs::from("", "", "ossteam").ok_or_else(not_found)?;
             let local = dirs.data_local_dir().to_owned();
             let state = local

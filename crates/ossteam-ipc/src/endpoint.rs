@@ -11,11 +11,31 @@
 //! On Unix the directory is created with mode 0700 and must be owned by the
 //! current user; clients refuse to connect through one that is not. On
 //! Windows the pipe's DACL grants access to the user's SID only.
+//!
+//! Tests on Unix isolate a daemon through `XDG_RUNTIME_DIR` or `TMPDIR`.
+//! Windows has no such variable, so debug builds there honour
+//! [`TEST_ROOT_ENV`] instead (`ipc.md` §1).
 
 use std::io;
 use std::path::PathBuf;
 
 use interprocess::local_socket::{Listener, ListenerOptions, Name, Stream, prelude::*};
+
+/// Windows, debug builds only: a directory that replaces the user's
+/// endpoint and folders, so that tests can run a daemon beside a real one.
+/// The pipe becomes `ossteam-test-<directory name>` and the lock file
+/// `<directory>\data\daemon.lock`. Release builds ignore it.
+pub const TEST_ROOT_ENV: &str = "OSSTEAM_TEST_ROOT";
+
+/// [`TEST_ROOT_ENV`] when it applies: on Windows, in a debug build, set to
+/// an absolute path.
+pub fn test_root() -> Option<PathBuf> {
+    if !cfg!(all(windows, debug_assertions)) {
+        return None;
+    }
+    let root = PathBuf::from(std::env::var_os(TEST_ROOT_ENV)?);
+    (root.is_absolute() && root.file_name().is_some()).then_some(root)
+}
 
 /// The client endpoint and the daemon's single-instance lock file.
 #[derive(Debug, Clone)]
@@ -172,6 +192,13 @@ mod imp {
     use interprocess::os::windows::security_descriptor::SecurityDescriptor;
 
     pub fn client_endpoint() -> io::Result<Endpoint> {
+        if let Some(root) = test_root() {
+            let name = root.file_name().expect("checked").to_string_lossy();
+            return Ok(Endpoint {
+                address: format!("ossteam-test-{name}"),
+                lock_file: root.join("data").join("daemon.lock"),
+            });
+        }
         let sid = win::current_user_sid()?;
         let dirs = directories::ProjectDirs::from("", "", "ossteam").ok_or_else(|| {
             io::Error::new(

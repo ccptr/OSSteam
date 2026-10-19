@@ -482,7 +482,8 @@ another user created first is not trusted. The daemon checks that the
 peer is the same user (IPC-2) and reads the peer's pid: `SO_PEERCRED`
 on Linux, `LOCAL_PEERPID` on macOS, `GetNamedPipeClientProcessId` on
 Windows. The daemon listens on the game endpoint for as long as it runs,
-whether or not an account is logged in.
+whether or not an account is logged in. Debug builds on Windows honour
+`OSSTEAM_TEST_ROOT` for this pipe too (`ipc.md` §1).
 
 **Linux containers.** A game in a Steam Linux Runtime container has a
 private `$XDG_RUNTIME_DIR` but shares the network namespace, which is

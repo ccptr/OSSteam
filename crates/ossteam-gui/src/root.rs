@@ -638,8 +638,7 @@ impl Root {
                     format!("{} {name}{pct}", format::kind(j.kind()))
                 }
             }
-            None if !q.is_empty() => format!("{} queued", q.len()),
-            None => String::new(),
+            None => queue::counts(&q),
         };
         let mut games = div().flex().gap_2();
         for g in store.running.values() {

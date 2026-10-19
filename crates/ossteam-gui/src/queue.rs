@@ -18,6 +18,23 @@ pub fn queue<'a>(jobs: impl IntoIterator<Item = &'a v1::Job>) -> Vec<&'a v1::Job
     q
 }
 
+/// The queue counted by state, for the status bar when no job runs:
+/// "1 queued, 2 paused". Empty when the queue is.
+pub fn counts(queue: &[&v1::Job]) -> String {
+    [
+        (JobState::Queued, "queued"),
+        (JobState::Paused, "paused"),
+        (JobState::Failed, "failed"),
+    ]
+    .into_iter()
+    .filter_map(|(state, word)| {
+        let n = queue.iter().filter(|j| j.state() == state).count();
+        (n > 0).then(|| format!("{n} {word}"))
+    })
+    .collect::<Vec<_>>()
+    .join(", ")
+}
+
 /// Finished jobs, newest first.
 pub fn history<'a>(jobs: impl IntoIterator<Item = &'a v1::Job>) -> Vec<&'a v1::Job> {
     let mut h: Vec<_> = jobs.into_iter().filter(|j| !is_unfinished(j)).collect();
@@ -123,6 +140,20 @@ mod tests {
         ];
         assert_eq!(ids(&queue(&jobs)), [6, 2, 1, 3]);
         assert_eq!(ids(&history(&jobs)), [5, 4]);
+    }
+
+    #[test]
+    fn counts_name_each_state() {
+        let jobs = [
+            job(1, 0, 10, JobState::Paused),
+            job(2, 0, 20, JobState::Queued),
+            job(3, 0, 30, JobState::Paused),
+            job(4, 0, 40, JobState::Failed),
+        ];
+        let q = queue(&jobs);
+        assert_eq!(counts(&q), "1 queued, 2 paused, 1 failed");
+        assert_eq!(counts(&q[..1]), "1 paused");
+        assert_eq!(counts(&[]), "");
     }
 
     #[test]

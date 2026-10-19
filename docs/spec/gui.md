@@ -275,7 +275,8 @@ login there logs the active account off first, ipc.md §5.2); Log out.
 
 The connection state, the active account and whether it is logged on,
 a summary of unfinished jobs (the running job's app and percentage, and
-how many more are queued), and the running games, each with Stop.
+how many more are queued; with none running, how many are queued, paused
+and failed), and the running games, each with Stop.
 
 ## 5. IPC additions
 

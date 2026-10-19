@@ -66,7 +66,7 @@ impl Root {
     }
 
     /// Puts stand-ins for the client libraries where the daemon looks
-    /// (`steamworks-abi.md` §1.3). They are never loaded.
+    /// (`steamworks-abi.md` §1.4). They are never loaded.
     // Used by the launch tests, which run on Linux only.
     #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
     pub fn install_client_libraries(&self) {

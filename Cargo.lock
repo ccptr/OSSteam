@@ -4242,6 +4242,7 @@ name = "ossteam-launch"
 version = "0.1.0"
 dependencies = [
  "libc",
+ "mach2",
  "ossteam-types",
  "ossteam-vdf",
  "rustix",

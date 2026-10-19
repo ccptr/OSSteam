@@ -40,7 +40,7 @@ date and the build.
 
 - Build the daemon, then the client libraries with `cargo xtask
   build-steamclient --release`, which puts the 64-bit library next to
-  the daemon and the 32-bit one in `lib32/` (`steamworks-abi.md` §1.3).
+  the daemon and the 32-bit one in `lib32/` (`steamworks-abi.md` §1.4).
   `OSSTEAM_STEAMCLIENT_DIR` can point elsewhere. Without the 64-bit
   library every launch fails with exit code 7; without `lib32/` a
   32-bit game finds no client.

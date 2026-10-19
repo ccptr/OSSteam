@@ -1,8 +1,10 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 //! `build-steamclient`: builds the Steamworks client library for a 64-bit
 //! target and its 32-bit counterpart, and lays them out the way the
-//! daemon looks for them (`steamworks-abi.md` §1.3): the 64-bit library
+//! daemon looks for them (`steamworks-abi.md` §1.4): the 64-bit library
 //! next to the daemon's executable, the 32-bit one in `lib32/` below it.
+//! On macOS there is no 32-bit library; the library holds both
+//! architectures instead, joined with `lipo`.
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -19,6 +21,9 @@ const PAIRS: &[(&str, &str)] = &[
     ("x86_64-pc-windows-msvc", "i686-pc-windows-msvc"),
     ("x86_64-pc-windows-gnu", "i686-pc-windows-gnu"),
 ];
+
+/// The macOS targets a universal library is made of.
+const UNIVERSAL: [&str; 2] = ["aarch64-apple-darwin", "x86_64-apple-darwin"];
 
 pub fn build(args: Vec<String>) -> anyhow::Result<()> {
     let mut release = false;
@@ -58,6 +63,28 @@ pub fn build(args: Vec<String>) -> anyhow::Result<()> {
         bail!("cargo built no {} in {}", file, out.display());
     }
     println!("64-bit: {}", out.join(&file).display());
+
+    if UNIVERSAL.contains(&triple.as_str()) {
+        let other = UNIVERSAL.iter().find(|t| **t != triple).expect("two targets");
+        cargo_build(&root, Some(other), release)?;
+        let thin = out.join(&file);
+        let fat = out.join(format!("{file}.universal"));
+        let status = Command::new("lipo")
+            .arg("-create")
+            .arg(&thin)
+            .arg(target_dir.join(other).join(profile).join(&file))
+            .arg("-output")
+            .arg(&fat)
+            .status()
+            .context("running lipo")?;
+        if !status.success() {
+            bail!("lipo could not join the {triple} and {other} libraries");
+        }
+        std::fs::rename(&fat, &thin)
+            .with_context(|| format!("renaming {} to {}", fat.display(), thin.display()))?;
+        println!("universal with {other}: {}", thin.display());
+        return Ok(());
+    }
 
     let Some(&(_, lib32)) = PAIRS.iter().find(|(t, _)| *t == triple) else {
         println!("{triple} has no 32-bit counterpart; no lib32/");

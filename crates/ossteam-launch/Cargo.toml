@@ -19,6 +19,10 @@ rustix = { workspace = true, features = ["fs", "process", "system", "thread"] }
 # The reaper resets a signal's disposition before raising it (`launch.md` §4).
 libc.workspace = true
 
+[target.'cfg(target_os = "macos")'.dependencies]
+# The discovery service is a Mach service (`steamworks-abi.md` §1.3).
+mach2.workspace = true
+
 [target.'cfg(windows)'.dependencies]
 windows-sys = { workspace = true, features = [
     "Win32_Foundation",

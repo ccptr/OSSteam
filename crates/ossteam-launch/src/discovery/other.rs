@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
-//! macOS and other systems: the entries are established in M1e, so every
-//! operation is honestly unsupported.
+//! Systems other than Linux, macOS and Windows: `steam_api` does not run
+//! there, so every operation is honestly unsupported.
 
 use std::path::Path;
 

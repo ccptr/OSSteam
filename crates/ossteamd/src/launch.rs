@@ -17,7 +17,7 @@ pub struct Settings {
     /// The user's home directory, which holds `~/.steam` on Linux
     /// (`steamworks-abi.md` §1.1).
     pub home: PathBuf,
-    /// Where the client libraries are (`steamworks-abi.md` §1.3); `None`
+    /// Where the client libraries are (`steamworks-abi.md` §1.4); `None`
     /// when it cannot be determined.
     pub library_dir: Option<PathBuf>,
     /// The program that runs `--reaper` on Linux: this executable.

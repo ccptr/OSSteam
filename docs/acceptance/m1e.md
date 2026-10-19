@@ -20,8 +20,8 @@ a personal one), the date and the build.
 | Capsules decoded at cell size, at most 256 kept (§4.2) | built 2026-10-18; unit tests; peak RSS over a 10,000-app scroll went from 11.7 GB to 196 MB |
 | The scroll bench: `gui_bench_library_of_10k_apps`, `OSSTEAM_GUI_BENCH=library-scroll` (§7) | built 2026-10-18 |
 | Integration test of the GUI's connection and store against a real daemon and the fake CM (§7) | ⏳ the fake CM is test code inside the daemon binary, and gpui's `test-support` pulls a git source `deny.toml` rejects |
-| macOS discovery (§24 Q1): what `steam_api` needs to find a client, in `steamworks-abi.md` | ⏳ |
-| macOS discovery entries | ⏳ |
+| macOS discovery (§24 Q1): what `steam_api` needs to find a client, in `steamworks-abi.md` §1.3 | written 2026-10-18 from the macOS `libsteam_api.dylib` of SDK 1.65a and one from 2017: the Mach service `com.valvesoftware.steam.ipctool` |
+| macOS discovery entries: the Mach service and `<data>/steam-sdk/osx/steamclient.dylib`; `build-steamclient` makes a universal library | built 2026-10-18; type-checked for aarch64-apple-darwin; the unit tests (a client that does what `steam_api` does) have not run on a Mac, and nothing has been loaded by a game |
 | `docs/acceptance/reference-hw.md` | ⏳ not written; the numbers below are from the development machine |
 
 ## Setup
@@ -63,6 +63,7 @@ a personal one), the date and the build.
 | M1a checklist on macOS (CLI) | n/a | n/a | ⏳ |
 | M1b checklist on macOS (CLI) | n/a | n/a | ⏳ |
 | M1c checklist on macOS (CLI), with the macOS discovery entries | n/a | n/a | ⏳ |
+| macOS discovery: an arm64 and an x86_64 (Rosetta) Steamworks game find the daemon; after `ossteam logout` the game's `steam_api` finds no client, and after a new login it finds the daemon again (the name goes and comes back, §1.3.3); with the official client installed, `launch` fails with `CONFLICT` naming the service | n/a | n/a | ⏳ |
 | §20: GUI cold start to first frame ≤ 500 ms (daemon running) | dev machine 2026-10-18: 152 to 154 ms over five runs, scale factor 1; reference ⏳ | ⏳ | ⏳ |
 | §20: Library with 10,000 apps scrolls at the display's refresh rate, no frame over 16 ms | dev machine 2026-10-18 at 165 Hz, scale factor 1: grid 1,996 frames, work p50 1.5 ms, max 4.4 ms, 0 to 2 missed; list 9,990 frames, max 1.1 to 2.9 ms, 0 to 1 missed; reference ⏳ | ⏳ | ⏳ |
 

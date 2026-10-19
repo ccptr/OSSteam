@@ -632,7 +632,8 @@ are reachable through their getters and fail truthfully under ABI-3.
     spec page establishes.
   - Windows: `HKCU\Software\Valve\Steam\ActiveProcess`, with the client DLL
     paths and the PID.
-  - macOS: the equivalent location, established in the ABI spec page.
+  - macOS: the Mach service `steam_api` looks up, serving the path of a copy
+    of our library and the PID (`steamworks-abi.md` §1.3).
 - **[DISC-2]** The daemon removes the entries when it exits and repairs them
   on its next start after a crash.
 - **[DISC-3]** If these locations already belong to an official Steam
@@ -1055,7 +1056,8 @@ Steamworks interfaces driven by ShimReport data.
 ## 24. Open questions
 
 1. **macOS discovery.** What exactly does macOS `steam_api` need to locate a
-   client? To be answered in `steamworks-abi.md` by M1e.
+   client? Answered in `steamworks-abi.md` §1.3: the Mach service
+   `com.valvesoftware.steam.ipctool`, not a file.
 2. **Application identifier.** The reverse-DNS id used for macOS paths and
    bundles, and for Windows AppUserModelID.
 3. **Project name.** Keep "ossteam" or rename before 1.0 (see §23).

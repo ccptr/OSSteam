@@ -36,7 +36,10 @@ cargo xtask build-steamclient --release --target x86_64-pc-windows-gnu
 ```
 
 The 32-bit build needs the target's standard library (`rustup target
-add i686-unknown-linux-gnu`) and, on Linux, 32-bit glibc and libgcc.
+add i686-unknown-linux-gnu`) and, on Linux, 32-bit glibc and libgcc. On
+macOS there is no 32-bit build; the library is universal instead, which
+needs both `aarch64-apple-darwin` and `x86_64-apple-darwin` and Xcode's
+`lipo`.
 
 On Linux, gpui needs development packages for Wayland, X11 (xcb and
 xkbcommon), fontconfig, ALSA and Vulkan. CI installs these on Ubuntu:

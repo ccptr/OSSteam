@@ -4,17 +4,23 @@
 
 use std::path::{Path, PathBuf};
 
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+mod files;
 #[cfg(target_os = "linux")]
 mod linux;
 #[cfg(target_os = "linux")]
 pub use linux::Entries;
+#[cfg(target_os = "macos")]
+mod macos;
+#[cfg(target_os = "macos")]
+pub use macos::Entries;
 #[cfg(windows)]
 mod windows;
 #[cfg(windows)]
 pub use windows::Entries;
-#[cfg(not(any(target_os = "linux", windows)))]
+#[cfg(not(any(target_os = "linux", target_os = "macos", windows)))]
 mod other;
-#[cfg(not(any(target_os = "linux", windows)))]
+#[cfg(not(any(target_os = "linux", target_os = "macos", windows)))]
 pub use other::Entries;
 
 #[derive(Debug, thiserror::Error)]
@@ -26,7 +32,7 @@ pub enum Error {
     Conflict(String),
     #[error("ossteam's client library is not installed: {} is missing", .0.display())]
     NoLibrary(PathBuf),
-    #[error("ossteam has no discovery entries for this OS yet (M1e)")]
+    #[error("ossteam has no discovery entries for this OS")]
     Unsupported,
     #[error("{what}: {source}")]
     Io {
@@ -37,7 +43,10 @@ pub enum Error {
 }
 
 impl Error {
-    #[cfg_attr(not(any(target_os = "linux", windows)), allow(dead_code))]
+    #[cfg_attr(
+        not(any(target_os = "linux", target_os = "macos", windows)),
+        allow(dead_code)
+    )]
     pub(crate) fn io(what: impl Into<String>, source: std::io::Error) -> Self {
         Self::Io {
             what: what.into(),
@@ -46,7 +55,7 @@ impl Error {
     }
 }
 
-/// ossteam's client libraries (`steamworks-abi.md` §1.3).
+/// ossteam's client libraries (`steamworks-abi.md` §1.4).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Libraries {
     pub lib64: PathBuf,
@@ -55,7 +64,9 @@ pub struct Libraries {
 
 #[cfg(windows)]
 pub(crate) const LIBRARY: &str = "ossteam_steamclient.dll";
-#[cfg(not(windows))]
+#[cfg(target_os = "macos")]
+pub(crate) const LIBRARY: &str = "libossteam_steamclient.dylib";
+#[cfg(not(any(windows, target_os = "macos")))]
 pub(crate) const LIBRARY: &str = "libossteam_steamclient.so";
 
 /// The directory the libraries are looked for in:

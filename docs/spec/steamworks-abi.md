@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| Status | M1c. §1 (discovery entries), §2 (the library), §3 (game IPC) and §4 (ShimReports) implemented; the interface pages in `steamworks/` grow with the shim |
+| Status | M1c; macOS discovery (§1.3) M1e. §1 (discovery entries), §2 (the library), §3 (game IPC) and §4 (ShimReports) implemented; the interface pages in `steamworks/` grow with the shim |
 | Requirements | SPEC §12 (ABI-1 to ABI-5, GIPC-1 to GIPC-3, DISC-1 to DISC-3), PLAY-1, LAUNCH-4 |
 | Code | discovery entries in `crates/ossteam-launch/src/discovery/`; the library in `crates/ossteam-steamclient`; the game IPC in `crates/ossteam-gameipc`; the daemon's side in `crates/ossteamd/src/launch.rs`, `crates/ossteamd/src/gameipc.rs` and `crates/ossteamd/src/core/{games,shim}.rs` |
 | Interfaces | one page each under `docs/spec/steamworks/`; the vtables in `docs/spec/steamworks/vtables.txt` (§2.4) |
@@ -44,7 +44,7 @@ ossteam creates only `sdk64`, `sdk32` and `steam.pid`:
 - `~/.steam/sdk64` and `~/.steam/sdk32` are symlinks to
   `<data>/steam-sdk/sdk64` and `<data>/steam-sdk/sdk32`. Those
   directories belong to ossteam, and each holds a `steamclient.so` that
-  is a copy of the matching library (§1.3), not a link: a game in a
+  is a copy of the matching library (§1.4), not a link: a game in a
   Steam Linux Runtime container sees the home directory but not
   ossteam's install directory (`compat-tools.md` §9). The daemon
   replaces a copy that differs from the library by writing a temporary
@@ -88,7 +88,93 @@ that names another file, the key belongs to an official client, and the
 daemon does not touch it (DISC-3). *Unverified:* which values `steam_api`
 reads, and whether the official client removes them when it exits.
 
-### 1.3 The client libraries
+### 1.3 macOS
+
+**Verification.** §1.3.1 and §1.3.2 come from the macOS
+`libsteam_api.dylib` of Steamworks SDK 1.65a (Steamworks.NET
+`ba71581f1e`, sha256 `a37faf19…ba759d2`), read with a disassembler,
+and agree with one from 2017 (Steamworks.NET `625e1cc67f`) whose symbol
+names (`CSimpleMachClient::Init`, `DoVersionCommand`,
+`CIPCToolMachClient::GetSteamPath`, `DoKillCommand`) name the parts.
+Neither has a path under `~/Library` or reads a registry file.
+*Unverified:* what the official client's server puts in the fields
+`steam_api` does not read, which file its path names, and whether its
+launchd job stays loaded after the client quits. *Unverified on a Mac:*
+the behaviour of launchd that §1.3.3 relies on.
+
+macOS has no entries in the file system. `steam_api` asks launchd for
+the Mach service `com.valvesoftware.steam.ipctool`, which the official
+client's `ipcserver` serves as a launchd job of that label, and asks it
+where the client is.
+
+#### 1.3.1 Messages
+
+Each message is a `mach_msg_header_t` (24 bytes) followed by 32-bit
+words in the machine's byte order. `msgh_id` is the protocol version,
+104, in requests and replies alike. A request carries the client's
+reply port as its local port with `MACH_MSG_TYPE_MAKE_SEND_ONCE`
+(`msgh_bits` 0x1413), and the reply goes to that port. The client
+receives until a message with `msgh_id` 104 arrives, into a buffer of
+40 or 552 bytes. The kernel appends an 8-byte trailer to a message it
+delivers and refuses one that does not fit with it
+(`MACH_RCV_TOO_LARGE`), so the replies are 32 and 544 bytes.
+
+| Request (32 bytes) | Word at 24 | Word at 28 | Reply | Client's timeout |
+|---|---|---|---|---|
+| Version | 100001 | the client's version, 104 | 32 bytes; the word at 28 is the server's version | 3 s |
+| Kill | 100000 | the client's pid | none | 2 s to send |
+| GetSteamPath | 14 | 0 | 544 bytes; the word at 28 is the client's pid, bytes 32 to 543 a NUL-terminated path | 5 s |
+
+#### 1.3.2 What `steam_api` does
+
+1. It looks the service up with `bootstrap_look_up`. If that fails, no
+   client is running (`ipcserver init failed`).
+2. It sends Version. A server version above 103 is accepted. Otherwise,
+   or when no reply comes, it sends Kill, and if that send fails, asks
+   launchd to `StopJob` the job `com.valvesoftware.steam.ipctool`. It
+   then waits 100 ms, looks the service up again and carries on
+   whatever the version, after printing `ipcserver restart: expected:
+   104, got: <version>`.
+3. It sends GetSteamPath. `SteamAPI_IsSteamRunning()` is true when the
+   reply comes, its pid is not 0, `kill(pid, 0)` succeeds, and the pid
+   is not one `steam_api` recorded before. A handler that `SteamAPI_Init`
+   registers asks GetSteamPath again and records the pid (when it runs
+   is *unverified*).
+4. `SteamAPI_Init` replaces the path's last component with
+   `steamclient.dylib` and loads that with `dlopen(RTLD_NOW)`. A path
+   without a `/` fails (`steam path (…) missing directory separator`).
+   Before asking, it may try a `steamclient.dylib` that the dynamic
+   loader finds by name alone, as on Linux.
+
+#### 1.3.3 ossteam's entries
+
+- `<data>/steam-sdk/osx/steamclient.dylib`, a copy of the library
+  (§1.4), replaced as the Linux copies are, so that a running game keeps
+  the file it has mapped.
+- The Mach service. The daemon takes its receive right with
+  `bootstrap_check_in` and serves it on a thread of its own. It answers
+  Version with version 104 and GetSteamPath with its pid and the path of
+  the copy; a copy whose path does not fit in 512 bytes with its NUL is
+  an error, and no service is made. Each reply has the request's
+  `msgh_id` and repeats the request's word at 24. Kill
+  is logged and ignored: there is no ipcserver to restart, and the
+  client carries on. Other requests are dropped without a reply.
+
+launchd lets a process check in a name that no job declares, as
+Chromium relies on (*unverified on a Mac*). The entries are ossteam's
+while the daemon holds that receive right. Removing them destroys it,
+which takes the name away (*unverified*), and a crash takes it away
+with the process, so DISC-2 has nothing to repair on macOS. The copy
+stays, as the Linux directories do.
+
+**Conflict (DISC-3).** If `bootstrap_look_up` finds the service while
+the daemon does not hold it, or `bootstrap_check_in` reports it in use,
+the service belongs to an official client and the daemon leaves it
+alone. A launch then fails with `CONFLICT`, naming the service. While
+the official client's job is loaded, launchd holds the name even when
+the client is not running, in order to start it on demand.
+
+### 1.4 The client libraries
 
 The daemon finds its client libraries in the directory given by
 `OSSTEAM_STEAMCLIENT_DIR`, or else in the directory of its own
@@ -98,15 +184,18 @@ executable:
 |---|---|---|
 | Linux | `libossteam_steamclient.so` | `lib32/libossteam_steamclient.so` |
 | Windows | `ossteam_steamclient.dll` | `lib32\ossteam_steamclient.dll` |
+| macOS | `libossteam_steamclient.dylib`, universal (x86_64 and arm64) | none |
 
 The 64-bit library is required. Without it, no entries are created, and
 a launch fails with `UNSUPPORTED`, with a message that the client
 library is not installed. The 32-bit library is optional. Without it,
 `sdk32` (Linux) and `SteamClientDll` (Windows) are not created, and a
 32-bit game's `steam_api` finds no client, as under an official client
-that lacks one.
+that lacks one. On macOS the library holds both architectures, so that
+an arm64 game and an x86_64 game under Rosetta both load it; macOS runs
+no 32-bit code.
 
-### 1.4 Lifetime
+### 1.5 Lifetime
 
 The daemon creates the entries once the session has an active account,
 and removes them when it has none any more (a logout) and when the
@@ -116,9 +205,6 @@ down and the daemon reconnects, so the entries stay too: the game's
 not a missing one. On start, before anything else, the daemon removes
 entries that are ossteam's but hold a pid that is not its own, which a
 crash leaves behind (DISC-2).
-
-macOS entries are established in M1e. Until then a launch on macOS fails
-with `UNSUPPORTED`.
 
 ## 2. The client library (ABI-1 to ABI-4)
 

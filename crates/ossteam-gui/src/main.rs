@@ -4,6 +4,7 @@
 //! the view (GUI-2).
 
 mod args;
+mod bench;
 mod daemon;
 mod format;
 mod model;
@@ -13,6 +14,7 @@ mod rate;
 mod root;
 mod store;
 mod theme;
+mod thumbnails;
 mod widgets;
 
 use std::time::Instant;

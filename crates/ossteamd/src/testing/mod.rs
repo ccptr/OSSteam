@@ -9,6 +9,8 @@
 //! clients do. All of this is compiled for tests only (FAITH-4).
 
 mod fake_cm;
+#[cfg(unix)]
+mod gui_bench;
 mod loopback;
 mod m1a;
 mod m1b;
@@ -44,7 +46,7 @@ impl Root {
         // Short: Unix socket paths are limited to about 100 bytes.
         let root = std::env::temp_dir().join(format!("ossd-{}-{n}", std::process::id()));
         let _ = std::fs::remove_dir_all(&root);
-        std::fs::create_dir_all(&root).expect("create the test directory");
+        std::fs::create_dir_all(root.join("rt")).expect("create the test directory");
         Self(root)
     }
 
@@ -96,10 +98,23 @@ impl Root {
         path
     }
 
+    /// What `$XDG_RUNTIME_DIR` (`$TMPDIR` on macOS) is for this daemon: a
+    /// leaf client run with it set to this reaches the test daemon.
+    #[cfg(unix)]
+    pub fn runtime_dir(&self) -> PathBuf {
+        self.0.join("rt")
+    }
+
+    /// The directory of the daemon's sockets, as `$XDG_RUNTIME_DIR/ossteam`.
+    #[cfg(unix)]
+    pub fn socket_dir(&self) -> PathBuf {
+        self.runtime_dir().join("ossteam")
+    }
+
     fn endpoint(&self) -> Endpoint {
         #[cfg(unix)]
         {
-            let dir = self.0.join("run");
+            let dir = self.socket_dir();
             Endpoint {
                 address: dir.join("daemon.sock").to_string_lossy().into_owned(),
                 lock_file: dir.join("daemon.lock"),
@@ -123,7 +138,7 @@ impl Root {
         #[cfg(unix)]
         {
             #[allow(unused_mut)]
-            let mut a = ossteam_gameipc::endpoint::Address::in_dir(self.0.join("run"));
+            let mut a = ossteam_gameipc::endpoint::Address::in_dir(self.socket_dir());
             // A name of this test's own, not the user's daemon's.
             #[cfg(target_os = "linux")]
             {
@@ -257,6 +272,14 @@ impl TestDaemon {
         let c = self.client();
         c.subscribe(topics).expect("subscribe");
         c
+    }
+
+    /// Waits until a client stops the daemon.
+    #[cfg(unix)]
+    pub fn wait(mut self) {
+        if let Some(thread) = self.thread.take() {
+            let _ = thread.join();
+        }
     }
 
     /// Stops the daemon as `ossteam daemon stop` does, and waits for it.

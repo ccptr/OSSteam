@@ -4,6 +4,7 @@
 //! returns the reads it calls for; the model makes them.
 
 use std::collections::{BTreeMap, HashMap};
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use ossteam_ipc::v1::{self, NoticeLevel, event};
@@ -74,8 +75,9 @@ pub struct Store {
     pub status: v1::GetStatusResponse,
     pub version: v1::GetVersionResponse,
     pub accounts: v1::ListAccountsResponse,
-    /// `None` without an active account.
-    pub library: Option<v1::ListAppsResponse>,
+    /// `None` without an active account. Shared: views draw from it every
+    /// frame without copying it.
+    pub library: Option<Arc<v1::ListAppsResponse>>,
     pub library_query: LibraryQuery,
     pub apps: HashMap<u32, AppDetails>,
     pub jobs: BTreeMap<u64, v1::Job>,
@@ -96,7 +98,7 @@ impl Store {
             status: i.status,
             version: i.version,
             accounts: i.accounts,
-            library: i.library,
+            library: i.library.map(Arc::new),
             library_query: LibraryQuery::default(),
             apps: HashMap::new(),
             jobs: i
@@ -267,7 +269,7 @@ impl Store {
     /// A `ListApps` reply for `query`; dropped when the query changed since.
     pub fn set_library(&mut self, query: &LibraryQuery, r: Option<v1::ListAppsResponse>) {
         if *query == self.library_query {
-            self.library = r;
+            self.library = r.map(Arc::new);
         }
     }
 

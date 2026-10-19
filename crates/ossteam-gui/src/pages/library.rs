@@ -2,19 +2,22 @@
 //! The Library page (`gui.md` §4.2).
 
 use std::rc::Rc;
-use std::time::Duration;
+use std::sync::Arc;
+use std::time::{Duration, Instant};
 
 use gpui::{
     AnyElement, App, Context, Entity, EventEmitter, FocusHandle, Focusable, KeyBinding, ObjectFit,
     ScrollStrategy, SharedString, Subscription, Task, UniformListScrollHandle, WeakEntity, Window,
-    actions, div, img, prelude::*, px, uniform_list,
+    actions, canvas, div, img, point, prelude::*, px, uniform_list,
 };
 use ossteam_ipc::v1::{self, AssetKind};
 
+use crate::bench::{self, Frames};
 use crate::model::{Asset, Model};
 use crate::pages::muted;
 use crate::store::LibraryQuery;
 use crate::theme::palette;
+use crate::thumbnails::{Thumbnail, Thumbnails};
 use crate::widgets::{TextInput, TextInputEvent, button, switch};
 
 actions!(
@@ -39,6 +42,8 @@ const SEARCH_DELAY: Duration = Duration::from_millis(150);
 const CELL_WIDTH: f32 = 150.;
 const CELL_HEIGHT: f32 = 225.;
 const GAP: f32 = 16.;
+/// The selection's border around a capsule.
+const BORDER: f32 = 2.;
 const LIST_ROW: f32 = 36.;
 /// The rows Page Up and Page Down move by.
 const PAGE_ROWS: usize = 4;
@@ -80,8 +85,21 @@ pub struct LibraryPage {
     /// Columns of the grid as last drawn.
     columns: usize,
     scroll: UniformListScrollHandle,
+    thumbnails: Entity<Thumbnails>,
     search_task: Option<Task<()>>,
+    /// The library scroll of `OSSTEAM_GUI_BENCH` (`gui.md` §7).
+    bench: Option<Bench>,
     _subscriptions: Vec<Subscription>,
+}
+
+/// The scroll runs through the grid, then the list.
+struct Bench {
+    running: bool,
+    frames: Frames,
+    /// Frames drawn while the window was not active: gpui draws at most
+    /// 30 a second then.
+    inactive: usize,
+    results: Vec<(&'static str, bench::Summary)>,
 }
 
 impl EventEmitter<LibraryEvent> for LibraryPage {}
@@ -89,8 +107,10 @@ impl EventEmitter<LibraryEvent> for LibraryPage {}
 impl LibraryPage {
     pub fn new(model: Entity<Model>, window: &mut Window, cx: &mut Context<Self>) -> Self {
         let search = TextInput::build("Search the library", window, cx);
+        let thumbnails = cx.new(|_| Thumbnails::default());
         let subscriptions = vec![
             cx.observe(&model, |_, _, cx| cx.notify()),
+            cx.observe(&thumbnails, |_, _, cx| cx.notify()),
             cx.subscribe_in(&search, window, |page, _, e, window, cx| match e {
                 TextInputEvent::Changed => page.search_later(cx),
                 TextInputEvent::Submitted => {
@@ -110,9 +130,97 @@ impl LibraryPage {
             selected: None,
             columns: 1,
             scroll: UniformListScrollHandle::new(),
+            thumbnails,
             search_task: None,
+            bench: bench::library_scroll().then(|| Bench {
+                running: false,
+                frames: Frames::default(),
+                inactive: 0,
+                results: Vec::new(),
+            }),
             _subscriptions: subscriptions,
         }
+    }
+
+    /// Starts the bench once the whole library is shown.
+    fn start_bench(&mut self, apps: usize, window: &mut Window, cx: &mut Context<Self>) {
+        let complete = self
+            .model
+            .read(cx)
+            .store
+            .library
+            .as_ref()
+            .is_some_and(|l| l.complete);
+        let Some(b) = &mut self.bench else {
+            return;
+        };
+        if b.running || !complete || apps == 0 {
+            return;
+        }
+        b.running = true;
+        println!("library scroll: {apps} apps");
+        self.layout = Layout::Grid;
+        self.scroll_base().set_offset(point(px(0.), px(0.)));
+        self.bench_next_frame(window, cx);
+    }
+
+    fn scroll_base(&self) -> gpui::ScrollHandle {
+        self.scroll.0.borrow().base_handle.clone()
+    }
+
+    fn bench_next_frame(&self, window: &mut Window, cx: &mut Context<Self>) {
+        let page = cx.entity().downgrade();
+        window.on_next_frame(move |window, cx| {
+            let _ = page.update(cx, |page, cx| page.bench_frame(window, cx));
+        });
+    }
+
+    /// One row further each frame, until the bottom.
+    fn bench_frame(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let base = self.scroll_base();
+        let Some(b) = &mut self.bench else {
+            return;
+        };
+        let now = Instant::now();
+        let (max, y) = (base.max_offset().y, -base.offset().y);
+        if max > px(0.) && y < max {
+            b.frames.begin(now);
+            b.inactive += usize::from(!window.is_window_active());
+            let row = match self.layout {
+                Layout::Grid => CELL_HEIGHT + GAP,
+                Layout::List => LIST_ROW,
+            };
+            base.set_offset(point(px(0.), -(y + px(row)).min(max)));
+        } else {
+            // This frame changes the layout, or quits: it is not counted.
+            let name = match self.layout {
+                Layout::Grid => "grid",
+                Layout::List => "list",
+            };
+            let summary = std::mem::take(&mut b.frames).summary(window.refresh_interval(cx));
+            println!("library scroll, {name}: {summary}");
+            if b.inactive > 0 {
+                println!(
+                    "  {} frames with the window inactive",
+                    std::mem::take(&mut b.inactive)
+                );
+            }
+            b.results.push((name, summary));
+            if self.layout == Layout::Grid {
+                self.layout = Layout::List;
+                base.set_offset(point(px(0.), px(0.)));
+            } else {
+                let met = b.results.iter().all(|(_, s)| s.met());
+                println!(
+                    "library scroll: budget {}",
+                    if met { "met" } else { "missed" }
+                );
+                cx.quit();
+                return;
+            }
+        }
+        cx.notify();
+        self.bench_next_frame(window, cx);
     }
 
     pub fn search_focus(&self, cx: &App) -> FocusHandle {
@@ -146,15 +254,17 @@ impl LibraryPage {
 
     /// The apps shown: top-level apps of `ListApps`, less those the
     /// Updates filter drops.
-    fn apps(&self, cx: &App) -> Vec<v1::AppSummary> {
-        let Some(lib) = &self.model.read(cx).store.library else {
-            return Vec::new();
-        };
-        lib.apps
-            .iter()
-            .filter(|a| !self.updates_only || a.update_available)
-            .cloned()
-            .collect()
+    fn apps(&self, cx: &App) -> Shown {
+        let lib = self.model.read(cx).store.library.clone();
+        let only = lib.as_ref().filter(|_| self.updates_only).map(|l| {
+            let i = l.apps.iter().enumerate();
+            Rc::new(
+                i.filter(|(_, a)| a.update_available)
+                    .map(|(i, _)| i)
+                    .collect(),
+            )
+        });
+        Shown { lib, only }
     }
 
     fn open(&mut self, app_id: u32, cx: &mut Context<Self>) {
@@ -173,12 +283,12 @@ impl LibraryPage {
         };
         let current = self
             .selected
-            .and_then(|id| apps.iter().position(|a| a.app_id == id));
+            .and_then(|id| (0..apps.len()).position(|i| apps.get(i).app_id == id));
         let next = match current {
             Some(i) => f(i, cols, apps.len()).min(apps.len() - 1),
             None => 0,
         };
-        self.selected = Some(apps[next].app_id);
+        self.selected = Some(apps.get(next).app_id);
         self.scroll
             .scroll_to_item(next / cols, ScrollStrategy::Nearest);
         cx.notify();
@@ -298,26 +408,27 @@ impl LibraryPage {
         any.then(|| parts.into_any_element())
     }
 
-    fn grid(
-        &mut self,
-        apps: Rc<Vec<v1::AppSummary>>,
-        window: &Window,
-        cx: &mut Context<Self>,
-    ) -> AnyElement {
+    fn grid(&mut self, apps: Shown, window: &Window, cx: &mut Context<Self>) -> AnyElement {
         let width = f32::from(window.viewport_size().width) - 48.;
         let cols = ((width + GAP) / (CELL_WIDTH + GAP)).floor().max(1.) as usize;
         self.columns = cols;
         let rows = apps.len().div_ceil(cols);
         let model = self.model.clone();
         let page = cx.entity().downgrade();
+        let thumbnails = self.thumbnails.clone();
         let selected = self.selected;
-        let high_dpi = window.scale_factor() > 1.;
-        uniform_list("library-grid", rows, move |range, _, cx| {
+        uniform_list("library-grid", rows, move |range, window, cx| {
+            let c = Cells {
+                model: &model,
+                thumbnails: &thumbnails,
+                page: &page,
+                selected,
+            };
             range
                 .map(|row| {
                     let mut r = div().flex().gap(px(GAP)).pb(px(GAP));
-                    for app in apps.iter().skip(row * cols).take(cols) {
-                        r = r.child(capsule(app, selected, high_dpi, &model, &page, cx));
+                    for i in row * cols..((row + 1) * cols).min(apps.len()) {
+                        r = r.child(c.capsule(apps.get(i), window, cx));
                     }
                     r
                 })
@@ -328,14 +439,14 @@ impl LibraryPage {
         .into_any_element()
     }
 
-    fn list(&mut self, apps: Rc<Vec<v1::AppSummary>>, cx: &mut Context<Self>) -> AnyElement {
+    fn list(&mut self, apps: Shown, cx: &mut Context<Self>) -> AnyElement {
         let page = cx.entity().downgrade();
         let selected = self.selected;
         uniform_list("library-list", apps.len(), move |range, _, cx| {
             let p = palette(cx);
             range
                 .map(|i| {
-                    let a = &apps[i];
+                    let a = apps.get(i);
                     let id = a.app_id;
                     let page = page.clone();
                     let state = if a.update_available {
@@ -370,6 +481,35 @@ impl LibraryPage {
     }
 }
 
+/// The apps shown, shared with the lists' closures without copying them.
+#[derive(Clone)]
+struct Shown {
+    lib: Option<Arc<v1::ListAppsResponse>>,
+    /// With the Updates filter, the indexes of the apps it keeps.
+    only: Option<Rc<Vec<usize>>>,
+}
+
+impl Shown {
+    fn len(&self) -> usize {
+        match (&self.only, &self.lib) {
+            (Some(only), _) => only.len(),
+            (None, Some(lib)) => lib.apps.len(),
+            (None, None) => 0,
+        }
+    }
+
+    fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+
+    /// The `i`th app shown; `i` must be below [`Self::len`].
+    fn get(&self, i: usize) -> &v1::AppSummary {
+        let lib = self.lib.as_ref().expect("an app is shown");
+        let i = self.only.as_ref().map_or(i, |only| only[i]);
+        &lib.apps[i]
+    }
+}
+
 /// An app's name, or its id while its info is not available.
 fn name(a: &v1::AppSummary) -> SharedString {
     if a.name.is_empty() {
@@ -379,81 +519,88 @@ fn name(a: &v1::AppSummary) -> SharedString {
     }
 }
 
-fn capsule(
-    app: &v1::AppSummary,
+/// What every capsule of the grid shares.
+struct Cells<'a> {
+    model: &'a Entity<Model>,
+    thumbnails: &'a Entity<Thumbnails>,
+    page: &'a WeakEntity<LibraryPage>,
     selected: Option<u32>,
-    high_dpi: bool,
-    model: &Entity<Model>,
-    page: &WeakEntity<LibraryPage>,
-    cx: &mut App,
-) -> AnyElement {
-    let p = palette(cx);
-    let id = app.app_id;
-    let asset = if app.has_info {
-        model.update(cx, |m, cx| {
-            m.want_asset(id, AssetKind::Capsule, high_dpi, cx);
-            m.asset(id, AssetKind::Capsule).cloned()
-        })
-    } else {
-        Some(Asset::Missing)
-    };
-    let label = name(app);
-    let fallback = {
-        let label = label.clone();
-        move || {
-            div()
-                .size_full()
-                .p_2()
-                .flex()
-                .items_end()
-                .text_sm()
-                .child(label.clone())
-                .into_any_element()
-        }
-    };
-    let page = page.clone();
-    div()
-        .id(("capsule", id as usize))
-        .relative()
-        .w(px(CELL_WIDTH))
-        .h(px(CELL_HEIGHT))
-        .flex_none()
-        .rounded_md()
-        .overflow_hidden()
-        .bg(p.surface_raised)
-        .border_2()
-        .border_color(if selected == Some(id) {
-            p.focus_ring
+}
+
+impl Cells<'_> {
+    fn capsule(&self, app: &v1::AppSummary, window: &mut Window, cx: &mut App) -> AnyElement {
+        let p = palette(cx);
+        let id = app.app_id;
+        let scale = window.scale_factor();
+        let asset = if app.has_info {
+            self.model.update(cx, |m, cx| {
+                m.want_asset(id, AssetKind::Capsule, scale > 1., cx);
+                m.asset(id, AssetKind::Capsule).cloned()
+            })
         } else {
-            gpui::transparent_black()
-        })
-        .cursor_pointer()
-        .on_click(move |_, _, cx| {
-            let _ = page.update(cx, |page, cx| page.open(id, cx));
-        })
-        .child(match asset {
-            Some(Asset::Ready(path)) => img(path)
-                .size_full()
-                .object_fit(ObjectFit::Cover)
-                .with_fallback(fallback)
-                .into_any_element(),
-            _ => fallback(),
-        })
-        .when(app.update_available, |d| {
-            d.child(
-                div()
-                    .absolute()
-                    .top_1()
-                    .right_1()
-                    .px_1()
-                    .rounded_sm()
-                    .bg(p.accent)
-                    .text_color(p.on_accent)
-                    .text_xs()
-                    .child("Update"),
-            )
-        })
-        .into_any_element()
+            Some(Asset::Missing)
+        };
+        let image = match asset {
+            Some(Asset::Ready(path)) => {
+                // The image fills the cell inside its border.
+                let w = ((CELL_WIDTH - 2. * BORDER) * scale).round() as u32;
+                let h = ((CELL_HEIGHT - 2. * BORDER) * scale).round() as u32;
+                self.thumbnails
+                    .update(cx, |t, cx| t.get(&path, w, h, window, cx))
+            }
+            Some(Asset::Waiting) | None => Thumbnail::Loading,
+            Some(Asset::Missing) => Thumbnail::Failed,
+        };
+        let page = self.page.clone();
+        div()
+            .id(("capsule", id as usize))
+            .relative()
+            .w(px(CELL_WIDTH))
+            .h(px(CELL_HEIGHT))
+            .flex_none()
+            .rounded_md()
+            .overflow_hidden()
+            .bg(p.surface_raised)
+            .border(px(BORDER))
+            .border_color(if self.selected == Some(id) {
+                p.focus_ring
+            } else {
+                gpui::transparent_black()
+            })
+            .cursor_pointer()
+            .on_click(move |_, _, cx| {
+                let _ = page.update(cx, |page, cx| page.open(id, cx));
+            })
+            .child(match image {
+                Thumbnail::Ready(image) => img(image)
+                    .size_full()
+                    .object_fit(ObjectFit::Cover)
+                    .into_any_element(),
+                Thumbnail::Loading | Thumbnail::Failed => div()
+                    .size_full()
+                    .p_2()
+                    .flex()
+                    .items_end()
+                    .text_sm()
+                    .child(name(app))
+                    .into_any_element(),
+            })
+            .when(app.update_available, |d| {
+                d.child(
+                    div()
+                        .absolute()
+                        .top_1()
+                        .right_1()
+                        .px_1()
+                        .rounded_sm()
+                        .bg(p.accent)
+                        .text_color(p.on_accent)
+                        .text_xs()
+                        .child("Update"),
+                )
+            })
+            .into_any_element()
+    }
 }
 
 pub struct Tooltip(pub SharedString);
@@ -484,11 +631,13 @@ impl Focusable for LibraryPage {
 impl Render for LibraryPage {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let p = palette(cx);
-        let apps = Rc::new(self.apps(cx));
+        let apps = self.apps(cx);
         let has_library = self.model.read(cx).store.library.is_some();
         let empty = apps.is_empty();
         let ring = p.focus_ring;
         let status = self.status_line(cx);
+        self.start_bench(apps.len(), window, cx);
+        let painted = self.bench.as_ref().map(|b| b.frames.painted());
         let body = if !has_library {
             muted("Reading the library…", cx).into_any_element()
         } else if empty {
@@ -529,5 +678,15 @@ impl Render for LibraryPage {
                     .focus_visible(move |s| s.border_color(ring))
                     .child(body),
             )
+            .when_some(painted, |d, painted| {
+                d.child(
+                    canvas(
+                        |_, _, _| {},
+                        move |_, _, _, _| painted.set(Some(Instant::now())),
+                    )
+                    .absolute()
+                    .size_0(),
+                )
+            })
     }
 }

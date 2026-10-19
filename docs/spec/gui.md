@@ -163,9 +163,16 @@ page.
   App page shows it.)
 - **Artwork.** A grid cell asks for `GetAsset{CAPSULE}`, with `high_dpi`
   when the window's scale factor is above 1, only while the row is
-  visible, at most eight requests at once, and once per app and kind for
-  the window's lifetime. Until the image arrives, and when `GetAsset`
-  fails, the cell shows the app's name on a plain background.
+  visible, at most eight requests at once, the most recently asked for
+  first, and once per app and kind for the window's lifetime. Until the
+  image arrives, and when `GetAsset` fails or the file does not decode,
+  the cell shows the app's name on a plain background.
+- **Capsule images** are decoded on a background thread and scaled to
+  fill the cell in device pixels, cropping what overflows. The 256 most
+  recently drawn are kept and the others are dropped from memory and
+  from the GPU's atlas. gpui's own image loading keeps every image at
+  full size until the app exits: scrolling 10,000 capsules with it held
+  11.7 GB.
 - While `ListApps.complete` is false the page says that the library is
   still loading. `packages_without_info` is shown as a count, with the
   ids in its tooltip.
@@ -311,5 +318,13 @@ size when the scale factor is above 1.
   a window.
 - The §20 budgets are measured with `OSSTEAM_GUI_STARTUP_TIMING` (first
   frame) and with a library of 10,000 apps from the fake CM (scrolling),
-  on the reference hardware.
+  on the reference hardware. The library is served by the ignored daemon
+  test `gui_bench_library_of_10k_apps`, which puts a capsule for every app
+  in the daemon's image cache and prints how to point the GUI at it. With
+  `OSSTEAM_GUI_BENCH=library-scroll` the Library page scrolls the grid,
+  then the list, from top to bottom by one row per frame, prints each
+  run's frame work (from the start of the frame to the end of the page's
+  paint) and frame intervals, and quits. A frame interval over one and a
+  half display refresh intervals counts as a missed frame. The budget is
+  met when no frame's work is over 16 ms and no frame is missed.
 - The M1a to M1d checklists are run through the GUI (`docs/acceptance/m1e.md`).

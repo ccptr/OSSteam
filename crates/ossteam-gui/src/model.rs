@@ -227,7 +227,8 @@ impl Model {
 
     fn pump_assets(&mut self, cx: &mut Context<Self>) {
         while self.assets.calls < ASSET_CALLS
-            && let Some((app_id, kind, high_dpi)) = self.assets.queue.pop_front()
+            // Newest first: what was asked for last is what is on screen.
+            && let Some((app_id, kind, high_dpi)) = self.assets.queue.pop_back()
         {
             self.assets.calls += 1;
             let call = self

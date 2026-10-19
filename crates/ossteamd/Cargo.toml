@@ -72,6 +72,7 @@ workspace = true
 [dev-dependencies]
 ossteam-content = { workspace = true, features = ["testing"] }
 base64.workspace = true
+png = "0.18.1"
 prost.workspace = true
 rand_core.workspace = true
 rsa.workspace = true

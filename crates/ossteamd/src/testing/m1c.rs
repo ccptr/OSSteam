@@ -645,7 +645,7 @@ fn launch_reports_what_the_game_used() {
     let dir = install(&c);
     std::fs::write(
         dir.join("shim-address.txt"),
-        root.path().join("run").to_str().unwrap(),
+        root.socket_dir().to_str().unwrap(),
     )
     .unwrap();
     let exe = std::env::current_exe().unwrap();

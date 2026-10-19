@@ -3,7 +3,7 @@
 //! keyboard-only check of `docs/acceptance/m1e.md`: an installed game with
 //! two launch options that runs until stopped, a Windows game run through
 //! Proton, one with an update, a download slow enough to watch with
-//! another queued behind it, and accounts that sign in with each kind of
+//! another queued behind it, a game with a DLC, and accounts that sign in with each kind of
 //! Steam Guard. Not a test: it serves a daemon until a client stops it,
 //! so it is ignored unless asked for:
 //!
@@ -34,8 +34,10 @@ const UPDATER: u32 = 30;
 const BIG: u32 = 40;
 /// Queued behind [`BIG`].
 const QUEUED: u32 = 50;
-/// Not installed.
+/// Not installed, with a DLC the account owns.
 const FRESH: u32 = 60;
+const FRESH_DLC: u32 = 61;
+const FRESH_DLC_DEPOT: u32 = 612;
 const GAMES: [u32; 6] = [NATIVE, WINDOWS, UPDATER, BIG, QUEUED, FRESH];
 /// Each chunk of [`BIG`]'s 40 MiB takes this long: about two minutes
 /// with the daemon's eight download threads.
@@ -76,7 +78,10 @@ fn depots(app: u32, os: &str, manifest: u64) -> ossteam_vdf::Object {
 fn steam(cdn: &Arc<FakeCdn>, big: &[u8]) -> FakeCm {
     let cm = FakeCm::new()
         .package(0, &[MANIFESTS, SNIPER, PROTON])
-        .package(200, &GAMES)
+        .package(
+            200,
+            &[NATIVE, WINDOWS, UPDATER, BIG, QUEUED, FRESH, FRESH_DLC],
+        )
         .package(300, &[UPDATER, FRESH])
         .app(MANIFESTS, "SteamPlay 2.0 Manifests", "Config", None)
         .app(SNIPER, "Steam Linux Runtime 3.0 (sniper)", "Tool", None)
@@ -87,6 +92,7 @@ fn steam(cdn: &Arc<FakeCdn>, big: &[u8]) -> FakeCm {
         .app(BIG, "Big Download", "Game", None)
         .app(QUEUED, "Queued", "Game", None)
         .app(FRESH, "Fresh", "Game", None)
+        .app(FRESH_DLC, "Fresh Extra", "DLC", Some(FRESH))
         .cdn(cdn.clone())
         .qr_rotations(1)
         .account(Account::new("alice", 1001).license(0, 0).license(200, 0))
@@ -169,6 +175,26 @@ fn steam(cdn: &Arc<FakeCdn>, big: &[u8]) -> FakeCm {
             )),
         );
     }
+    let extra = Depot::build(
+        DepotId(FRESH_DLC_DEPOT),
+        ManifestId(1),
+        key(FRESH_DLC_DEPOT),
+        &[Entry::File {
+            name: "dlc/extra.pak",
+            data: b"extra",
+            flags: 0,
+        }],
+    );
+    cm.publish(&extra, 1);
+    let fresh = section(&format!(
+        r#""{d}" {{ "config" {{ "oslist" "linux" }}
+                   "manifests" {{ "public" {{ "gid" "1" "size" "1" }} }} }}
+           "{FRESH_DLC_DEPOT}" {{ "dlcappid" "{FRESH_DLC}"
+                                 "manifests" {{ "public" {{ "gid" "1" "size" "1" }} }} }}
+           "branches" {{ "public" {{ "buildid" "1" }} }}"#,
+        d = FRESH * 10 + 1
+    ));
+    cm.app_section(FRESH, "depots", fresh);
     cm
 }
 

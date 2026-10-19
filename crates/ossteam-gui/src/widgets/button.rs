@@ -113,7 +113,7 @@ impl RenderOnce for Button {
         let clickable = !self.disabled && self.on_click.is_some();
         let d = div().id(self.id.clone());
         match self.focus {
-            Some(focus) => reveal::tab_stop_with(d, focus, !self.disabled),
+            Some(focus) => reveal::tab_stop_with(d, focus, !self.disabled, window),
             None => reveal::tab_stop(d, self.id, !self.disabled, window, cx),
         }
         .flex()

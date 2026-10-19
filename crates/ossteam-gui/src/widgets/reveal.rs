@@ -53,13 +53,21 @@ pub fn tab_stop(
         })
         .read(cx)
         .clone();
-    tab_stop_with(d, focus, enabled)
+    tab_stop_with(d, focus, enabled, window)
 }
 
 /// [`tab_stop`] with a focus handle its owner keeps, to focus it from
 /// outside.
-pub fn tab_stop_with(d: Stateful<Div>, focus: FocusHandle, enabled: bool) -> Stateful<Div> {
-    if enabled {
+pub fn tab_stop_with(
+    d: Stateful<Div>,
+    focus: FocusHandle,
+    enabled: bool,
+    window: &Window,
+) -> Stateful<Div> {
+    // A control disabled while it has focus, as a button is while its
+    // own call runs, stays in the tree: focus that left the tree would
+    // be moved to the page.
+    if enabled || focus.is_focused(window) {
         d.track_focus(&focus).relative().child(marker(focus))
     } else {
         d

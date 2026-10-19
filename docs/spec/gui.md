@@ -303,7 +303,9 @@ a text field shows it whenever it has focus. A page that scrolls scrolls
 by the least that shows the control Tab or Shift-Tab focused, and an
 error when it appears, while focus is on that page: the control whose
 action failed keeps focus, and its error can be below the window's edge.
-Tab out of the account menu closes it.
+Tab out of the account menu closes it, and so does Escape; either way
+focus goes to the account button. A chooser that closes gives focus back
+to the control that opened it.
 
 | Keys (Linux, Windows) | macOS | Action |
 |---|---|---|

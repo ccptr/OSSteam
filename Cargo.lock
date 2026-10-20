@@ -4262,7 +4262,9 @@ dependencies = [
 name = "ossteam-gui"
 version = "0.1.0"
 dependencies = [
+ "ashpd",
  "async-channel",
+ "async-io",
  "crossbeam-channel",
  "gpui",
  "gpui_platform",

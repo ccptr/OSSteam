@@ -7,7 +7,7 @@ use std::time::Instant;
 
 use gpui::{
     AnyElement, App, Context, Entity, FocusHandle, Focusable, KeyBinding, SharedString,
-    Subscription, Task, Window, actions, anchored, deferred, div, prelude::*, px,
+    Subscription, Task, Window, WindowAppearance, actions, anchored, deferred, div, prelude::*, px,
 };
 use ossteam_ipc::v1::{self, ConnectionState, NoticeLevel};
 
@@ -84,6 +84,11 @@ pub struct Root {
     started: Instant,
     first_frame_reported: bool,
     autostart: bool,
+    /// The system appearance as the desktop portal gave it at startup
+    /// ([`crate::theme::StartupAppearance`]), until gpui's own replaces it.
+    startup_appearance: Option<WindowAppearance>,
+    /// What gpui reported when the window opened.
+    opened_appearance: WindowAppearance,
     focus: FocusHandle,
     /// The account button, where Tab out of its menu goes on from.
     account_focus: FocusHandle,
@@ -102,17 +107,27 @@ impl Root {
     pub fn new(
         started: Instant,
         autostart: bool,
+        startup_appearance: Option<WindowAppearance>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
         let focus = cx.focus_handle();
         window.focus(&focus, cx);
-        cx.observe_window_appearance(window, |_, window, cx| {
-            cx.set_global(Palette::for_appearance(window.appearance()));
+        // The portal's answer stands until gpui reports an appearance other
+        // than the one it opened the window with, which on Linux is a
+        // placeholder until gpui's own portal query answers.
+        let opened_appearance = window.appearance();
+        cx.observe_window_appearance(window, |root: &mut Self, window, cx| {
+            if window.appearance() != root.opened_appearance {
+                root.startup_appearance = None;
+            }
+            cx.set_global(Palette::for_appearance(root.appearance(window)));
             cx.notify();
         })
         .detach();
-        cx.set_global(Palette::for_appearance(window.appearance()));
+        cx.set_global(Palette::for_appearance(
+            startup_appearance.unwrap_or(opened_appearance),
+        ));
         let menu_focus = cx.focus_handle();
         // Tab out of the open account menu closes it, as Escape does.
         cx.on_focus_out(&menu_focus, window, |root, _, _, cx| {
@@ -134,6 +149,8 @@ impl Root {
             started,
             first_frame_reported: false,
             autostart,
+            startup_appearance,
+            opened_appearance,
             focus,
             account_focus: cx.focus_handle().tab_index(0).tab_stop(true),
             menu_focus,
@@ -420,6 +437,11 @@ impl Root {
             window.focus(&self.menu_focus, cx);
         }
         cx.notify();
+    }
+
+    /// The system appearance the window is drawn for.
+    fn appearance(&self, window: &Window) -> WindowAppearance {
+        self.startup_appearance.unwrap_or_else(|| window.appearance())
     }
 
     /// With `OSSTEAM_GUI_STARTUP_TIMING` set, prints the time from process

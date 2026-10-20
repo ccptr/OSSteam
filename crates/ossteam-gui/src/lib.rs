@@ -28,6 +28,7 @@ use gpui::{App, Bounds, TitlebarOptions, WindowBounds, WindowOptions, prelude::*
 /// Opens the window and runs until it closes.
 pub fn run() {
     let started = Instant::now();
+    let appearance = theme::StartupAppearance::query();
     let autostart = !std::env::args().skip(1).any(|a| a == "--no-autostart");
     gpui_platform::application().run(move |cx: &mut App| {
         root::bind_keys(cx);
@@ -53,7 +54,10 @@ pub fn run() {
                 app_id: Some("ossteam".into()),
                 ..Default::default()
             },
-            |window, cx| cx.new(|cx| root::Root::new(started, autostart, window, cx)),
+            |window, cx| {
+                let appearance = appearance.wait();
+                cx.new(|cx| root::Root::new(started, autostart, appearance, window, cx))
+            },
         );
         if let Err(e) = opened {
             eprintln!("ossteam-gui: cannot open a window: {e:#}");

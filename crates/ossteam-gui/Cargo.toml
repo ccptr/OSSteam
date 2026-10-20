@@ -19,5 +19,11 @@ qrcode.workspace = true
 unicode-segmentation.workspace = true
 zeroize.workspace = true
 
+# The desktop portal's colour scheme before the first frame (theme.rs).
+# gpui builds both with these features already.
+[target.'cfg(any(target_os = "linux", target_os = "freebsd"))'.dependencies]
+ashpd = { version = "0.13.13", default-features = false, features = ["async-io", "settings"] }
+async-io = "2.6.0"
+
 [lints]
 workspace = true

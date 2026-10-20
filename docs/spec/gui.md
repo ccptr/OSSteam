@@ -326,8 +326,11 @@ to `compat.default_tool`.
 | Ctrl-Enter | Cmd-Return | Play or install the selected or open app |
 | Ctrl-Q | Cmd-Q | Quit (the daemon keeps running) |
 
-Colours follow the system's light or dark appearance and change when it
-does. Sizes are in logical pixels, and images are requested at double
+Colours follow the system's light or dark appearance from the first
+frame and change when it does. On Linux, where gpui learns the
+appearance from the desktop portal only after the window's first frame,
+the GUI asks the portal itself as it starts and uses that answer until
+gpui reports one. Sizes are in logical pixels, and images are requested at double
 size when the scale factor is above 1.
 
 ## 7. Testing

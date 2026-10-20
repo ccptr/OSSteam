@@ -28,6 +28,11 @@ const MTIME: u64 = 1;
 const CAPSULE: &str = "library_600x900.png";
 const HERO: &str = "library_hero.png";
 const LOGO: &str = "logo.png";
+/// The same at double size, which the GUI asks for when its scale factor
+/// is above 1.
+const CAPSULE_2X: &str = "library_600x900_2x.png";
+const HERO_2X: &str = "library_hero_2x.png";
+const LOGO_2X: &str = "logo_2x.png";
 /// Different images, so that the GUI does not draw one texture throughout.
 const VARIANTS: u32 = 16;
 
@@ -61,9 +66,18 @@ pub(super) fn assets() -> String {
         r#""store_asset_mtime" "{MTIME}"
            "library_assets_full"
            {{
-               "library_capsule" {{ "image" {{ "english" "{CAPSULE}" }} }}
-               "library_hero" {{ "image" {{ "english" "{HERO}" }} }}
-               "library_logo" {{ "image" {{ "english" "{LOGO}" }} }}
+               "library_capsule" {{
+                   "image" {{ "english" "{CAPSULE}" }}
+                   "image2x" {{ "english" "{CAPSULE_2X}" }}
+               }}
+               "library_hero" {{
+                   "image" {{ "english" "{HERO}" }}
+                   "image2x" {{ "english" "{HERO_2X}" }}
+               }}
+               "library_logo" {{
+                   "image" {{ "english" "{LOGO}" }}
+                   "image2x" {{ "english" "{LOGO_2X}" }}
+               }}
            }}"#
     )
 }
@@ -97,7 +111,14 @@ fn picture(variant: u32, w: u32, h: u32) -> Vec<u8> {
 pub(super) fn seed_images(root: &Root, apps: impl IntoIterator<Item = u32>) {
     let images = root.path().join("images");
     std::fs::create_dir_all(&images).expect("create the image directory");
-    let kinds = [(CAPSULE, 600, 900), (HERO, 1920, 620), (LOGO, 640, 360)];
+    let kinds = [
+        (CAPSULE, 600, 900),
+        (HERO, 1920, 620),
+        (LOGO, 640, 360),
+        (CAPSULE_2X, 1200, 1800),
+        (HERO_2X, 3840, 1240),
+        (LOGO_2X, 1280, 720),
+    ];
     let variants: Vec<Vec<_>> = (0..VARIANTS)
         .map(|v| {
             kinds

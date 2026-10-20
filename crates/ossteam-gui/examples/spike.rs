@@ -57,20 +57,27 @@ impl Spike {
 impl Render for Spike {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let ms = self.ms();
-        self.frames.push((ms, format!("{:?}@{}", window.appearance(), window.scale_factor())));
+        self.frames.push((
+            ms,
+            format!("{:?}@{}", window.appearance(), window.scale_factor()),
+        ));
         div()
             .track_focus(&self.focus)
             .on_key_down(cx.listener(|spike, _, _, cx| {
                 if std::mem::replace(&mut spike.key_pressed, true) {
                     return;
                 }
-                spike.external_clipboard = std::env::var("OSSTEAM_SPIKE_CLIPBOARD").ok().map(|text| {
-                    cx.read_from_clipboard().and_then(|c| c.text()).as_deref() == Some(text.as_str())
-                });
+                spike.external_clipboard =
+                    std::env::var("OSSTEAM_SPIKE_CLIPBOARD").ok().map(|text| {
+                        cx.read_from_clipboard().and_then(|c| c.text()).as_deref()
+                            == Some(text.as_str())
+                    });
                 let probe = format!("ossteam-spike-key-{}", std::process::id());
                 cx.write_to_clipboard(ClipboardItem::new_string(probe.clone()));
                 cx.spawn(async move |spike, cx| {
-                    cx.background_executor().timer(Duration::from_millis(100)).await;
+                    cx.background_executor()
+                        .timer(Duration::from_millis(100))
+                        .await;
                     let _ = spike.update(cx, |spike, cx| {
                         let ok = cx.read_from_clipboard().and_then(|c| c.text()).as_deref()
                             == Some(probe.as_str());

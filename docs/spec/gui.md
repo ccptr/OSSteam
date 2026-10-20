@@ -165,7 +165,11 @@ page.
 - **Artwork.** A grid cell asks for `GetAsset{CAPSULE}`, with `high_dpi`
   when the window's scale factor is above 1, only while the row is
   visible, at most eight requests at once, the most recently asked for
-  first, and once per app and kind for the window's lifetime. Until the
+  first, and once per app and kind for the window's lifetime, except
+  that an image asked for without `high_dpi` is asked for once more
+  with it when the scale factor rises above 1 (the window moved to a
+  denser display); the smaller image shows until the larger one
+  arrives, and stays if that request fails. Until the
   image arrives, and when `GetAsset` fails or the file does not decode,
   the cell shows the app's name on a plain background.
 - **Capsule images** are decoded on a background thread and scaled to
@@ -186,8 +190,8 @@ From `GetApp` and `GetLaunchOptions`, plus the app's jobs and running
 game from the store:
 
 - **Header:** `GetAsset{HERO}` with `LOGO` over it; `HEADER` when the app
-  has no hero; the name alone when neither exists. These are decoded as
-  capsules are (§4.2), at the size they are drawn in device pixels: the
+  has no hero; the name alone when neither exists. These are asked for
+  and decoded as capsules are (§4.2), at the size they are drawn in device pixels: the
   hero to fill the window's width, rounded up to 64 pixels, and 240
   points high; the logo to fit in 320 × 140 points without being
   enlarged; the header to fill 460 × 215 points. The eight most

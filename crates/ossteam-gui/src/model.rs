@@ -21,8 +21,9 @@ const LIBRARY_INTERVAL: Duration = Duration::from_millis(250);
 /// `GetAsset` calls at once (§4.2).
 const ASSET_CALLS: usize = 8;
 
-/// An app image, asked for once per app and kind (§4.2).
-#[derive(Debug, Clone)]
+/// An app image, asked for once per app and kind, and once more at
+/// double size if the scale factor rises above 1 (§4.2).
+#[derive(Debug, Clone, PartialEq)]
 pub enum Asset {
     Waiting,
     Ready(Arc<std::path::Path>),
@@ -30,11 +31,64 @@ pub enum Asset {
     Missing,
 }
 
+/// Which images were asked for, and the `GetAsset` calls waiting.
 #[derive(Default)]
 struct Assets {
-    known: HashMap<(u32, AssetKind), Asset>,
+    /// Each image and whether it was last asked for at double size.
+    known: HashMap<(u32, AssetKind), (Asset, bool)>,
     queue: VecDeque<(u32, AssetKind, bool)>,
     calls: usize,
+}
+
+impl Assets {
+    fn get(&self, app_id: u32, kind: AssetKind) -> Option<&Asset> {
+        self.known.get(&(app_id, kind)).map(|(asset, _)| asset)
+    }
+
+    /// Queues a call unless the image was asked for at this size or
+    /// larger. An image asked for again at double size, after the window
+    /// moved to a denser display or opened before the compositor told it
+    /// its scale, keeps showing until the larger one arrives.
+    fn want(&mut self, app_id: u32, kind: AssetKind, high_dpi: bool) {
+        match self.known.get_mut(&(app_id, kind)) {
+            Some((_, asked_high)) if *asked_high || !high_dpi => return,
+            Some((_, asked_high)) => *asked_high = true,
+            None => {
+                self.known
+                    .insert((app_id, kind), (Asset::Waiting, high_dpi));
+            }
+        }
+        self.queue.push_back((app_id, kind, high_dpi));
+    }
+
+    /// The next call to make, newest first: what was asked for last is
+    /// what is on screen.
+    fn next(&mut self) -> Option<(u32, AssetKind, bool)> {
+        if self.calls >= ASSET_CALLS {
+            return None;
+        }
+        let call = self.queue.pop_back()?;
+        self.calls += 1;
+        Some(call)
+    }
+
+    /// Records a call's answer. A failed call at double size keeps the
+    /// image already shown; an answer at single size that came after the
+    /// call at double size was made is shown only until that one answers.
+    fn answered(&mut self, app_id: u32, kind: AssetKind, high_dpi: bool, path: Option<PathBuf>) {
+        self.calls -= 1;
+        let Some((asset, asked_high)) = self.known.get_mut(&(app_id, kind)) else {
+            return;
+        };
+        let latest = high_dpi == *asked_high;
+        match path {
+            Some(path) if latest || *asset == Asset::Waiting => {
+                *asset = Asset::Ready(Arc::from(path));
+            }
+            None if latest && !matches!(asset, Asset::Ready(_)) => *asset = Asset::Missing,
+            _ => {}
+        }
+    }
 }
 
 pub struct Model {
@@ -204,12 +258,12 @@ impl Model {
     }
 
     pub fn asset(&self, app_id: u32, kind: AssetKind) -> Option<&Asset> {
-        self.assets.known.get(&(app_id, kind))
+        self.assets.get(app_id, kind)
     }
 
-    /// Asks for an image unless it was asked for before. Views call this
-    /// while drawing what is visible; it does not notify until the image
-    /// arrives.
+    /// Asks for an image unless it was asked for before at this size or
+    /// larger. Views call this while drawing what is visible; it does not
+    /// notify until the image arrives.
     pub fn want_asset(
         &mut self,
         app_id: u32,
@@ -217,32 +271,20 @@ impl Model {
         high_dpi: bool,
         cx: &mut Context<Self>,
     ) {
-        if self.assets.known.contains_key(&(app_id, kind)) {
-            return;
-        }
-        self.assets.known.insert((app_id, kind), Asset::Waiting);
-        self.assets.queue.push_back((app_id, kind, high_dpi));
+        self.assets.want(app_id, kind, high_dpi);
         self.pump_assets(cx);
     }
 
     fn pump_assets(&mut self, cx: &mut Context<Self>) {
-        while self.assets.calls < ASSET_CALLS
-            // Newest first: what was asked for last is what is on screen.
-            && let Some((app_id, kind, high_dpi)) = self.assets.queue.pop_back()
-        {
-            self.assets.calls += 1;
+        while let Some((app_id, kind, high_dpi)) = self.assets.next() {
             let call = self
                 .daemon
                 .call(move |c| c.get_asset(app_id, kind, high_dpi));
             cx.spawn(async move |this, cx| {
                 let r = call.await;
                 let _ = this.update(cx, |m, cx| {
-                    m.assets.calls -= 1;
-                    let asset = match r {
-                        Ok(path) => Asset::Ready(Arc::from(PathBuf::from(path))),
-                        Err(_) => Asset::Missing,
-                    };
-                    m.assets.known.insert((app_id, kind), asset);
+                    let path = r.ok().map(PathBuf::from);
+                    m.assets.answered(app_id, kind, high_dpi, path);
                     m.pump_assets(cx);
                     cx.notify();
                 });
@@ -311,5 +353,109 @@ impl Model {
             });
         })
         .detach();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const APP: u32 = 10;
+
+    fn ready(path: &str) -> Asset {
+        Asset::Ready(Arc::from(PathBuf::from(path)))
+    }
+
+    fn calls(assets: &mut Assets) -> Vec<(u32, AssetKind, bool)> {
+        std::iter::from_fn(|| assets.next()).collect()
+    }
+
+    #[test]
+    fn an_image_is_asked_for_once_per_size() {
+        let mut a = Assets::default();
+        a.want(APP, AssetKind::Capsule, false);
+        a.want(APP, AssetKind::Capsule, false);
+        assert_eq!(calls(&mut a), [(APP, AssetKind::Capsule, false)]);
+        assert_eq!(a.get(APP, AssetKind::Capsule), Some(&Asset::Waiting));
+        a.answered(APP, AssetKind::Capsule, false, Some("1x".into()));
+        assert_eq!(a.get(APP, AssetKind::Capsule), Some(&ready("1x")));
+
+        // The scale factor rose above 1: once more, at double size, and
+        // the image at single size shows until that one arrives.
+        a.want(APP, AssetKind::Capsule, true);
+        a.want(APP, AssetKind::Capsule, true);
+        assert_eq!(calls(&mut a), [(APP, AssetKind::Capsule, true)]);
+        assert_eq!(a.get(APP, AssetKind::Capsule), Some(&ready("1x")));
+        a.answered(APP, AssetKind::Capsule, true, Some("2x".into()));
+        assert_eq!(a.get(APP, AssetKind::Capsule), Some(&ready("2x")));
+
+        // Back at scale 1, the larger image does.
+        a.want(APP, AssetKind::Capsule, false);
+        assert_eq!(calls(&mut a), []);
+        assert_eq!(a.calls, 0);
+    }
+
+    #[test]
+    fn a_failed_call_at_double_size_keeps_the_image_shown() {
+        let mut a = Assets::default();
+        a.want(APP, AssetKind::Hero, false);
+        calls(&mut a);
+        a.answered(APP, AssetKind::Hero, false, Some("1x".into()));
+        a.want(APP, AssetKind::Hero, true);
+        calls(&mut a);
+        a.answered(APP, AssetKind::Hero, true, None);
+        assert_eq!(a.get(APP, AssetKind::Hero), Some(&ready("1x")));
+
+        a.want(APP, AssetKind::Logo, true);
+        calls(&mut a);
+        a.answered(APP, AssetKind::Logo, true, None);
+        assert_eq!(a.get(APP, AssetKind::Logo), Some(&Asset::Missing));
+    }
+
+    #[test]
+    fn an_answer_at_single_size_never_replaces_one_at_double_size() {
+        // Both calls in flight; the one at double size answers first.
+        let mut a = Assets::default();
+        a.want(APP, AssetKind::Capsule, false);
+        a.want(APP, AssetKind::Capsule, true);
+        assert_eq!(calls(&mut a).len(), 2);
+        a.answered(APP, AssetKind::Capsule, true, Some("2x".into()));
+        a.answered(APP, AssetKind::Capsule, false, Some("1x".into()));
+        assert_eq!(a.get(APP, AssetKind::Capsule), Some(&ready("2x")));
+
+        // The one at single size answers first: shown until the other
+        // does.
+        let mut a = Assets::default();
+        a.want(APP, AssetKind::Hero, false);
+        a.want(APP, AssetKind::Hero, true);
+        calls(&mut a);
+        a.answered(APP, AssetKind::Hero, false, Some("1x".into()));
+        assert_eq!(a.get(APP, AssetKind::Hero), Some(&ready("1x")));
+        a.answered(APP, AssetKind::Hero, true, Some("2x".into()));
+        assert_eq!(a.get(APP, AssetKind::Hero), Some(&ready("2x")));
+
+        // Its failure leaves the image to the call at double size.
+        let mut a = Assets::default();
+        a.want(APP, AssetKind::Logo, false);
+        a.want(APP, AssetKind::Logo, true);
+        calls(&mut a);
+        a.answered(APP, AssetKind::Logo, false, None);
+        assert_eq!(a.get(APP, AssetKind::Logo), Some(&Asset::Waiting));
+        a.answered(APP, AssetKind::Logo, true, Some("2x".into()));
+        assert_eq!(a.get(APP, AssetKind::Logo), Some(&ready("2x")));
+    }
+
+    #[test]
+    fn at_most_eight_calls_at_once() {
+        let mut a = Assets::default();
+        for app in 0..10 {
+            a.want(app, AssetKind::Capsule, true);
+        }
+        let first = calls(&mut a);
+        assert_eq!(first.len(), ASSET_CALLS);
+        // Newest first.
+        assert_eq!(first[0], (9, AssetKind::Capsule, true));
+        a.answered(9, AssetKind::Capsule, true, None);
+        assert_eq!(calls(&mut a), [(1, AssetKind::Capsule, true)]);
     }
 }

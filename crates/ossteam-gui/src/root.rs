@@ -441,7 +441,8 @@ impl Root {
 
     /// The system appearance the window is drawn for.
     fn appearance(&self, window: &Window) -> WindowAppearance {
-        self.startup_appearance.unwrap_or_else(|| window.appearance())
+        self.startup_appearance
+            .unwrap_or_else(|| window.appearance())
     }
 
     /// With `OSSTEAM_GUI_STARTUP_TIMING` set, prints the time from process

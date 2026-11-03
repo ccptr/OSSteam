@@ -120,6 +120,12 @@ pub fn run<A: App>(
     }
 }
 
+/// The refresh interval of the display `os` is on, if winit knows it.
+fn refresh_interval(os: &winit::window::Window) -> Option<Duration> {
+    let mhz = os.current_monitor()?.refresh_rate_millihertz()?;
+    (mhz > 0).then(|| Duration::from_secs_f64(1000.0 / f64::from(mhz)))
+}
+
 struct Live<A: App> {
     os: Arc<winit::window::Window>,
     renderer: Renderer,
@@ -201,6 +207,7 @@ impl<A: App> Runner<A> {
             os.scale_factor() as f32,
         );
         ui.set_appearance(look);
+        ui.set_refresh_interval(refresh_interval(&os));
         ui.bind_keys(self.bindings.take().unwrap_or_default());
         os.request_redraw();
         self.window = Some(Live {
@@ -315,13 +322,18 @@ impl<A: App> ApplicationHandler<Event<A::Message>> for Runner<A> {
                 }
                 None
             }
+            // On Wayland the window enters a display only after it first
+            // draws, so the display is asked again here.
             WindowEvent::Resized(size) => {
                 w.ui.resize(size.width, size.height, scale);
+                w.ui.set_refresh_interval(refresh_interval(&w.os));
                 None
             }
+            // A new scale factor most often means another display.
             WindowEvent::ScaleFactorChanged { scale_factor, .. } => {
                 let size = w.os.inner_size();
                 w.ui.resize(size.width, size.height, scale_factor as f32);
+                w.ui.set_refresh_interval(refresh_interval(&w.os));
                 None
             }
             WindowEvent::ThemeChanged(theme) if !portal => {

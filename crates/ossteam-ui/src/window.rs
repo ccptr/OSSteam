@@ -171,6 +171,7 @@ pub(crate) struct Shared<S> {
     width: u32,
     height: u32,
     appearance: Option<Appearance>,
+    refresh: Option<Duration>,
     now: Instant,
 }
 
@@ -193,6 +194,11 @@ impl<S: 'static> Cx<'_, S> {
         self.shared.focus = Some(h);
         self.shared.focus_visible = true;
         self.shared.reveal = true;
+    }
+
+    /// Whether focus came from the keyboard, so a focus ring shows.
+    pub fn focus_visible(&self) -> bool {
+        self.shared.focus_visible
     }
 
     pub fn blur(&mut self) {
@@ -281,6 +287,11 @@ impl<S: 'static> Cx<'_, S> {
 
     pub fn now(&self) -> Instant {
         self.shared.now
+    }
+
+    /// The display's refresh interval, if the platform tells it.
+    pub fn refresh_interval(&self) -> Option<Duration> {
+        self.shared.refresh
     }
 }
 
@@ -382,24 +393,43 @@ impl<S> Tree<S> {
         out
     }
 
+    /// The tab stop after or before `focus`. From an element that is not
+    /// a stop itself, such as a page that took focus when its control
+    /// went, that is the first stop after it in the order elements are
+    /// placed (its own controls first), or the last one before it.
     fn tab_neighbour(&self, focus: Option<FocusHandle>, forward: bool) -> Option<FocusHandle> {
-        let stops: Vec<FocusHandle> = self
+        let stops: Vec<(usize, FocusHandle)> = self
             .tab_order
             .iter()
-            .filter_map(|&i| self.nodes[i].el.focus)
+            .filter_map(|&i| self.nodes[i].el.focus.map(|h| (i, h)))
             .collect();
         if stops.is_empty() {
             return None;
         }
-        let at = focus.and_then(|h| stops.iter().position(|&s| s == h));
         let n = stops.len();
-        let next = match (at, forward) {
+        if let Some(at) = focus.and_then(|h| stops.iter().position(|&(_, s)| s == h)) {
+            let next = if forward {
+                (at + 1) % n
+            } else {
+                (at + n - 1) % n
+            };
+            return Some(stops[next].1);
+        }
+        let placed = |i: usize| self.order.iter().position(|&o| o == i);
+        let from = focus.and_then(|h| self.node_with_focus(h)).and_then(placed);
+        let next = match (from, forward) {
             (None, true) => 0,
             (None, false) => n - 1,
-            (Some(i), true) => (i + 1) % n,
-            (Some(i), false) => (i + n - 1) % n,
+            (Some(p), true) => stops
+                .iter()
+                .position(|&(i, _)| placed(i) > Some(p))
+                .unwrap_or(0),
+            (Some(p), false) => stops
+                .iter()
+                .rposition(|&(i, _)| placed(i) < Some(p))
+                .unwrap_or(n - 1),
         };
-        Some(stops[next])
+        Some(stops[next].1)
     }
 
     /// The nodes under a point, deepest first.
@@ -533,6 +563,7 @@ impl<A: App> Window<A> {
                 width,
                 height,
                 appearance: None,
+                refresh: None,
                 now: Instant::now(),
             },
             cache: TextCache::default(),
@@ -564,6 +595,11 @@ impl<A: App> Window<A> {
 
     pub fn appearance(&self) -> Option<Appearance> {
         self.shared.appearance
+    }
+
+    /// The refresh interval of the display the window is on.
+    pub fn set_refresh_interval(&mut self, refresh: Option<Duration>) {
+        self.shared.refresh = refresh;
     }
 
     /// The window's new size in device pixels, and scale.

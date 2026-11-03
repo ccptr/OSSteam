@@ -7,7 +7,8 @@
 //! unless told otherwise. Text properties (colour, size, weight, line
 //! height, wrapping) are inherited by the text inside an element.
 
-use winit::window::CursorIcon;
+/// The pointer shapes [`Styled::cursor`] takes.
+pub use winit::window::CursorIcon;
 
 use crate::scene::Color;
 

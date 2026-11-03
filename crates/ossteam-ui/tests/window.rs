@@ -748,3 +748,52 @@ fn scrolling_to_the_focused_element_draws_what_a_full_redraw_draws() {
         );
     }
 }
+
+/// A page that takes focus without being a tab stop, between two stops.
+struct FocusedPage {
+    focus_page: bool,
+}
+
+impl App for FocusedPage {
+    type Message = ();
+
+    fn before_view(&mut self, cx: &mut Cx<Self>) {
+        if std::mem::take(&mut self.focus_page) {
+            cx.focus(FocusHandle::named("page"));
+        }
+    }
+
+    fn view(&self, _: &ViewCx) -> Element<Self> {
+        let stop = |id: &'static str| {
+            panel()
+                .id(id)
+                .focus(FocusHandle::named(id))
+                .tab_stop(true)
+                .size(20.0, 20.0)
+        };
+        panel()
+            .fill()
+            .child(stop("before"))
+            .child(
+                panel()
+                    .id("page")
+                    .focus(FocusHandle::named("page"))
+                    .child(stop("inner-1"))
+                    .child(stop("inner-2")),
+            )
+            .child(stop("after"))
+    }
+}
+
+#[test]
+fn tab_from_a_focused_page_goes_on_from_the_page() {
+    let mut w = window(FocusedPage { focus_page: true }, 400, 300, 1.0);
+    assert_eq!(w.focused(), Some(FocusHandle::named("page")));
+    w.input(named(NamedKey::Tab));
+    assert_eq!(w.focused(), Some(FocusHandle::named("inner-1")));
+
+    let mut w = window(FocusedPage { focus_page: true }, 400, 300, 1.0);
+    w.input(Input::Modifiers(ModifiersState::SHIFT));
+    w.input(named(NamedKey::Tab));
+    assert_eq!(w.focused(), Some(FocusHandle::named("before")));
+}

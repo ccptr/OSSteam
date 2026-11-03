@@ -153,6 +153,8 @@ pub struct TextField {
     scroll_x: f32,
     /// Counts changes to what the field shows.
     revision: u64,
+    /// Counts changes to the text alone.
+    edits: u64,
     /// Shows a bullet for each character, and keeps the text off the
     /// clipboard: a password.
     secret: bool,
@@ -174,6 +176,7 @@ impl TextField {
             placeholder_shaped: None,
             scroll_x: 0.0,
             revision: 0,
+            edits: 0,
             secret: false,
         }
     }
@@ -256,6 +259,7 @@ impl TextField {
         let text = single_line(text);
         self.text = Zeroizing::new(String::with_capacity(text.len()));
         edit(&mut self.text, 0..0, &text);
+        self.edits += 1;
         self.cursor = self.text.len();
         self.anchor = self.cursor;
         self.preedit = None;
@@ -274,6 +278,12 @@ impl TextField {
         self.revision
     }
 
+    /// Changes whenever the text does: to tell whether an edit changed it
+    /// without copying it, which a password must not be (IPC-10).
+    pub fn edits(&self) -> u64 {
+        self.edits
+    }
+
     fn changed(&mut self) {
         self.shaped = None;
         self.revision += 1;
@@ -284,6 +294,7 @@ impl TextField {
         let text = single_line(text);
         let sel = self.selection();
         edit(&mut self.text, sel.clone(), &text);
+        self.edits += 1;
         self.cursor = sel.start + text.len();
         self.anchor = self.cursor;
         self.changed();
@@ -295,6 +306,7 @@ impl TextField {
             return false;
         }
         edit(&mut self.text, sel.clone(), "");
+        self.edits += 1;
         self.cursor = sel.start;
         self.anchor = sel.start;
         self.changed();

@@ -254,9 +254,11 @@ fn bindings_follow_context_and_actions_bubble() {
         KeyBinding::new("primary+enter", Activate, None),
         KeyBinding::new("escape", Escape, Some("Page")),
     ]);
-    // Nothing focused: only the root's context applies, and escape needs "Page".
+    // Nothing focused: the app's root element takes actions, with its
+    // context.
     w.input(named(NamedKey::Escape));
-    assert!(w.state.actions.is_empty());
+    assert_eq!(w.state.actions, ["page-escape"]);
+    w.state.actions.clear();
     w.click("b");
     w.input(named(NamedKey::Escape));
     // The inner handler passes it on to the page's.

@@ -951,6 +951,12 @@ impl<A: App> Window<A> {
         moved
     }
 
+    /// The element the app's view returned, under the toolkit's root.
+    fn app_root(&self) -> Option<usize> {
+        let root = self.tree.root?;
+        self.tree.nodes[root].children.first().copied()
+    }
+
     fn update_hover(&mut self) {
         let hovered = match self.mouse {
             Some((x, y)) => self.tree.hit(x, y),
@@ -1232,9 +1238,11 @@ impl<A: App> Window<A> {
                 (field.clone(), on_change.clone(), on_submit.clone());
             if let Some(cmd) = command_for(key, typed, self.modifiers) {
                 let tf = field(&mut self.state);
-                let before = tf.text().to_owned();
+                // The revision, not a copy of the text: a secret field's
+                // text is not copied (IPC-10).
+                let before = tf.edits();
                 tf.apply(cmd, &mut *self.shared.clipboard);
-                let changed = tf.text() != before;
+                let changed = tf.edits() != before;
                 self.shared.dirty = true;
                 if changed && let Some(h) = on_change {
                     self.run(|s, cx| h(s, cx));
@@ -1252,9 +1260,10 @@ impl<A: App> Window<A> {
         let Some(stroke) = Keystroke::from_key(key, self.modifiers) else {
             return;
         };
-        let path: Vec<usize> = match focused {
+        // With nothing focused, actions go to the app's own root element.
+        let path: Vec<usize> = match focused.or_else(|| self.app_root()) {
             Some(f) => self.tree.path(f),
-            None => self.tree.root.into_iter().collect(),
+            None => Vec::new(),
         };
         let contexts: Vec<Vec<&'static str>> = path
             .iter()
@@ -1345,11 +1354,11 @@ impl<A: App> Window<A> {
         };
         let (field, on_change) = (field.clone(), on_change.clone());
         let tf = field(&mut self.state);
-        let before = tf.text().to_owned();
+        let before = tf.edits();
         if tf.ime(ime) {
             self.shared.dirty = true;
         }
-        if tf.text() != before
+        if tf.edits() != before
             && let Some(h) = on_change
         {
             self.run(|s, cx| h(s, cx));

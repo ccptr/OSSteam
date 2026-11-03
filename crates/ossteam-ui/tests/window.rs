@@ -542,6 +542,94 @@ fn tab_scrolls_the_focused_element_into_view() {
     assert_eq!(w.state.scroll.offset(), 240.0 + 16.0 - 200.0);
 }
 
+/// A page with blocks above a control, and an error below it.
+struct Growing {
+    scroll: ScrollHandle,
+    control: FocusHandle,
+    above: usize,
+    error: bool,
+}
+
+impl App for Growing {
+    type Message = &'static str;
+
+    fn view(&self, _: &ViewCx) -> Element<Self> {
+        let mut page = panel().fill().scroll_y(&self.scroll);
+        for i in 0..self.above {
+            page = page.child(panel().id(("block", i as u64)).height(100.0));
+        }
+        page = page.child(
+            panel()
+                .id("control")
+                .focus(self.control)
+                .tab_stop(true)
+                .height(40.0),
+        );
+        if self.error {
+            page = page
+                .child(panel().height(150.0))
+                .child(panel().id("error").height(30.0).reveal_when_shown());
+        }
+        page.child(panel().height(1000.0))
+    }
+
+    fn message(&mut self, m: &'static str, _: &mut Cx<Self>) {
+        match m {
+            "grow" => self.above += 1,
+            "fail" => self.error = true,
+            _ => {}
+        }
+    }
+}
+
+#[test]
+fn the_keyboard_focused_control_stays_in_view_until_the_page_scrolls_otherwise() {
+    let mut w = window(
+        Growing {
+            scroll: ScrollHandle::new(),
+            control: FocusHandle::new(),
+            above: 3,
+            error: false,
+        },
+        300,
+        200,
+        1.0,
+    );
+    w.input(named(NamedKey::Tab));
+    w.frame();
+    let shown = |w: &Window<Growing>| {
+        let b = w.bounds_of("control").unwrap();
+        b.y >= 0.0 && b.bottom() <= 200.0
+    };
+    assert!(shown(&w));
+    // Content added above pushes the control down: the page follows it.
+    w.message("grow");
+    w.message("grow");
+    w.frame();
+    assert!(shown(&w), "{:?}", w.bounds_of("control"));
+    assert_eq!(w.bounds_of("control").unwrap().bottom(), 200.0 - 16.0);
+
+    // An error that the control's action brings up, below the edge: it
+    // is shown, and kept in view from then on.
+    w.message("fail");
+    w.frame();
+    let e = w.bounds_of("error").unwrap();
+    assert_eq!(e.bottom(), 200.0 - 16.0, "the error is shown");
+    w.message("grow");
+    w.frame();
+    let e = w.bounds_of("error").unwrap();
+    assert_eq!(e.bottom(), 200.0 - 16.0, "and kept in view");
+
+    // Scrolled by the wheel: the page lets the control go.
+    w.input(Input::PointerMoved { x: 50.0, y: 50.0 });
+    w.input(Input::Wheel { dy: -3.0 });
+    w.frame();
+    let offset = w.state.scroll.offset();
+    w.message("grow");
+    w.frame();
+    assert_eq!(w.state.scroll.offset(), offset, "not scrolled back");
+}
+
 #[test]
 fn an_overlay_stays_inside_the_window_and_closes_on_a_press_outside() {
     let mut w = window(page(), 300, 220, 1.0);

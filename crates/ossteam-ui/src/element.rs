@@ -237,6 +237,7 @@ pub struct Element<S> {
     pub(crate) focus_style: Option<Box<Style>>,
     pub(crate) scroll: Option<ScrollHandle>,
     pub(crate) tooltip: Option<String>,
+    pub(crate) reveal_when_shown: bool,
     pub(crate) handlers: Option<Box<Handlers<S>>>,
 }
 
@@ -258,6 +259,7 @@ fn element<S>(kind: Kind<S>) -> Element<S> {
         focus_style: None,
         scroll: None,
         tooltip: None,
+        reveal_when_shown: false,
         handlers: None,
     }
 }
@@ -416,6 +418,14 @@ impl<S: 'static> Element<S> {
     pub fn scroll_y(mut self, scroll: &ScrollHandle) -> Self {
         self.scroll = Some(scroll.clone());
         self.style.overflow = crate::style::Overflow::Clip;
+        self
+    }
+
+    /// When the element first appears in a scrolling area that holds the
+    /// focused element, the area scrolls by the least that shows it: for
+    /// an error that a control's action brings up below it.
+    pub fn reveal_when_shown(mut self) -> Self {
+        self.reveal_when_shown = true;
         self
     }
 

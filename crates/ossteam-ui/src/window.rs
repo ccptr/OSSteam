@@ -484,6 +484,23 @@ pub struct Window<A: App> {
     tooltip_shown: Option<(String, f32, f32)>,
     cursor: CursorIcon,
     ime_area: Option<Rect>,
+    /// The control focused by keyboard, kept in view while the page
+    /// changes around it ([`Pin`]).
+    pinned: Option<Pin>,
+    /// The elements marked `reveal_when_shown` in the last build.
+    shown: HashSet<GlobalId>,
+}
+
+/// What the page keeps in view: the control the keyboard focused, or
+/// the error its action then brought up, with the offsets of the areas
+/// that scroll around it as the toolkit last left them. It is kept in
+/// view until focus leaves the control, or until one of those areas is
+/// scrolled some other way, by a wheel or a key.
+struct Pin {
+    focus: FocusHandle,
+    /// A `reveal_when_shown` element shown since; `None`: the control.
+    shown: Option<GlobalId>,
+    offsets: Vec<(ScrollHandle, f32)>,
 }
 
 impl<A: App> Window<A> {
@@ -528,6 +545,8 @@ impl<A: App> Window<A> {
             tooltip: None,
             tooltip_shown: None,
             cursor: CursorIcon::Default,
+            pinned: None,
+            shown: HashSet::new(),
             ime_area: None,
         }
     }
@@ -739,11 +758,8 @@ impl<A: App> Window<A> {
                 self.run(|s, cx| s.focus_lost(cx));
                 continue;
             }
-            if self.shared.reveal {
-                self.shared.reveal = false;
-                if self.reveal_focused() {
-                    self.shared.dirty = true;
-                }
+            if self.keep_in_view() {
+                self.shared.dirty = true;
             }
         }
         if !self.shared.repaint {
@@ -829,16 +845,85 @@ impl<A: App> Window<A> {
         self.tree = tree;
     }
 
-    /// Scrolls the areas around the focused element to show it. Returns
-    /// whether anything moved.
-    fn reveal_focused(&mut self) -> bool {
-        let Some(i) = self.shared.focus.and_then(|h| self.tree.node_with_focus(h)) else {
-            return false;
+    /// Scrolls what the keyboard focused into view, and keeps it there
+    /// as the page changes ([`Pin`]); then shows the `reveal_when_shown`
+    /// elements that appeared near focus. Returns whether anything moved.
+    fn keep_in_view(&mut self) -> bool {
+        let focused = self.shared.focus.and_then(|h| self.tree.node_with_focus(h));
+        if std::mem::take(&mut self.shared.reveal) {
+            self.pinned = self.shared.focus.map(|focus| Pin {
+                focus,
+                shown: None,
+                offsets: Vec::new(),
+            });
+        }
+        let mut pin = self.pinned.take().filter(|p| {
+            Some(p.focus) == self.shared.focus && p.offsets.iter().all(|(h, o)| h.offset() == *o)
+        });
+        let mut moved = false;
+        // Newly shown elements near focus; the last becomes what the pin
+        // keeps in view. Bounds are stale once something scrolled, so at
+        // most one area moves per build.
+        let shown: HashSet<GlobalId> = (0..self.tree.nodes.len())
+            .filter(|&i| self.tree.nodes[i].el.reveal_when_shown)
+            .map(|i| self.tree.nodes[i].gid)
+            .collect();
+        if let Some(f) = focused {
+            for i in 0..self.tree.nodes.len() {
+                let n = &self.tree.nodes[i];
+                if n.el.reveal_when_shown && !self.shown.contains(&n.gid) {
+                    let gid = n.gid;
+                    if !moved {
+                        moved = self.show(i, Some(f));
+                    }
+                    if let Some(p) = &mut pin {
+                        p.shown = Some(gid);
+                    }
+                }
+            }
+        }
+        self.shown = shown;
+        let (Some(mut pin), Some(f)) = (pin, focused) else {
+            return moved;
         };
+        let target = pin
+            .shown
+            .and_then(|gid| (0..self.tree.nodes.len()).find(|&i| self.tree.nodes[i].gid == gid))
+            .unwrap_or(f);
+        if !moved {
+            moved = self.show(target, (target != f).then_some(f));
+        }
+        pin.offsets = self.scrolling_around(target);
+        self.pinned = Some(pin);
+        moved
+    }
+
+    /// The areas that scroll around node `i`, with their offsets.
+    fn scrolling_around(&self, i: usize) -> Vec<(ScrollHandle, f32)> {
+        self.tree
+            .path(i)
+            .into_iter()
+            .skip(1)
+            .filter_map(|p| {
+                let n = &self.tree.nodes[p];
+                let h = n.el.scroll.as_ref()?;
+                (!matches!(n.el.kind, Kind::List { .. })).then(|| (h.clone(), h.offset()))
+            })
+            .collect()
+    }
+
+    /// Scrolls the areas around node `i` by the least that shows it, with
+    /// a margin; with `near`, only the areas that also hold that node.
+    /// Returns whether anything moved.
+    fn show(&mut self, i: usize, near: Option<usize>) -> bool {
+        let near: Option<HashSet<usize>> = near.map(|n| self.tree.path(n).into_iter().collect());
         let scale = self.shared.scale;
         let target = self.tree.nodes[i].bounds;
         let mut moved = false;
         for p in self.tree.path(i).into_iter().skip(1) {
+            if near.as_ref().is_some_and(|near| !near.contains(&p)) {
+                continue;
+            }
             let n = &self.tree.nodes[p];
             let Some(scroll) = &n.el.scroll else {
                 continue;

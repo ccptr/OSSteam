@@ -5,19 +5,21 @@ maintainer. Commit hashes point to the details. Keep this page current:
 it is how a new session (agent or human) picks up work without re-reading
 the diffs. See [AGENTS.md](../AGENTS.md) for the rules.
 
-Last updated 2026-11-02 (main at efc15b5, pushed).
+Last updated 2026-11-02 (origin/main at efc15b5; local main is ahead with docs and the macOS discovery fix, not pushed).
 
 ## Waiting on the maintainer
 
 Almost all remaining work needs one of these.
 
-- **CI is red on main.** On efc15b5 both macOS runners fail
-  `discovery::macos::tests::serves_steam_api` and
-  `a_service_someone_else_serves_is_left_alone`
-  (`ossteam-launch/src/discovery/macos.rs`, lines 459 and 495): the test
-  gets no reply from the Mach service. This is the first CI run of that
-  code. The likely cause is the open assumption below that launchd
-  accepts check-in of an undeclared service name. Not investigated yet.
+- **CI was red on main; a fix waits on a push.** On efc15b5 both macOS
+  runners failed `discovery::macos::tests::serves_steam_api` and
+  `a_service_someone_else_serves_is_left_alone`: no reply from the Mach
+  service. Cause: steam_api's `msgh_bits` 0x1413 makes a *send* right for
+  its reply port (0x14 = MAKE_SEND; checked in the SDK 1.65a dylib's
+  x86_64 and arm64 code), but steamworks-abi.md §1.3.1 called it
+  MAKE_SEND_ONCE and the server answered only send-once rights. Fixed in
+  the commit after 661ce95 (the server answers both, and the spec is
+  corrected); only type-checked here, so the next CI run is its test.
 - **The test account is logged out**, since a failed resume lost its
   token on 2026-10-18 (cause fixed in e4019cc; the fix is verified only
   against the fake CM). Still logged out on 2026-11-02. Every live run
@@ -181,9 +183,10 @@ source is patched to crates.io). Compare LibraryFolder without
   `discovery/macos.rs` checks the name in with `bootstrap_check_in` and
   serves it on a thread. The library is copied to
   `<data>/steam-sdk/osx/steamclient.dylib`; xtask runs lipo to make it
-  universal. Unverified: that launchd accepts check-in of an undeclared
-  name, and that destroying the receive right frees the name. Its tests
-  fail on CI (see the top of this page).
+  universal. The CI run on efc15b5 showed that launchd accepts check-in
+  of an undeclared name (check-in succeeded and a look-up found it).
+  Unverified: that destroying the receive right frees the name; the
+  tests check it after the reply fix (see the top of this page).
 - Keyboard-only row ✅ on Linux (887ef16) after many focus fixes (9db2176,
   092afb6, a0656d5, 758b0aa, bd1bff5, …). Buttons, switches and choices
   own a focus handle; controls that replace each other (Pause/Resume,

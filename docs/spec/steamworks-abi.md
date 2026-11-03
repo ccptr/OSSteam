@@ -100,7 +100,7 @@ Neither has a path under `~/Library` or reads a registry file.
 *Unverified:* what the official client's server puts in the fields
 `steam_api` does not read, which file its path names, and whether its
 launchd job stays loaded after the client quits. *Unverified on a Mac:*
-the behaviour of launchd that §1.3.3 relies on.
+the behaviour of launchd that §1.3.3 relies on, beyond what CI's macOS runners show.
 
 macOS has no entries in the file system. `steam_api` asks launchd for
 the Mach service `com.valvesoftware.steam.ipctool`, which the official
@@ -112,8 +112,10 @@ where the client is.
 Each message is a `mach_msg_header_t` (24 bytes) followed by 32-bit
 words in the machine's byte order. `msgh_id` is the protocol version,
 104, in requests and replies alike. A request carries the client's
-reply port as its local port with `MACH_MSG_TYPE_MAKE_SEND_ONCE`
-(`msgh_bits` 0x1413), and the reply goes to that port. The client
+reply port as its local port with `MACH_MSG_TYPE_MAKE_SEND`
+(`msgh_bits` 0x1413: `COPY_SEND` remote, `MAKE_SEND` local), so the
+server receives a send right, not a send-once right, and the reply goes
+to that port. The client
 receives until a message with `msgh_id` 104 arrives, into a buffer of
 40 or 552 bytes. The kernel appends an 8-byte trailer to a message it
 delivers and refuses one that does not fit with it
@@ -156,12 +158,15 @@ delivers and refuses one that does not fit with it
   Version with version 104 and GetSteamPath with its pid and the path of
   the copy; a copy whose path does not fit in 512 bytes with its NUL is
   an error, and no service is made. Each reply has the request's
-  `msgh_id` and repeats the request's word at 24. Kill
+  `msgh_id` and repeats the request's word at 24, and moves back the
+  right the request brought: a send right from `steam_api`, or a
+  send-once right from another client. Kill
   is logged and ignored: there is no ipcserver to restart, and the
   client carries on. Other requests are dropped without a reply.
 
 launchd lets a process check in a name that no job declares, as
-Chromium relies on (*unverified on a Mac*). The entries are ossteam's
+Chromium relies on (seen on CI's macOS runners, aarch64 and x86_64,
+on efc15b5: the check-in succeeded and a look-up found the name). The entries are ossteam's
 while the daemon holds that receive right. Removing them destroys it,
 which takes the name away (*unverified*), and a crash takes it away
 with the process, so DISC-2 has nothing to repair on macOS. The copy

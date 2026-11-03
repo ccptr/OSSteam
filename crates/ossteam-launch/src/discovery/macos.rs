@@ -17,10 +17,10 @@ use mach2::bootstrap::{
 use mach2::kern_return::{KERN_SUCCESS, kern_return_t};
 use mach2::mach_port::{mach_port_deallocate, mach_port_mod_refs};
 use mach2::message::{
-    MACH_MSG_SUCCESS, MACH_MSG_TYPE_MOVE_SEND_ONCE, MACH_MSGH_BITS, MACH_MSGH_BITS_COMPLEX,
-    MACH_MSGH_BITS_REMOTE_MASK, MACH_RCV_MSG, MACH_RCV_TIMED_OUT, MACH_RCV_TIMEOUT,
-    MACH_RCV_TOO_LARGE, MACH_SEND_MSG, MACH_SEND_TIMEOUT, mach_msg, mach_msg_destroy,
-    mach_msg_header_t,
+    MACH_MSG_SUCCESS, MACH_MSG_TYPE_MOVE_SEND, MACH_MSG_TYPE_MOVE_SEND_ONCE, MACH_MSGH_BITS,
+    MACH_MSGH_BITS_COMPLEX, MACH_MSGH_BITS_REMOTE_MASK, MACH_RCV_MSG, MACH_RCV_TIMED_OUT,
+    MACH_RCV_TIMEOUT, MACH_RCV_TOO_LARGE, MACH_SEND_MSG, MACH_SEND_TIMEOUT, mach_msg,
+    mach_msg_destroy, mach_msg_header_t,
 };
 use mach2::port::{MACH_PORT_NULL, MACH_PORT_RIGHT_RECEIVE, mach_port_t};
 use mach2::traps::mach_task_self;
@@ -273,11 +273,15 @@ fn serve(port: mach_port_t, path: &[u8; PATH_LEN], pid: u32, stop: &AtomicBool) 
 unsafe fn answer(msg: *mut mach_msg_header_t, path: &[u8; PATH_LEN], pid: u32) {
     // SAFETY: the caller's promise.
     let header = unsafe { msg.read() };
-    // A send-once right arrives as MACH_MSG_TYPE_PORT_SEND_ONCE, which has
-    // the value of MACH_MSG_TYPE_MOVE_SEND_ONCE.
-    let reply_to = (header.msgh_bits & MACH_MSGH_BITS_REMOTE_MASK == MACH_MSG_TYPE_MOVE_SEND_ONCE
+    // steam_api makes a send right for its reply port (§1.3.1); a send-once
+    // right is answered too. A right arrives as MACH_MSG_TYPE_PORT_SEND or
+    // _PORT_SEND_ONCE, which have the values of the MOVE dispositions that
+    // hand it back.
+    let disposition = header.msgh_bits & MACH_MSGH_BITS_REMOTE_MASK;
+    let reply_to = ((disposition == MACH_MSG_TYPE_MOVE_SEND
+        || disposition == MACH_MSG_TYPE_MOVE_SEND_ONCE)
         && header.msgh_remote_port != MACH_PORT_NULL)
-        .then_some(header.msgh_remote_port);
+        .then_some((header.msgh_remote_port, disposition));
     let simple = header.msgh_bits & MACH_MSGH_BITS_COMPLEX == 0;
     if !simple || (header.msgh_size as usize) < size_of::<Request>() {
         // SAFETY: as above.
@@ -311,9 +315,11 @@ unsafe fn answer(msg: *mut mach_msg_header_t, path: &[u8; PATH_LEN], pid: u32) {
     }
 }
 
-fn reply_header<T>(request: &mach_msg_header_t, to: mach_port_t) -> mach_msg_header_t {
+/// `to` is the reply port and how to hand back the right to it.
+fn reply_header<T>(request: &mach_msg_header_t, to: (mach_port_t, u32)) -> mach_msg_header_t {
+    let (to, disposition) = to;
     mach_msg_header_t {
-        msgh_bits: MACH_MSGH_BITS(MACH_MSG_TYPE_MOVE_SEND_ONCE, 0),
+        msgh_bits: MACH_MSGH_BITS(disposition, 0),
         msgh_size: size_of::<T>() as u32,
         msgh_remote_port: to,
         msgh_local_port: MACH_PORT_NULL,
@@ -347,6 +353,9 @@ fn send<T>(mut reply: T) {
 #[cfg(test)]
 mod tests {
     use mach2::mach_port::mach_port_allocate;
+    use mach2::message::{
+        MACH_MSG_TYPE_COPY_SEND, MACH_MSG_TYPE_MAKE_SEND, MACH_MSG_TYPE_MAKE_SEND_ONCE,
+    };
 
     use super::*;
 
@@ -379,10 +388,26 @@ mod tests {
         }
     }
 
+    /// The bits `steam_api` sends: copy the server's send right, make a
+    /// send right for the reply port (§1.3.1).
+    const STEAM_API_BITS: u32 = 0x1413;
+
+    #[test]
+    fn steam_api_makes_a_send_right_for_its_reply_port() {
+        assert_eq!(
+            MACH_MSGH_BITS(MACH_MSG_TYPE_COPY_SEND, MACH_MSG_TYPE_MAKE_SEND),
+            STEAM_API_BITS
+        );
+    }
+
     /// What `steam_api` does (§1.3.2): looks the service up and sends
     /// `kind` with the client's version, then receives into a buffer of
     /// `T` and the trailer. `None` when there is no service or no reply.
     fn ask<T>(service: &str, kind: u32) -> Option<T> {
+        ask_with::<T>(service, kind, STEAM_API_BITS)
+    }
+
+    fn ask_with<T>(service: &str, kind: u32, bits: u32) -> Option<T> {
         let name = CString::new(service).unwrap();
         let mut server = MACH_PORT_NULL;
         let mut reply_port = MACH_PORT_NULL;
@@ -398,7 +423,7 @@ mod tests {
             );
             let mut request = Request {
                 header: mach_msg_header_t {
-                    msgh_bits: 0x1413,
+                    msgh_bits: bits,
                     msgh_size: 32,
                     msgh_remote_port: server,
                     msgh_local_port: reply_port,
@@ -463,6 +488,10 @@ mod tests {
         let copy = path_of(&p);
         assert_eq!(copy, d.data.join("steam-sdk/osx/steamclient.dylib"));
         assert_eq!(std::fs::read(&copy).unwrap(), b"universal");
+        // A client that asks for a send-once reply right is answered too.
+        let once = MACH_MSGH_BITS(MACH_MSG_TYPE_COPY_SEND, MACH_MSG_TYPE_MAKE_SEND_ONCE);
+        let p = ask_with::<PathReply>(&d.service, PATH_REQUEST, once).unwrap();
+        assert_eq!((p.kind, p.pid), (PATH_REQUEST, 1234));
         // Kill gets no reply, and the service goes on.
         assert!(ask::<VersionReply>(&d.service, KILL_REQUEST).is_none());
         assert!(ask::<PathReply>(&d.service, PATH_REQUEST).is_some());

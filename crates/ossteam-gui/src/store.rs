@@ -107,6 +107,9 @@ pub struct Store {
     /// frame without copying it.
     pub library: Option<Arc<v1::ListAppsResponse>>,
     pub library_query: LibraryQuery,
+    /// The query `library` answers: until a reply for `library_query`
+    /// arrives, the one before.
+    pub library_for: LibraryQuery,
     /// Every name a `ListApps` reply has given, whatever its filter: jobs
     /// and pages name apps that the shown library may leave out.
     names: HashMap<u32, String>,
@@ -135,6 +138,7 @@ impl Store {
             names: i.library.as_ref().map(names).unwrap_or_default(),
             library: i.library.map(Arc::new),
             library_query: LibraryQuery::default(),
+            library_for: LibraryQuery::default(),
             apps: HashMap::new(),
             jobs: i
                 .jobs
@@ -312,6 +316,7 @@ impl Store {
         }
         if *query == self.library_query {
             self.library = r.map(Arc::new);
+            self.library_for = query.clone();
         }
     }
 
@@ -616,9 +621,11 @@ mod tests {
         s.library_query.filter = "space".into();
         s.set_library(&old, None);
         assert!(s.library.is_some());
+        assert_eq!(s.library_for, old);
         let q = s.library_query.clone();
         s.set_library(&q, None);
         assert!(s.library.is_none());
+        assert_eq!(s.library_for, q);
     }
 
     #[test]

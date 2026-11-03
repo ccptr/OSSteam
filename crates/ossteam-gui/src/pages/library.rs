@@ -85,6 +85,9 @@ pub struct LibraryPage {
     /// The grid's and the list's: one scroll for whichever is shown.
     pub scroll: ScrollHandle,
     search_timer: Option<Timer>,
+    /// Enter in the search: once the library answers it, its first app is
+    /// selected, unless the one selected is among the results.
+    select_first: bool,
     /// The library scroll of `OSSTEAM_GUI_BENCH` (`gui.md` §7).
     pub bench: Option<LibraryBench>,
 }
@@ -99,6 +102,7 @@ impl Default for LibraryPage {
             selected: None,
             scroll: ScrollHandle::new(),
             search_timer: None,
+            select_first: false,
             bench: LibraryBench::wanted(),
         }
     }
@@ -114,7 +118,35 @@ pub fn search_focus() -> FocusHandle {
 }
 
 pub fn before_view(g: &mut Gui, cx: &mut Cx<Gui>) {
+    select_first_result(g);
     crate::bench::library_before_view(g, cx);
+}
+
+/// Selects the first result of a search Enter submitted, once the
+/// library is the answer to it, so a second Enter opens it.
+fn select_first_result(g: &mut Gui) {
+    if !g.library.select_first {
+        return;
+    }
+    let Some(lib) = g.model().and_then(|m| {
+        let s = &m.store;
+        (s.library_for == s.library_query).then(|| s.library.clone())
+    }) else {
+        return;
+    };
+    g.library.select_first = false;
+    let Some(lib) = lib else {
+        return;
+    };
+    let apps = shown(g, &lib);
+    let kept = g
+        .library
+        .selected
+        .is_some_and(|id| apps.iter().any(|&i| lib.apps[i].app_id == id));
+    if !kept && let Some(&first) = apps.first() {
+        g.library.selected = Some(lib.apps[first].app_id);
+        g.library.scroll.reveal_row(0);
+    }
 }
 
 fn query_now(g: &mut Gui) {
@@ -197,7 +229,8 @@ fn toolbar(g: &Gui, p: Palette, cx: &ViewCx) -> El {
                 })
                 .on_submit(|g, cx| {
                     query_now(g);
-                    cx.focus(items_focus());
+                    g.library.select_first = true;
+                    cx.focus_from_keyboard(items_focus());
                 }),
         )
         .child(
@@ -389,12 +422,14 @@ fn app_list(apps: Rc<Vec<usize>>, scroll: &ScrollHandle) -> El {
 
 pub fn view(g: &Gui, m: &Model, p: Palette, cx: &ViewCx) -> El {
     let lib = m.store.library.clone();
+    // A message stands clear of the focus ring around the items.
+    let message = |words: &'static str| panel().pad(8.0).child(muted(p, words));
     let body: El = match &lib {
-        None => muted(p, "Reading the library…"),
+        None => message("Reading the library…"),
         Some(lib) => {
             let apps = shown(g, lib);
             if apps.is_empty() {
-                muted(p, "No apps match.")
+                message("No apps match.")
             } else {
                 match g.library.layout {
                     Layout::Grid => grid(apps, columns(cx.width), &g.library.scroll),

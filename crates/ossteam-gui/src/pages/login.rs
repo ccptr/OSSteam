@@ -33,6 +33,8 @@ pub struct LoginPage {
     code: TextField,
     /// A code prompt was shown at the last build.
     code_shown: bool,
+    /// A login was running at the last build.
+    running: bool,
     remember: bool,
     /// The error of this page's last request.
     error: Option<String>,
@@ -53,6 +55,7 @@ impl Default for LoginPage {
             password,
             code,
             code_shown: false,
+            running: false,
             remember: true,
             error: None,
             busy: false,
@@ -75,6 +78,12 @@ fn password_focus() -> FocusHandle {
 fn code_focus() -> FocusHandle {
     FocusHandle::named("login-code")
 }
+
+/// The buttons that start a login. While it runs, its Cancel takes the
+/// focus handle of the one that started it, which gets it back if the
+/// form returns.
+const SIGN_IN: &str = "sign-in";
+const SIGN_IN_QR: &str = "sign-in-qr";
 
 /// The field the cursor goes to: the first one still empty.
 pub fn first_field(g: &Gui) -> FocusHandle {
@@ -99,18 +108,30 @@ fn code_prompt_shown(login: &Login) -> bool {
 }
 
 /// A code prompt replaces the password form, whose field had focus: the
-/// code field takes it, unless focus is elsewhere.
+/// code field takes it, unless focus is elsewhere. A login that ends
+/// without signing in brings the form back, and the password field (the
+/// first one still empty) takes focus, so a refused password can be
+/// typed again at once; on the QR tab, Show QR code takes it.
 pub fn before_view(g: &mut Gui, cx: &mut Cx<Gui>) {
-    let shown = g
-        .model()
-        .is_some_and(|m| m.store.login.running && code_prompt_shown(&m.store.login));
-    if shown && !g.login.code_shown && g.showing_login() {
-        let here = cx.focused().is_none() || cx.contains_focused(page_focus());
-        if here {
-            cx.focus(code_focus());
+    let running = g.model().is_some_and(|m| m.store.login.running);
+    let shown = running && g.model().is_some_and(|m| code_prompt_shown(&m.store.login));
+    let here = g.showing_login() && (cx.focused().is_none() || cx.contains_focused(page_focus()));
+    if shown && !g.login.code_shown && here {
+        cx.focus(code_focus());
+    }
+    if g.login.running && !running && here {
+        let target = match g.login.tab {
+            Tab::Password => first_field(g),
+            Tab::Qr => FocusHandle::named(SIGN_IN_QR),
+        };
+        if cx.focus_visible() {
+            cx.focus_from_keyboard(target);
+        } else {
+            cx.focus(target);
         }
     }
     g.login.code_shown = shown;
+    g.login.running = running;
 }
 
 fn sign_in(g: &mut Gui) {
@@ -288,7 +309,7 @@ fn form(g: &Gui, p: Palette, cx: &ViewCx) -> El {
             .child(
                 button(
                     p,
-                    "sign-in",
+                    SIGN_IN,
                     if page.busy {
                         "Signing in…"
                     } else {
@@ -306,7 +327,7 @@ fn form(g: &Gui, p: Palette, cx: &ViewCx) -> El {
             ))
             .child(remember)
             .child(
-                button(p, "sign-in-qr", "Show QR code")
+                button(p, SIGN_IN_QR, "Show QR code")
                     .disabled(page.busy)
                     .on_click(|g, _| sign_in_with_qr(g)),
             ),
@@ -372,9 +393,14 @@ fn prompts(g: &Gui, m: &Model, p: Palette, cx: &ViewCx) -> El {
         };
         out = out.child(muted(p, words));
     }
+    let started_by = match g.login.tab {
+        Tab::Password => SIGN_IN,
+        Tab::Qr => SIGN_IN_QR,
+    };
     out.child(
         button(p, "cancel-login", "Cancel")
             .secondary()
+            .focus(FocusHandle::named(started_by))
             .on_click(|g, _| cancel(g)),
     )
 }

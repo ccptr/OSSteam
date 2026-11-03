@@ -43,3 +43,10 @@ fonts the GUI uses (spike item 1, the cold first frame that breaks
 §20's 500 ms), then the port (step 4) on a branch. Still the
 maintainer's: a light desktop and a pick through the real portal
 dialog.
+
+The scale and Wine runs were done on 2026-11-03: sharp at 1.25, 1.5
+and 2 with both renderers, the first frame at scale 1 as gpui's was;
+under Wine both renderers draw and the clipboard works, but any winit
+window spins there (Wine's bug), and a prefix without fonts made the
+spike panic (spike items 10 and 11). Idle wakeups on Windows wait for
+real Windows.

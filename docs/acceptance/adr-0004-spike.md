@@ -139,6 +139,62 @@ sway, each run on a private session bus (`dbus-run-session`):
   0.3 s, then not at all for 4.7 s; the picker's thread had ended and
   the `async-io` thread switched twice.
 
+### Scale factors, 2026-11-03
+
+The same headless sway, its output set to 1.25, 1.5 and 2 with
+`swaymsg output HEADLESS-1 scale N` before each run, then changed while
+the window was open (1 → 2 → 1.5 → 1.25 → 1). Both renderers, Wayland.
+
+| Measure | Vulkan | Software |
+|---|---|---|
+| First frame, at 1.25 / 1.5 / 2 | 102.2 / 100.3 / 97.7 ms | 99.3 / 98.2 / 100.0 ms |
+| Scale of the first frame | 1, at all three | same |
+| Scale of the second frame | the output's, 0.4 to 0.6 ms after the first | the output's, 1.3 to 1.6 ms after the first |
+| Live changes | each redrawn at the new scale in one frame | same |
+| Resident memory, idle, 1600×1000 | 54.8 to 55.1 MB | 28.2 MB |
+
+- **The first frame is drawn at scale 1, as gpui's was (m0.md item 3).**
+  winit opens the window at 1, and sway sends the fractional scale only
+  after the surface's first commit, so the first frame cannot know it.
+  The second frame, at the output's scale, comes about a millisecond
+  later. The first is also drawn at the 900×640 the window asked for;
+  sway tiles it to 1600×1000 with the scale. Whether the first frame
+  shows is not seen.
+- **Sharp and laid out as at 1×**, at each scale: text, the field's
+  border and caret, the rows and the scrollbar keep their logical sizes
+  and are drawn at device resolution. The two renderers' screenshots
+  differ in under 0.1 % of pixels beyond 3 % per channel (glyph edges).
+  At 1.5 sway gives the window 1599×999 device pixels (its 1066×666
+  logical size rounded down); the spike fills them.
+- After the live changes the window is the same as one opened at that
+  scale (screenshots at 2 identical), and the event loop was idle
+  between changes.
+
+### Windows under Wine, 2026-11-03
+
+`x86_64-pc-windows-gnu` release build, Wine 11.21, on the headless
+sway's Xwayland (`DISPLAY=:2`), in a scratch prefix with Wine's Tahoma
+and Noto Sans copied into `C:\windows\Fonts` (item 10). winevulkan on
+the host's RADV.
+
+| Measure | Vulkan | Software |
+|---|---|---|
+| First frame (3 runs) | 64.1 / 64.6 / 74.1 ms | 59.0 / 60.6 / 62.4 ms |
+| Renderer created at | 53 to 55 ms | 31 to 36 ms |
+| Appearance at the first frame | `Light`, from winit: Wine reports light | same |
+| Scroll 9,970 rows: work p50 / p99 / max | 0.44 / 0.64 / 1.15 ms | 1.19 / 1.79 / 2.54 ms |
+| Scroll: frame intervals | 16.1 ms p50, one of 27.2 ms | 2.2 ms p50: not paced, as on X11 (item 7) |
+| Type 28 edits: work p50 / max | 0.72 / 5.21 ms | 0.84 / 7.04 ms |
+| Clipboard (`arboard`) | Ctrl+V pasted text `xclip` had set; Ctrl+X put the cut text where `xclip` read it | same |
+| Wakeups while idle | about 30,000 a second (item 11) | same |
+
+Resident memory and per-thread switches are not reported under Wine
+(the working set it reports is 17.4 MB for both renderers, which is not
+the Linux process's). Both renderers draw the window alike: screenshots
+differ in 0.02 % of pixels beyond 3 % per channel. Ctrl+C could not be
+checked: Wine read `xdotool`'s keys through a different keymap (`c`
+arrived as `AudioVolumeDown`).
+
 Items:
 
 1. **Fonts, cold: open.** `cosmic-text` reads the header of every font
@@ -199,7 +255,7 @@ Items:
    and `error-code` on Windows, both BSL-1.0, which SPEC LIC-3 did not
    allow. The maintainer added BSL-1.0 to LIC-3 on 2026-11-02, so
    `arboard` serves the clipboard on Windows too, as the ADR says.
-   Not yet run under Wine.
+   Under Wine it pastes and cuts (the Wine section).
 9. **Software renderer crashed when the window shrank: fixed.** The
    canvas keeps the damage of recent frames to bring an older buffer up
    to date, and it kept that history across a resize: when the picker's
@@ -207,6 +263,22 @@ Items:
    frames were copied into the narrower buffer, out of bounds. The
    history is now dropped on a resize, so a buffer older than it is
    copied whole; a unit test covers it.
+10. **No fonts: the spike panicked; open.** A fresh Wine prefix has no
+    files in `C:\windows\Fonts` (Wine's own fonts live outside it), so
+    `fontdb` found no faces and cosmic-text panicked shaping the first
+    line ("no default font found"). Windows always has Segoe UI, but
+    the toolkit must not panic: with no usable face it reports that
+    and exits, and it looks for the platform's UI font by name (Segoe
+    UI, the system font on macOS, fontconfig's sans-serif on Linux)
+    instead of relying on cosmic-text's fallback lists. Part of the
+    font work in step 3 (item 1).
+11. **Idle under Wine: Wine and winit spin; not ours.** Under Wine 11.21
+    the event loop woke about 30,000 times a second with no events.
+    `WINEDEBUG=+server` shows Wine's queue keeping `QS_PAINT` in its
+    wake bits while `get_message` finds nothing, so winit's
+    `MsgWaitForMultipleObjectsEx(QS_ALLINPUT)` returns at once. A bare
+    winit 0.30.13 window (no ossteam code, never drawn) does the same.
+    Idle wakeups on Windows wait for real Windows.
 
 ## Decisions
 
@@ -222,11 +294,10 @@ The maintainer decided on 2026-11-02:
 ## Left
 
 - A pick through the portal's real dialog, by hand.
-- Scale factors 1.25, 1.5 and 2 on a headless sway, and whether the
-  first frame is drawn at the output's scale.
 - IME on X11 (needs an XIM engine that composes, such as ibus-anthy or
   fcitx5-mozc; the maintainer's to install).
-- Windows under Wine (winevulkan and the software renderer).
 - A light desktop, checked by the maintainer (desktop settings are
   theirs to change).
-- macOS and real Windows, with the hardware ([status](../status/hardware-mac-windows.md)).
+- macOS and real Windows, with the hardware ([status](../status/hardware-mac-windows.md)):
+  idle wakeups, memory, Ctrl+C and the software renderer's pacing on
+  Windows are not visible under Wine.

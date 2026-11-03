@@ -46,11 +46,11 @@ These come from the maintainer. Don't trade them away for convenience.
 ## Testing
 
 - [CI](AGENTS/testing/ci.md) — macOS check/clippy/test only; test Linux and Windows locally
-- [Windows under Wine](AGENTS/testing/windows-wine.md) — cross-check, run tests under Wine, what Wine can't show
+- [Windows under Wine](AGENTS/testing/windows-wine.md) — cross-check, run tests under Wine, GUI runs in a scratch prefix with fonts, what Wine can't show
 - [Bench tests](AGENTS/testing/bench-tests.md) — the 10k-app library and gui_states with its test logins
 - [Idle wakeups](AGENTS/testing/idle-wakeups.md) — count `voluntary_ctxt_switches` per thread
 - [Driving the GUI by keyboard](AGENTS/testing/gui-keyboard-driving.md) — `wtype`, tab order, `XDG_RUNTIME_DIR`
-- [Wayland scale tests](AGENTS/testing/wayland-scale-tests.md) — headless sway and `swaymsg`
+- [Wayland scale tests](AGENTS/testing/wayland-scale-tests.md) — headless sway and `swaymsg` with `SWAYSOCK` set
 - [Input on headless sway](AGENTS/testing/headless-sway-input.md) — wtype's lost first key, IME with `wayland_ime`, Xwayland keymaps, clipboard tools, portals on a private bus with `fake_portal.py`
 - [Daemon autostart](AGENTS/testing/daemon-autostart.md) — `--no-autostart status` only looks
 

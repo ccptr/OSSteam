@@ -1,6 +1,6 @@
 ---
 name: windows-wine
-description: Cross-check Windows and run the workspace tests under Wine; what needs OSSTEAM_ABI_GAME and what Wine can't cover
+description: Cross-check Windows and run the workspace tests under Wine; what needs OSSTEAM_ABI_GAME, GUI runs on the headless sway in a scratch prefix with fonts, and what Wine can't cover
 metadata:
   type: reference
 ---
@@ -24,3 +24,21 @@ CARGO_TARGET_X86_64_PC_WINDOWS_GNU_RUNNER=wine WINEDEBUG=-all \
   `ossteam-steamclient/tests/pump.rs` (Unix only).
 - Wine is not Windows: UAC, runas `--script-helper`, real HKLM and
   firewall behaviour stay unverified until a real Windows run.
+
+GUI runs (the `ossteam-ui` spike):
+
+- Run them on the headless sway's Xwayland (`env -u WAYLAND_DISPLAY
+  DISPLAY=:N wine …`, `N` from `ls -la /tmp/.X11-unix`, the socket
+  created when that sway started), never on the desktop's display.
+- Use a scratch prefix (`WINEPREFIX=<scratch>/wineprefix wineboot -i`
+  with `WINEDLLOVERRIDES="mscoree,mshtml="`) and copy fonts into its
+  `drive_c/windows/Fonts` (`/usr/share/wine/fonts/tahoma*.ttf`, Noto
+  Sans): a new prefix has none there, and font loading finds nothing.
+  `wineserver -k` with the same `WINEPREFIX` afterwards.
+- Under Wine 11.21 any winit window's event loop spins (about 30,000
+  wakeups a second: Wine keeps `QS_PAINT` set with no message to
+  fetch), so idle wakeups, memory and thread switches can't be measured
+  there. winevulkan, both renderers, frame times and the clipboard can.
+- Wine reads `xdotool`'s keys through its own keymap: letters can
+  arrive as other keys (`c` as `AudioVolumeDown`). Check the spike's
+  input log before blaming the app.

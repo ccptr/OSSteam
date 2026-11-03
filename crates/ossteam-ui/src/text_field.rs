@@ -12,6 +12,7 @@ use std::ops::Range;
 use unicode_segmentation::UnicodeSegmentation;
 use winit::event::Ime;
 use winit::keyboard::{Key, ModifiersState, NamedKey};
+use zeroize::Zeroizing;
 
 use crate::scene::{Color, Quad, Rect, Scene};
 use crate::text::{ShapedText, TextSystem};
@@ -135,7 +136,9 @@ pub struct FieldStyle {
 
 /// A single-line text field.
 pub struct TextField {
-    text: String,
+    /// Wiped when it goes, and never reallocated in place ([`edit`]): a
+    /// password leaves no copy behind (IPC-10).
+    text: Zeroizing<String>,
     /// Byte offsets: the selection is between `anchor` and `cursor`.
     cursor: usize,
     anchor: usize,
@@ -161,7 +164,7 @@ const BULLET: char = '•';
 impl TextField {
     pub fn new(placeholder: &str, size: f32) -> Self {
         Self {
-            text: String::new(),
+            text: Zeroizing::new(String::new()),
             cursor: 0,
             anchor: 0,
             preedit: None,
@@ -250,7 +253,9 @@ impl TextField {
     }
 
     pub fn set_text(&mut self, text: &str) {
-        self.text = single_line(text);
+        let text = single_line(text);
+        self.text = Zeroizing::new(String::with_capacity(text.len()));
+        edit(&mut self.text, 0..0, &text);
         self.cursor = self.text.len();
         self.anchor = self.cursor;
         self.preedit = None;
@@ -278,7 +283,7 @@ impl TextField {
     pub fn insert(&mut self, text: &str) {
         let text = single_line(text);
         let sel = self.selection();
-        self.text.replace_range(sel.clone(), &text);
+        edit(&mut self.text, sel.clone(), &text);
         self.cursor = sel.start + text.len();
         self.anchor = self.cursor;
         self.changed();
@@ -289,7 +294,7 @@ impl TextField {
         if sel.is_empty() {
             return false;
         }
-        self.text.replace_range(sel.clone(), "");
+        edit(&mut self.text, sel.clone(), "");
         self.cursor = sel.start;
         self.anchor = sel.start;
         self.changed();
@@ -613,6 +618,22 @@ fn word_right(text: &str, at: usize) -> usize {
         .map_or(text.len(), |(end, _)| end)
 }
 
+/// Replaces `range` of `text` with `new`. A `String` that grows in place
+/// can leave its old bytes in freed memory, so when it must grow the text
+/// moves to a bigger buffer and the old one is wiped as it drops.
+fn edit(text: &mut Zeroizing<String>, range: Range<usize>, new: &str) {
+    let len = text.len() - range.len() + new.len();
+    if len > text.capacity() {
+        let mut grown = Zeroizing::new(String::with_capacity(len.max(64).next_power_of_two()));
+        grown.push_str(&text[..range.start]);
+        grown.push_str(new);
+        grown.push_str(&text[range.end..]);
+        *text = grown;
+    } else {
+        text.replace_range(range, new);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -771,6 +792,22 @@ mod tests {
         assert_eq!(snap_to_grapheme(t, 1), 0);
         assert_eq!(snap_to_grapheme(t, 3), 3);
         assert_eq!(snap_to_grapheme(t, 4), 4);
+    }
+
+    #[test]
+    fn the_text_grows_into_a_new_buffer() {
+        let mut text = Zeroizing::new(String::new());
+        edit(&mut text, 0..0, "secret");
+        assert_eq!(text.capacity(), 64);
+        let first = text.as_ptr();
+        edit(&mut text, 6..6, &"x".repeat(58));
+        assert_eq!(text.as_ptr(), first, "it fits: edited in place");
+        edit(&mut text, 0..0, "y");
+        assert_ne!(text.as_ptr(), first, "it grew: a new buffer");
+        assert_eq!(text.capacity(), 128);
+        assert_eq!(&text[..7], "ysecret");
+        edit(&mut text, 0..7, "");
+        assert_eq!(text.len(), 58);
     }
 
     #[test]

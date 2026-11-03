@@ -24,6 +24,8 @@ sys-locale = "0.3.2"
 tracing.workspace = true
 unicode-segmentation = "1.13.3"
 winit = { version = "0.30.13", default-features = false, features = ["rwh_06", "x11", "wayland", "wayland-dlopen", "wayland-csd-adwaita-notitle"] }
+# A text field's buffer is wiped as it grows and goes (IPC-10: passwords).
+zeroize.workspace = true
 
 # The desktop portal: the colour scheme before the first frame (gui.md §6)
 # and the folder picker.

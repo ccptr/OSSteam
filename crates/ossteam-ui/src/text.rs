@@ -8,7 +8,8 @@ use std::sync::{Arc, mpsc};
 use std::time::Instant;
 
 use cosmic_text::{
-    Attrs, Buffer, FontSystem, LayoutGlyph, Metrics, Shaping, SwashCache, SwashContent, fontdb,
+    Attrs, Buffer, FontSystem, LayoutGlyph, Metrics, Shaping, SwashCache, SwashContent, Weight,
+    Wrap, fontdb,
 };
 
 use crate::fonts;
@@ -95,12 +96,7 @@ impl ShapedText {
     /// Whether a visible character of `text` (the text this was shaped
     /// from) got no glyph: no loaded face has it.
     fn has_missing_glyphs(&self, text: &str) -> bool {
-        self.glyphs.iter().any(|g| {
-            g.glyph_id == 0
-                && text
-                    .get(g.start..g.end)
-                    .is_some_and(|s| s.chars().any(|c| !c.is_whitespace() && !c.is_control()))
-        })
+        missing_glyph(&self.glyphs, text)
     }
 
     /// The x position of a byte offset into the text: the caret's position.
@@ -125,6 +121,49 @@ impl ShapedText {
         }
         self.clusters.last().map_or(0, |c| c.end)
     }
+}
+
+/// How a block of text is set: its size, line height and weight, in
+/// logical pixels.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct TextAttrs {
+    pub size: f32,
+    pub line_height: f32,
+    /// 400 is regular, 700 bold.
+    pub weight: u16,
+}
+
+/// A block of text broken into lines, in logical pixels.
+#[derive(Clone, Debug, Default)]
+pub struct TextLayout {
+    pub lines: Vec<TextLine>,
+    /// The widest line.
+    pub width: f32,
+    pub height: f32,
+}
+
+/// One line of a [`TextLayout`].
+#[derive(Clone, Debug)]
+pub struct TextLine {
+    glyphs: Vec<LayoutGlyph>,
+    /// The baseline, from the top of the layout.
+    pub baseline: f32,
+    pub width: f32,
+}
+
+impl TextLayout {
+    fn has_missing_glyphs(&self, text: &str) -> bool {
+        self.lines.iter().any(|l| missing_glyph(&l.glyphs, text))
+    }
+}
+
+fn missing_glyph(glyphs: &[LayoutGlyph], text: &str) -> bool {
+    glyphs.iter().any(|g| {
+        g.glyph_id == 0
+            && text
+                .get(g.start..g.end)
+                .is_some_and(|s| s.chars().any(|c| !c.is_whitespace() && !c.is_control()))
+    })
 }
 
 /// The fonts could not be loaded.
@@ -304,6 +343,79 @@ impl TextSystem {
             width,
             height: line_height,
             clusters,
+        }
+    }
+
+    /// Sets `text` in lines no wider than `max_width` logical pixels
+    /// (`None`: one line per paragraph), breaking between words where it
+    /// can and inside a word that is wider than a line.
+    pub fn layout(&mut self, text: &str, attrs: TextAttrs, max_width: Option<f32>) -> TextLayout {
+        let laid = self.layout_with_loaded(text, attrs, max_width);
+        if self.rest.is_some() && laid.has_missing_glyphs(text) {
+            self.merge_rest();
+            return self.layout_with_loaded(text, attrs, max_width);
+        }
+        laid
+    }
+
+    fn layout_with_loaded(
+        &mut self,
+        text: &str,
+        attrs: TextAttrs,
+        max_width: Option<f32>,
+    ) -> TextLayout {
+        let metrics = Metrics::new(attrs.size, attrs.line_height);
+        let mut buffer = Buffer::new(&mut self.fonts, metrics);
+        buffer.set_wrap(Wrap::WordOrGlyph);
+        // A hair of slack, so text measured at its own width does not wrap
+        // again when laid out at that width.
+        buffer.set_size(max_width.map(|w| w + 0.01), None);
+        let font = Attrs::new().weight(Weight(attrs.weight));
+        buffer.set_text(text, &font, Shaping::Advanced, None);
+        buffer.shape_until_scroll(&mut self.fonts, false);
+        let mut out = TextLayout::default();
+        for run in buffer.layout_runs() {
+            out.width = out.width.max(run.line_w);
+            out.height = out.height.max(run.line_top + run.line_height);
+            out.lines.push(TextLine {
+                glyphs: run.glyphs.to_vec(),
+                baseline: run.line_y,
+                width: run.line_w,
+            });
+        }
+        if out.lines.is_empty() {
+            out.height = attrs.line_height;
+        }
+        out
+    }
+
+    /// Adds a laid-out block to the scene with its top-left corner at
+    /// `(x, y)` device pixels, drawn at `scale` device pixels per logical
+    /// pixel. Each line's baseline is rounded to a whole device pixel.
+    pub fn paint_layout(
+        &mut self,
+        scene: &mut Scene,
+        layout: &TextLayout,
+        x: f32,
+        y: f32,
+        scale: f32,
+        color: Color,
+    ) {
+        for line in &layout.lines {
+            let baseline = (y + line.baseline * scale).round();
+            for g in &line.glyphs {
+                let p = g.physical((x, baseline), scale);
+                let Some(image) = self.rasterise(p.cache_key) else {
+                    continue;
+                };
+                scene.glyph(Glyph {
+                    key: p.cache_key,
+                    x: p.x,
+                    y: p.y,
+                    color,
+                    bounds: image.bounds_at(p.x, p.y),
+                });
+            }
         }
     }
 

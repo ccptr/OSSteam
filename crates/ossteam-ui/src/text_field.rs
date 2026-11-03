@@ -150,7 +150,13 @@ pub struct TextField {
     scroll_x: f32,
     /// Counts changes to what the field shows.
     revision: u64,
+    /// Shows a bullet for each character, and keeps the text off the
+    /// clipboard: a password.
+    secret: bool,
 }
+
+/// What a secret field shows for each grapheme.
+const BULLET: char = '•';
 
 impl TextField {
     pub fn new(placeholder: &str, size: f32) -> Self {
@@ -165,6 +171,56 @@ impl TextField {
             placeholder_shaped: None,
             scroll_x: 0.0,
             revision: 0,
+            secret: false,
+        }
+    }
+
+    /// The height of a field's line of text at font size `size`, logical
+    /// pixels: what [`TextSystem::shape`] gives a line.
+    pub fn line_height(size: f32) -> f32 {
+        (size * 1.3).ceil()
+    }
+
+    /// Makes the field a password field, or a plain one again.
+    pub fn set_secret(&mut self, secret: bool) {
+        if secret != self.secret {
+            self.secret = secret;
+            self.reshape();
+        }
+    }
+
+    pub fn is_secret(&self) -> bool {
+        self.secret
+    }
+
+    /// Where byte offset `offset` of the text is in what the field shows.
+    fn shown(&self, offset: usize) -> usize {
+        if !self.secret {
+            return offset;
+        }
+        self.text[..offset].graphemes(true).count() * BULLET.len_utf8()
+    }
+
+    /// The text offset at offset `shown` of what the field shows (no
+    /// preedit).
+    fn unshown(&self, shown: usize) -> usize {
+        if !self.secret {
+            return shown;
+        }
+        let n = shown / BULLET.len_utf8();
+        self.text
+            .grapheme_indices(true)
+            .nth(n)
+            .map_or(self.text.len(), |(i, _)| i)
+    }
+
+    /// Changes the font size, logical pixels.
+    pub fn set_font_size(&mut self, size: f32) {
+        if size != self.size {
+            self.size = size;
+            self.shaped = None;
+            self.placeholder_shaped = None;
+            self.revision += 1;
         }
     }
 
@@ -299,6 +355,8 @@ impl TextField {
                 }
             }
             Command::SelectAll => self.select_all(),
+            // A secret stays off the clipboard.
+            Command::Copy | Command::Cut if self.secret => return false,
             Command::Copy => {
                 if !self.selection().is_empty() {
                     clipboard.write_text(self.selected_text());
@@ -357,23 +415,31 @@ impl TextField {
     /// The text as shown, with the preedit at the cursor, and where the
     /// preedit sits in it.
     pub fn display(&self) -> (String, Option<Range<usize>>) {
+        let shown = |t: &str| -> String {
+            if self.secret {
+                t.graphemes(true).map(|_| BULLET).collect()
+            } else {
+                t.to_owned()
+            }
+        };
         match &self.preedit {
-            None => (self.text.clone(), None),
+            None => (shown(&self.text), None),
             Some(p) => {
-                let mut s = String::with_capacity(self.text.len() + p.text.len());
-                s.push_str(&self.text[..self.cursor]);
+                let before = shown(&self.text[..self.cursor]);
+                let mut s = before.clone();
                 s.push_str(&p.text);
-                s.push_str(&self.text[self.cursor..]);
-                (s, Some(self.cursor..self.cursor + p.text.len()))
+                s.push_str(&shown(&self.text[self.cursor..]));
+                (s, Some(before.len()..before.len() + p.text.len()))
             }
         }
     }
 
     /// Where the caret is in the displayed text, if it is shown.
     fn caret_in_display(&self) -> Option<usize> {
+        let at = self.shown(self.cursor);
         match &self.preedit {
-            None => Some(self.cursor),
-            Some(p) => p.cursor.map(|(start, _)| self.cursor + start),
+            None => Some(at),
+            Some(p) => p.cursor.map(|(start, _)| at + start),
         }
     }
 
@@ -392,6 +458,7 @@ impl TextField {
         }
         let scroll = self.scroll_x;
         let at = self.shaped(text).offset_at(x + scroll);
+        let at = self.unshown(at);
         self.cursor = snap_to_grapheme(&self.text, at);
         if !extend {
             self.anchor = self.cursor;
@@ -440,8 +507,8 @@ impl TextField {
         scene.push_clip(area);
         if focused && !selection.is_empty() && preedit.is_none() {
             let (a, b) = (
-                px(shaped.x_of(selection.start)),
-                px(shaped.x_of(selection.end)),
+                px(shaped.x_of(self.shown(selection.start))),
+                px(shaped.x_of(self.shown(selection.end))),
             );
             scene.quad(Quad::filled(
                 Rect::new(a.min(b), y0, (a - b).abs(), shaped.height * scale),
@@ -704,5 +771,23 @@ mod tests {
         assert_eq!(snap_to_grapheme(t, 1), 0);
         assert_eq!(snap_to_grapheme(t, 3), 3);
         assert_eq!(snap_to_grapheme(t, 4), 4);
+    }
+
+    #[test]
+    fn a_secret_shows_bullets_and_stays_off_the_clipboard() {
+        let mut f = TextField::new("", 14.0);
+        f.set_secret(true);
+        f.insert("pä");
+        f.insert("ss");
+        assert_eq!(f.display().0, "••••");
+        assert_eq!(f.caret_in_display(), Some(4 * BULLET.len_utf8()));
+        f.move_cursor(Motion::Left, false);
+        assert_eq!(f.unshown(f.shown(f.cursor())), f.cursor());
+        assert_eq!(f.unshown(BULLET.len_utf8() * 2), "pä".len());
+        let mut clip = None::<String>;
+        f.select_all();
+        assert!(!f.apply(Command::Copy, &mut clip));
+        assert!(!f.apply(Command::Cut, &mut clip));
+        assert_eq!((clip, f.text()), (None, "päss"));
     }
 }

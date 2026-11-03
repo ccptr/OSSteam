@@ -5,7 +5,11 @@
 //! shadows, and glyphs from the shared glyph cache, in paint order, each
 //! with the clip rectangle it is drawn in.
 
+use std::collections::HashMap;
 use std::hash::{Hash, Hasher};
+use std::sync::Arc;
+
+use crate::image::{Image, ImageId};
 
 /// A colour in sRGB with straight alpha. Both renderers blend in sRGB
 /// space, so they agree with each other (and with what gpui drew).
@@ -153,10 +157,35 @@ pub struct Glyph {
     pub bounds: Rect,
 }
 
+/// An image drawn pixel for pixel with its top-left corner at a whole
+/// device pixel.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct ImageQuad {
+    pub id: ImageId,
+    pub x: i32,
+    pub y: i32,
+    pub width: u32,
+    pub height: u32,
+    /// Multiplies every pixel.
+    pub opacity: f32,
+}
+
+impl ImageQuad {
+    pub fn bounds(&self) -> Rect {
+        Rect::new(
+            self.x as f32,
+            self.y as f32,
+            self.width as f32,
+            self.height as f32,
+        )
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Primitive {
     Quad(Quad),
     Glyph(Glyph),
+    Image(ImageQuad),
 }
 
 impl Primitive {
@@ -164,6 +193,7 @@ impl Primitive {
         match self {
             Primitive::Quad(q) => q.paint_bounds(),
             Primitive::Glyph(g) => g.bounds,
+            Primitive::Image(i) => i.bounds(),
         }
     }
 }
@@ -207,6 +237,13 @@ impl Item {
                 (g.y as f32 + dy).to_bits().hash(&mut h);
                 g.color.hash_into(&mut h);
             }
+            Primitive::Image(i) => {
+                2u8.hash(&mut h);
+                i.id.hash(&mut h);
+                i.x.hash(&mut h);
+                (i.y as f32 + dy).to_bits().hash(&mut h);
+                i.opacity.to_bits().hash(&mut h);
+            }
         }
         h.finish()
     }
@@ -238,6 +275,8 @@ pub struct Scene {
     pub background: Color,
     pub items: Vec<Item>,
     pub layers: Vec<ScrollLayer>,
+    /// The images the frame draws.
+    pub images: HashMap<ImageId, Arc<Image>>,
     clips: Vec<Rect>,
     layer_stack: Vec<u32>,
     /// The size of the target in device pixels.
@@ -258,6 +297,7 @@ impl Scene {
     pub fn clear(&mut self, width: u32, height: u32, background: Color) {
         self.items.clear();
         self.layers.clear();
+        self.images.clear();
         self.clips.clear();
         self.layer_stack.clear();
         self.width = width;
@@ -325,6 +365,26 @@ impl Scene {
 
     pub fn glyph(&mut self, glyph: Glyph) {
         self.push(Primitive::Glyph(glyph));
+    }
+
+    /// Draws `image` with its top-left corner at `(x, y)`.
+    pub fn image(&mut self, image: &Arc<Image>, x: i32, y: i32, opacity: f32) {
+        self.images
+            .entry(image.id())
+            .or_insert_with(|| image.clone());
+        self.push(Primitive::Image(ImageQuad {
+            id: image.id(),
+            x,
+            y,
+            width: image.width(),
+            height: image.height(),
+            opacity,
+        }));
+    }
+
+    /// Whether a scroll layer is open: layers do not nest.
+    pub fn in_scroll_layer(&self) -> bool {
+        !self.layer_stack.is_empty()
     }
 
     fn push(&mut self, primitive: Primitive) {

@@ -13,8 +13,9 @@
 use std::collections::{HashMap, VecDeque};
 use std::time::Instant;
 
+use crate::image::Image;
 use crate::render::shape::quad_pixel;
-use crate::scene::{Color, Item, Primitive, Quad, Rect, Scene, ScrollLayer};
+use crate::scene::{Color, ImageQuad, Item, Primitive, Quad, Rect, Scene, ScrollLayer};
 use crate::text::{GlyphCache, GlyphImage};
 
 const TILE: i32 = 64;
@@ -121,6 +122,9 @@ pub struct Canvas {
     prev: Option<PrevFrame>,
     /// Each recent frame's damage, newest first.
     history: VecDeque<Vec<PixelRect>>,
+    /// Layers whose pixels this frame moved: changed on screen although
+    /// not redrawn.
+    scrolled: Vec<PixelRect>,
     threads: usize,
 }
 
@@ -141,6 +145,7 @@ impl Canvas {
             pixels: Vec::new(),
             prev: None,
             history: VecDeque::new(),
+            scrolled: Vec::new(),
             threads,
         }
     }
@@ -283,7 +288,13 @@ impl Canvas {
                 let Some(rect) = tiles[t] else { continue };
                 target.fill(&rect, scene.background);
                 for &index in &tile_items[t] {
-                    draw_item(&mut target, &scene.items[index as usize], &rect, glyphs);
+                    draw_item(
+                        &mut target,
+                        &scene.items[index as usize],
+                        &rect,
+                        glyphs,
+                        scene,
+                    );
                 }
             }
         };
@@ -318,7 +329,10 @@ impl Canvas {
             }
         }
 
-        self.history.push_front(dirty);
+        // What changed on screen: what was redrawn and what moved.
+        let mut changed = dirty;
+        changed.append(&mut self.scrolled);
+        self.history.push_front(changed);
         self.history.truncate(HISTORY);
         self.prev = Some(PrevFrame {
             width: scene.width,
@@ -358,6 +372,7 @@ impl Canvas {
                         damage.push(rect);
                     } else if shift != 0 {
                         stats.moved_rows += self.scroll(&rect, shift);
+                        self.scrolled.push(rect);
                         damage.push(if shift < 0 {
                             PixelRect {
                                 y0: rect.y1 + shift,
@@ -566,13 +581,50 @@ fn blend_f(dst: u32, src: [f32; 4]) -> u32 {
     blend(dst, c(src[0]), c(src[1]), c(src[2]), c(src[3]))
 }
 
-fn draw_item(target: &mut Target<'_>, item: &Item, tile: &PixelRect, glyphs: &GlyphCache) {
+fn draw_item(
+    target: &mut Target<'_>,
+    item: &Item,
+    tile: &PixelRect,
+    glyphs: &GlyphCache,
+    scene: &Scene,
+) {
     let clip = PixelRect::covering(&item.clip).intersect(tile);
     match &item.primitive {
         Primitive::Quad(q) => draw_quad(target, q, &clip),
         Primitive::Glyph(g) => {
             if let Some(image) = glyphs.get(&g.key) {
                 draw_glyph(target, image, g.x, g.y, g.color, &clip);
+            }
+        }
+        Primitive::Image(i) => {
+            if let Some(image) = scene.images.get(&i.id) {
+                draw_image(target, image, i, &clip);
+            }
+        }
+    }
+}
+
+/// Copies a premultiplied image pixel for pixel, blended over what is there.
+fn draw_image(target: &mut Target<'_>, image: &Image, at: &ImageQuad, clip: &PixelRect) {
+    let bounds = PixelRect::covering(&at.bounds());
+    let area = bounds.intersect(clip);
+    if area.is_empty() {
+        return;
+    }
+    let w = image.width() as usize;
+    let px = image.pixels();
+    let o = (at.opacity.clamp(0.0, 1.0) * 255.0 + 0.5) as u32;
+    for y in area.y0..area.y1 {
+        let row = (y - bounds.y0) as usize * w;
+        for x in area.x0..area.x1 {
+            let i = (row + (x - bounds.x0) as usize) * 4;
+            let s = &px[i..i + 4];
+            let p = target.at(x, y);
+            if o == 255 {
+                *p = blend(*p, s[0].into(), s[1].into(), s[2].into(), s[3].into());
+            } else {
+                let m = |c: u8| div255(u32::from(c) * o);
+                *p = blend(*p, m(s[0]), m(s[1]), m(s[2]), m(s[3]));
             }
         }
     }
@@ -750,6 +802,34 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn scrolled_pixels_count_as_changed_for_presenting() {
+        let glyphs = GlyphCache::default();
+        let mut canvas = Canvas::new();
+        let frame = |offset: i32| {
+            let mut scene = Scene::new(200, 200, Color::rgb(0xffffff));
+            let rect = Rect::new(0.0, 0.0, 200.0, 200.0);
+            scene.push_scroll_layer(1, rect, offset, Color::rgb(0xffffff));
+            for i in 0..20 {
+                let y = (i * 30 - offset) as f32;
+                scene.quad(Quad::filled(
+                    Rect::new(10.0, y, 50.0, 20.0),
+                    Color::rgb(0x0000ff),
+                ));
+            }
+            scene.pop_scroll_layer();
+            scene
+        };
+        canvas.draw(&frame(0), &glyphs);
+        let stats = canvas.draw(&frame(10), &glyphs);
+        assert!(stats.pixels < 200 * 200, "only the revealed strip is drawn");
+        let changed: i64 = canvas.last_damage().iter().map(PixelRect::area).sum();
+        assert!(
+            changed >= 200 * 200,
+            "the moved layer is reported as changed"
+        );
     }
 
     #[test]

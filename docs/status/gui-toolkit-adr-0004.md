@@ -1,6 +1,6 @@
 ---
 name: gui-toolkit-adr-0004
-description: ADR 0004 (own GUI toolkit ossteam-ui on winit + ash) and its SPEC changes accepted 2026-11-03; the spike is nearly done on a branch, and the toolkit (step 3) has started there
+description: ADR 0004 (own GUI toolkit ossteam-ui on winit + ash) and its SPEC changes accepted 2026-11-03; spike done but for the maintainer's checks; the toolkit (step 3) has its elements, layout, focus, keys, lists, images and runtime on the branch; next the port
 metadata:
   type: project
 ---
@@ -55,5 +55,44 @@ Step 3 began the same day with the fonts (`fonts.rs`): only the UI
 family's files load before the first frame, the rest on the font
 thread. The cold first frame went from about 2 s to 64 ms and the warm
 one from 101 ms to 17 to 30 ms; no fonts at all is an error, not a
-panic (spike items 1 and 10). Next in step 3: elements, layout, focus,
-lists and images, up to what the GUI uses.
+panic (spike items 1 and 10).
+
+Also on 2026-11-03 the maintainer asked for a clean implementation that
+does not port gpui code: the toolkit's API is its own (`panel()`,
+`.row()`, `.pad()`, `.on_click(|state, cx| …)`, actions as plain types,
+`"primary+f"` keystrokes), and the GUI's views will be written anew
+against it. The ADR's Layout row and its Identity, Focus and Images
+items were reworded to say so (an amendment to the accepted ADR). The
+rest of step 3 landed then:
+
+- `element.rs`, `style.rs`: one `Element<S>` type (panel, text, image,
+  canvas, list, text input, overlay) with handlers that get `&mut S`;
+  flexbox styles in logical pixels with inherited text properties,
+  hover and keyboard-focus styles.
+- `window.rs`: build, `taffy` layout in device pixels (whole pixels at
+  any scale), paint into the scene, pointer, wheel, keys, IME, focus
+  and Tab order, key contexts with actions bubbling up, scrolling the
+  focused element into view, rows of a list built only in view,
+  overlays kept inside the window, tooltips, timers and messages. No
+  winit window in it, so `tests/window.rs` drives it headless (also
+  under Wine).
+- `app.rs`: winit's loop, `WaitUntil` for timers, a `Sender` for other
+  threads, the appearance portal's change signal (`appearance::watch`).
+- Images: a scene primitive drawn 1:1 by both renderers; the Vulkan
+  renderer has the image pipeline (`shaders/image.slang`), a texture
+  per image, freed after the application drops it.
+- `examples/gallery.rs` shows all of it; on the headless sway it draws
+  the same with both renderers, its first frame in 105 to 114 ms, no
+  idle wakeups (one from Mesa's shader cache with Vulkan).
+
+Bugs found and fixed on the way: the software renderer did not count
+pixels it moved for a scroll as changed, so the compositor (and older
+buffers) kept stale content; the runtime told winit a frame was coming
+before a frame the software renderer then skipped, which on Wayland
+stopped all later redraws; and the Wayland clipboard's worker crashed
+when it outlived winit's connection at exit.
+
+Open: resident memory in the gallery is 75 MB with Vulkan and 49 MB
+with software (the spike: about 55 and 28 MB); not yet looked into.
+The text field gained a secret mode for the login page's password
+(bullets; Copy and Cut do nothing). Next: the port (step 4).

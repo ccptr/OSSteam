@@ -13,7 +13,7 @@
 use std::collections::HashMap;
 use std::ffi::{CStr, c_char};
 use std::mem::ManuallyDrop;
-use std::sync::Arc;
+use std::sync::{Arc, Weak};
 use std::time::Instant;
 
 use ash::vk;
@@ -25,6 +25,7 @@ use raw_window_handle::{HasDisplayHandle, HasWindowHandle};
 use winit::window::Window;
 
 use crate::Error;
+use crate::image::{Image, ImageId};
 use crate::render::FrameStats;
 use crate::scene::{Primitive, Scene};
 use crate::text::{GlyphCache, GlyphKey};
@@ -33,12 +34,17 @@ const FRAMES_IN_FLIGHT: usize = 2;
 const ATLAS_SIZE: u32 = 1024;
 const QUAD_SPV: &[u8] = include_bytes!("../../shaders/quad.spv");
 const GLYPH_SPV: &[u8] = include_bytes!("../../shaders/glyph.spv");
+const IMAGE_SPV: &[u8] = include_bytes!("../../shaders/image.spv");
+/// How many image textures can exist at once.
+const MAX_IMAGES: u32 = 4096;
 const VALIDATION_LAYER: &CStr = c"VK_LAYER_KHRONOS_validation";
 
 /// Bytes per quad instance: bounds, clip, background, border colour, params.
 const QUAD_STRIDE: u32 = 5 * 16;
 /// Bytes per glyph instance: dest, atlas slot, colour, clip.
 const GLYPH_STRIDE: u32 = 4 * 16;
+/// Bytes per image instance: dest, clip, params (opacity).
+const IMAGE_STRIDE: u32 = 3 * 16;
 
 fn vk_err(what: &'static str) -> impl FnOnce(vk::Result) -> Error {
     move |e| format!("{what}: {e}").into()
@@ -94,7 +100,41 @@ struct Upload {
 enum Kind {
     Quad,
     Glyph,
+    Image(ImageId),
 }
+
+impl Kind {
+    fn stride(self) -> u64 {
+        u64::from(match self {
+            Kind::Quad => QUAD_STRIDE,
+            Kind::Glyph => GLYPH_STRIDE,
+            Kind::Image(_) => IMAGE_STRIDE,
+        })
+    }
+}
+
+/// An image's texture. The renderer holds only a weak reference to the
+/// image: once the application drops it, the texture is retired.
+struct GpuImage {
+    image: vk::Image,
+    view: vk::ImageView,
+    allocation: Option<Allocation>,
+    set: vk::DescriptorSet,
+    source: Weak<Image>,
+    width: u32,
+    height: u32,
+    /// Uploaded and in the layout shaders read.
+    ready: bool,
+}
+
+/// An image to upload from the staging buffer this frame.
+struct ImageUpload {
+    id: ImageId,
+    offset: u64,
+}
+
+/// A frame's batches, and the glyphs and images it must upload.
+type Prepared = (Vec<Batch>, Vec<Upload>, Vec<ImageUpload>);
 
 struct Batch {
     kind: Kind,
@@ -126,6 +166,13 @@ pub struct VulkanRenderer {
     quad_pipeline: vk::Pipeline,
     glyph_pipeline: vk::Pipeline,
     atlas: Atlas,
+    image_pipeline: vk::Pipeline,
+    image_pool: vk::DescriptorPool,
+    images: HashMap<ImageId, GpuImage>,
+    /// Textures whose image is gone, with the frame count when they were
+    /// retired: destroyed once no frame in flight can use them.
+    retired: Vec<(u64, GpuImage)>,
+    frames_drawn: u64,
     frames: Vec<Frame>,
     frame: usize,
     allocator: ManuallyDrop<Allocator>,
@@ -273,6 +320,11 @@ impl VulkanRenderer {
             glyph_layout: vk::PipelineLayout::null(),
             quad_pipeline: vk::Pipeline::null(),
             glyph_pipeline: vk::Pipeline::null(),
+            image_pipeline: vk::Pipeline::null(),
+            image_pool: vk::DescriptorPool::null(),
+            images: HashMap::new(),
+            retired: Vec::new(),
+            frames_drawn: 0,
             atlas: Atlas {
                 image: vk::Image::null(),
                 view: vk::ImageView::null(),
@@ -392,6 +444,23 @@ impl VulkanRenderer {
                 self.create_pipeline(QUAD_SPV, self.quad_layout, QUAD_STRIDE, 5)?;
             self.glyph_pipeline =
                 self.create_pipeline(GLYPH_SPV, self.glyph_layout, GLYPH_STRIDE, 4)?;
+            // Images bind one texture each, through the glyphs' layout.
+            self.image_pipeline =
+                self.create_pipeline(IMAGE_SPV, self.glyph_layout, IMAGE_STRIDE, 3)?;
+            let sizes = [vk::DescriptorPoolSize {
+                ty: vk::DescriptorType::SAMPLED_IMAGE,
+                descriptor_count: MAX_IMAGES,
+            }];
+            self.image_pool = self
+                .device
+                .create_descriptor_pool(
+                    &vk::DescriptorPoolCreateInfo::default()
+                        .flags(vk::DescriptorPoolCreateFlags::FREE_DESCRIPTOR_SET)
+                        .max_sets(MAX_IMAGES)
+                        .pool_sizes(&sizes),
+                    None,
+                )
+                .map_err(vk_err("creating the image descriptor pool"))?;
 
             // The atlas.
             let d = &self.device;
@@ -485,6 +554,151 @@ impl VulkanRenderer {
             }
         }
         Ok(())
+    }
+
+    /// Makes the texture for an image; its pixels are uploaded when it is
+    /// first drawn.
+    fn create_image(&mut self, source: &Arc<Image>) -> Result<GpuImage, Error> {
+        let d = &self.device;
+        let (width, height) = (source.width().max(1), source.height().max(1));
+        // SAFETY: plain object creation on a live device; each object is
+        // destroyed with the texture (`destroy_image`).
+        unsafe {
+            let image = d
+                .create_image(
+                    &vk::ImageCreateInfo::default()
+                        .image_type(vk::ImageType::TYPE_2D)
+                        .format(vk::Format::R8G8B8A8_UNORM)
+                        .extent(vk::Extent3D {
+                            width,
+                            height,
+                            depth: 1,
+                        })
+                        .mip_levels(1)
+                        .array_layers(1)
+                        .samples(vk::SampleCountFlags::TYPE_1)
+                        .tiling(vk::ImageTiling::OPTIMAL)
+                        .usage(vk::ImageUsageFlags::SAMPLED | vk::ImageUsageFlags::TRANSFER_DST)
+                        .initial_layout(vk::ImageLayout::UNDEFINED),
+                    None,
+                )
+                .map_err(vk_err("creating an image"))?;
+            let requirements = d.get_image_memory_requirements(image);
+            let allocation = match self.allocator.allocate(&AllocationCreateDesc {
+                name: "image",
+                requirements,
+                location: MemoryLocation::GpuOnly,
+                linear: false,
+                allocation_scheme: AllocationScheme::GpuAllocatorManaged,
+            }) {
+                Ok(a) => a,
+                Err(e) => {
+                    d.destroy_image(image, None);
+                    return Err(format!("allocating an image: {e}").into());
+                }
+            };
+            let mut gpu = GpuImage {
+                image,
+                view: vk::ImageView::null(),
+                allocation: Some(allocation),
+                set: vk::DescriptorSet::null(),
+                source: Arc::downgrade(source),
+                width,
+                height,
+                ready: false,
+            };
+            let a = gpu.allocation.as_ref().expect("set above");
+            let made = d
+                .bind_image_memory(image, a.memory(), a.offset())
+                .map_err(vk_err("binding an image"))
+                .and_then(|()| {
+                    d.create_image_view(
+                        &vk::ImageViewCreateInfo::default()
+                            .image(image)
+                            .view_type(vk::ImageViewType::TYPE_2D)
+                            .format(vk::Format::R8G8B8A8_UNORM)
+                            .subresource_range(color_range()),
+                        None,
+                    )
+                    .map_err(vk_err("creating an image view"))
+                })
+                .and_then(|view| {
+                    gpu.view = view;
+                    let layouts = [self.descriptor_layout];
+                    d.allocate_descriptor_sets(
+                        &vk::DescriptorSetAllocateInfo::default()
+                            .descriptor_pool(self.image_pool)
+                            .set_layouts(&layouts),
+                    )
+                    .map_err(vk_err("allocating an image's descriptor set"))
+                });
+            match made {
+                Ok(sets) => gpu.set = sets[0],
+                Err(e) => {
+                    self.destroy_image(gpu);
+                    return Err(e);
+                }
+            }
+            let info = [vk::DescriptorImageInfo::default()
+                .image_view(gpu.view)
+                .image_layout(vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL)];
+            let writes = [vk::WriteDescriptorSet::default()
+                .dst_set(gpu.set)
+                .dst_binding(0)
+                .descriptor_type(vk::DescriptorType::SAMPLED_IMAGE)
+                .image_info(&info)];
+            d.update_descriptor_sets(&writes, &[]);
+            Ok(gpu)
+        }
+    }
+
+    /// Destroys a texture no submitted frame uses.
+    fn destroy_image(&mut self, mut gpu: GpuImage) {
+        // SAFETY: the caller makes sure no frame in flight uses it.
+        unsafe {
+            if gpu.set != vk::DescriptorSet::null() {
+                let _ = self
+                    .device
+                    .free_descriptor_sets(self.image_pool, &[gpu.set]);
+            }
+            if gpu.view != vk::ImageView::null() {
+                self.device.destroy_image_view(gpu.view, None);
+            }
+            self.device.destroy_image(gpu.image, None);
+        }
+        if let Some(a) = gpu.allocation.take() {
+            let _ = self.allocator.free(a);
+        }
+    }
+
+    /// Retires the textures of images the application has dropped and
+    /// this frame did not draw.
+    fn retire_unused(&mut self, scene: &Scene) {
+        let gone: Vec<ImageId> = self
+            .images
+            .iter()
+            .filter(|(id, g)| g.source.strong_count() == 0 && !scene.images.contains_key(id))
+            .map(|(id, _)| *id)
+            .collect();
+        for id in gone {
+            if let Some(gpu) = self.images.remove(&id) {
+                self.retired.push((self.frames_drawn, gpu));
+            }
+        }
+    }
+
+    /// Destroys retired textures once every frame that could use them
+    /// has finished: each frame waits for the one `FRAMES_IN_FLIGHT`
+    /// before it.
+    fn free_retired(&mut self) {
+        let now = self.frames_drawn;
+        let (done, keep): (Vec<_>, Vec<_>) = std::mem::take(&mut self.retired)
+            .into_iter()
+            .partition(|(at, _)| now >= at + FRAMES_IN_FLIGHT as u64);
+        self.retired = keep;
+        for (_, gpu) in done {
+            self.destroy_image(gpu);
+        }
     }
 
     fn create_pipeline(
@@ -751,8 +965,17 @@ impl VulkanRenderer {
             Err(e) => return Err(format!("acquiring an image: {e}").into()),
         };
 
-        let (batches, uploads) = self.prepare(scene, glyphs)?;
-        self.record(frame, image as usize, scene, &batches, &uploads)?;
+        self.free_retired();
+        let (batches, uploads, image_uploads) = self.prepare(scene, glyphs)?;
+        self.record(
+            frame,
+            image as usize,
+            scene,
+            &batches,
+            &uploads,
+            &image_uploads,
+        )?;
+        self.retire_unused(scene);
 
         let chain = self.swapchain.as_ref().expect("built above");
         let waits = [self.frames[frame].image_available];
@@ -790,6 +1013,7 @@ impl VulkanRenderer {
             Err(e) => return Err(format!("presenting: {e}").into()),
         }
         self.frame = (self.frame + 1) % FRAMES_IN_FLIGHT;
+        self.frames_drawn += 1;
         Ok(FrameStats {
             ms: started.elapsed().as_secs_f64() * 1000.0,
             wait_ms: waited.as_secs_f64() * 1000.0,
@@ -799,17 +1023,14 @@ impl VulkanRenderer {
     }
 
     /// Writes the frame's instances and the glyphs it must upload.
-    fn prepare(
-        &mut self,
-        scene: &Scene,
-        glyphs: &GlyphCache,
-    ) -> Result<(Vec<Batch>, Vec<Upload>), Error> {
+    fn prepare(&mut self, scene: &Scene, glyphs: &GlyphCache) -> Result<Prepared, Error> {
         // A full atlas is emptied once and the frame prepared again.
         for attempt in 0..2 {
             self.bytes.clear();
             self.staged.clear();
             let mut batches: Vec<Batch> = Vec::new();
             let mut uploads = Vec::new();
+            let mut image_uploads = Vec::new();
             let mut full = false;
             for item in &scene.items {
                 let clip = [
@@ -830,6 +1051,28 @@ impl VulkanRenderer {
                             [q.corner_radius, q.border_width, q.blur, 0.0],
                         );
                         Kind::Quad
+                    }
+                    Primitive::Image(i) => {
+                        let Some(source) = scene.images.get(&i.id) else {
+                            continue;
+                        };
+                        if !self.images.contains_key(&i.id) {
+                            let gpu = self.create_image(source)?;
+                            self.images.insert(i.id, gpu);
+                        }
+                        let gpu = &self.images[&i.id];
+                        if !gpu.ready && !image_uploads.iter().any(|u: &ImageUpload| u.id == i.id) {
+                            image_uploads.push(ImageUpload {
+                                id: i.id,
+                                offset: self.staged.len() as u64,
+                            });
+                            self.staged.extend_from_slice(source.pixels());
+                        }
+                        let b = i.bounds();
+                        push_vec4(&mut self.bytes, [b.x, b.y, b.w, b.h]);
+                        push_vec4(&mut self.bytes, clip);
+                        push_vec4(&mut self.bytes, [i.opacity, 0.0, 0.0, 0.0]);
+                        Kind::Image(i.id)
                     }
                     Primitive::Glyph(g) => {
                         let Some(image) = glyphs.get(&g.key) else {
@@ -884,11 +1127,7 @@ impl VulkanRenderer {
                         Kind::Glyph
                     }
                 };
-                let stride = if kind == Kind::Quad {
-                    QUAD_STRIDE
-                } else {
-                    GLYPH_STRIDE
-                } as u64;
+                let stride = kind.stride();
                 match batches.last_mut() {
                     Some(b) if b.kind == kind => b.count += 1,
                     _ => batches.push(Batch {
@@ -899,7 +1138,7 @@ impl VulkanRenderer {
                 }
             }
             if !full {
-                return Ok((batches, uploads));
+                return Ok((batches, uploads, image_uploads));
             }
             if attempt == 0 {
                 tracing::debug!("the glyph atlas is full; emptying it");
@@ -917,6 +1156,7 @@ impl VulkanRenderer {
         scene: &Scene,
         batches: &[Batch],
         uploads: &[Upload],
+        image_uploads: &[ImageUpload],
     ) -> Result<(), Error> {
         let instances_len = self.bytes.len().max(16) as u64;
         let staged_len = self.staged.len().max(16) as u64;
@@ -927,7 +1167,8 @@ impl VulkanRenderer {
             instances_len,
             vk::BufferUsageFlags::VERTEX_BUFFER,
         )?;
-        if !uploads.is_empty() {
+        let staging_used = !uploads.is_empty() || !image_uploads.is_empty();
+        if staging_used {
             ensure_buffer(
                 &self.device,
                 &mut self.allocator,
@@ -943,7 +1184,7 @@ impl VulkanRenderer {
             .mapped_slice_mut()
             .ok_or("instance buffer is not mapped")?[..self.bytes.len()]
             .copy_from_slice(&self.bytes);
-        if !uploads.is_empty() {
+        if staging_used {
             let staging = f.staging.as_mut().expect("ensured above");
             staging
                 .allocation
@@ -1040,6 +1281,72 @@ impl VulkanRenderer {
                 self.atlas.ready = true;
             }
 
+            if let Some(staging) = f.staging.as_ref().filter(|_| !image_uploads.is_empty()) {
+                for u in image_uploads {
+                    let Some(gpu) = self.images.get_mut(&u.id) else {
+                        continue;
+                    };
+                    let barrier = |old, new, src, dst| {
+                        [vk::ImageMemoryBarrier::default()
+                            .src_access_mask(src)
+                            .dst_access_mask(dst)
+                            .old_layout(old)
+                            .new_layout(new)
+                            .image(gpu.image)
+                            .subresource_range(color_range())]
+                    };
+                    d.cmd_pipeline_barrier(
+                        cmd,
+                        vk::PipelineStageFlags::TOP_OF_PIPE,
+                        vk::PipelineStageFlags::TRANSFER,
+                        vk::DependencyFlags::empty(),
+                        &[],
+                        &[],
+                        &barrier(
+                            vk::ImageLayout::UNDEFINED,
+                            vk::ImageLayout::TRANSFER_DST_OPTIMAL,
+                            vk::AccessFlags::empty(),
+                            vk::AccessFlags::TRANSFER_WRITE,
+                        ),
+                    );
+                    let region = [vk::BufferImageCopy::default()
+                        .buffer_offset(u.offset)
+                        .image_subresource(vk::ImageSubresourceLayers {
+                            aspect_mask: vk::ImageAspectFlags::COLOR,
+                            mip_level: 0,
+                            base_array_layer: 0,
+                            layer_count: 1,
+                        })
+                        .image_extent(vk::Extent3D {
+                            width: gpu.width,
+                            height: gpu.height,
+                            depth: 1,
+                        })];
+                    d.cmd_copy_buffer_to_image(
+                        cmd,
+                        staging.buffer,
+                        gpu.image,
+                        vk::ImageLayout::TRANSFER_DST_OPTIMAL,
+                        &region,
+                    );
+                    d.cmd_pipeline_barrier(
+                        cmd,
+                        vk::PipelineStageFlags::TRANSFER,
+                        vk::PipelineStageFlags::FRAGMENT_SHADER,
+                        vk::DependencyFlags::empty(),
+                        &[],
+                        &[],
+                        &barrier(
+                            vk::ImageLayout::TRANSFER_DST_OPTIMAL,
+                            vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
+                            vk::AccessFlags::TRANSFER_WRITE,
+                            vk::AccessFlags::SHADER_READ,
+                        ),
+                    );
+                    gpu.ready = true;
+                }
+            }
+
             let bg = scene.background;
             let clear = [vk::ClearValue {
                 color: vk::ClearColorValue {
@@ -1075,21 +1382,34 @@ impl VulkanRenderer {
             let viewport = [scene.width as f32, scene.height as f32];
             let push: Vec<u8> = viewport.iter().flat_map(|v| v.to_le_bytes()).collect();
             let mut bound = None;
+            let mut bound_pipeline = vk::Pipeline::null();
             for batch in batches {
                 if bound != Some(batch.kind) {
-                    let (pipeline, layout) = match batch.kind {
-                        Kind::Quad => (self.quad_pipeline, self.quad_layout),
-                        Kind::Glyph => (self.glyph_pipeline, self.glyph_layout),
+                    let (pipeline, layout, set) = match batch.kind {
+                        Kind::Quad => (self.quad_pipeline, self.quad_layout, None),
+                        Kind::Glyph => (
+                            self.glyph_pipeline,
+                            self.glyph_layout,
+                            Some(self.descriptor_set),
+                        ),
+                        Kind::Image(id) => (
+                            self.image_pipeline,
+                            self.glyph_layout,
+                            self.images.get(&id).map(|g| g.set),
+                        ),
                     };
-                    d.cmd_bind_pipeline(cmd, vk::PipelineBindPoint::GRAPHICS, pipeline);
-                    d.cmd_push_constants(cmd, layout, vk::ShaderStageFlags::VERTEX, 0, &push);
-                    if batch.kind == Kind::Glyph {
+                    if pipeline != bound_pipeline {
+                        d.cmd_bind_pipeline(cmd, vk::PipelineBindPoint::GRAPHICS, pipeline);
+                        d.cmd_push_constants(cmd, layout, vk::ShaderStageFlags::VERTEX, 0, &push);
+                        bound_pipeline = pipeline;
+                    }
+                    if let Some(set) = set {
                         d.cmd_bind_descriptor_sets(
                             cmd,
                             vk::PipelineBindPoint::GRAPHICS,
                             layout,
                             0,
-                            &[self.descriptor_set],
+                            &[set],
                             &[],
                         );
                     }
@@ -1124,6 +1444,14 @@ impl Drop for VulkanRenderer {
                 self.device.destroy_fence(f.in_flight, None);
                 self.device.destroy_command_pool(f.pool, None);
             }
+            for gpu in std::mem::take(&mut self.images).into_values() {
+                self.destroy_image(gpu);
+            }
+            for (_, gpu) in std::mem::take(&mut self.retired) {
+                self.destroy_image(gpu);
+            }
+            self.device.destroy_pipeline(self.image_pipeline, None);
+            self.device.destroy_descriptor_pool(self.image_pool, None);
             self.device.destroy_image_view(self.atlas.view, None);
             self.device.destroy_image(self.atlas.image, None);
             if let Some(a) = self.atlas.allocation.take() {

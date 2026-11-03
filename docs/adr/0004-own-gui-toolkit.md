@@ -53,7 +53,7 @@ it does not wrap another GUI framework.
 | Windows, input events, IME events, DPI, event loop | `winit` | dependency |
 | Drawing on the GPU | Vulkan through `ash`; `ash-window` for the surface, `gpu-allocator` for memory; MoltenVK on macOS | renderer, pipelines and shaders ours |
 | Drawing on the CPU | our own rasteriser; `softbuffer` hands the finished pixels to the window | renderer ours, presenting a dependency |
-| Layout | `taffy` (flexbox), behind a builder like the subset of gpui's `div()` the GUI uses | builder ours |
+| Layout | `taffy` (flexbox), behind our own element builder (`element.rs`, `style.rs`), not a copy of gpui's | builder ours |
 | Text | `cosmic-text` for shaping, font fallback, line breaking and hit-testing; `swash` rasterises glyphs into an `etagere`-packed atlas | atlas, text field and finding the fonts ours: the UI family's files first, the rest on the font thread for fallback (spike item 1) |
 | Clipboard | `smithay-clipboard` on Wayland, on winit's connection; `arboard` elsewhere | dependency |
 | Folder picker | on Linux the portal's file chooser through `ashpd`, on our own bus connection; `rfd`'s blocking API on Windows and macOS | Linux call ours, the rest a dependency |
@@ -75,16 +75,22 @@ it does not wrap another GUI framework.
   whenever something changed. Event handlers are closures that get
   `&mut state` after the frame, so the store stays the only copy of
   daemon state (GUI-2) and needs no entity or context to be tested.
-- **Identity.** Elements that keep state between frames (focus, scroll
-  offsets, a text field's cursor and selection, an image) have an
-  `ElementId`, as in gpui, so the port keeps the ids `AGENTS/gui/focus.md`
-  describes.
+- **Identity.** What lasts between frames is keyed by ids the state
+  holds: an element's `ElementId` path (being pressed), `FocusHandle`s
+  (focus; a handle can be named, so controls that replace each other
+  keep focus, as `AGENTS/gui/focus.md` asks) and `ScrollHandle`s
+  (scroll offsets). A text field's text, cursor and selection live in
+  the state.
 - **Focus and keys.** Focus handles, Tab order in tree order, and key
-  bindings scoped by key context, the parts of gpui's actions the GUI
-  uses (`text_input.rs`, `page_scroll.rs`, `library.rs`, `root.rs`).
-- **Images are explicit.** The toolkit uploads an image when asked and
-  frees it when told, with no cache of its own; `thumbnails.rs` keeps
-  deciding what stays (gui.md §4.2).
+  bindings scoped by key context, whose actions go from the focused
+  element up to the root. The toolkit scrolls a focused element into
+  view itself when focus moves by keyboard, and gives a focus style only
+  then.
+- **Images are explicit.** The application decodes and scales an image
+  and hands the toolkit an `Arc` of it; a renderer uploads it when it is
+  first drawn and frees it once the application has dropped the last
+  `Arc`, with no cache of its own; `thumbnails.rs` keeps deciding what
+  stays (gui.md §4.2).
 - **Two renderers, one scene.** Layout produces a scene: rounded
   rectangles with borders and shadows, glyph runs, images, and clip
   rectangles, in device pixels. The Vulkan renderer and the software
@@ -166,6 +172,8 @@ used off Linux, has no async in its blocking API.
    done. The modules without gpui (`queue`, `rate`, `format`, `args`,
    the QR matrix, the store's event handling) move over unchanged; the
    store stops being an entity; `testing/gui.rs` drives it directly.
+   The views and widgets are written anew against the toolkit's own API,
+   not translated from gpui's (the maintainer's direction, 2026-11-03).
 5. **Before merging**: the M1e rows already passed on Linux pass again
    (keyboard only, no daemon and Retry, the gui_states dry runs, the §20
    scroll bench). Then gpui, its four patches and the proptest patch are

@@ -49,17 +49,56 @@ impl StartupAppearance {
     }
 }
 
+/// Calls `changed` on a thread of its own whenever the desktop's
+/// appearance changes, as the portal reports it (Linux). Elsewhere winit
+/// reports changes with the window, so this does nothing. The thread
+/// waits on the bus socket and does not wake otherwise (GUI-5).
+pub fn watch(changed: impl Fn(Appearance) + Send + 'static) {
+    #[cfg(any(target_os = "linux", target_os = "freebsd"))]
+    {
+        let spawned = std::thread::Builder::new()
+            .name("appearance".into())
+            .spawn(move || {
+                use ashpd::desktop::settings::Settings;
+                use futures_lite::StreamExt;
+                let watched = async_io::block_on(async {
+                    let bus = crate::portal::session_bus().await?;
+                    let settings = Settings::with_connection(bus).await?;
+                    let mut changes = settings.receive_color_scheme_changed().await?;
+                    while let Some(scheme) = changes.next().await {
+                        changed(from_scheme(scheme));
+                    }
+                    Ok::<_, ashpd::Error>(())
+                });
+                if let Err(e) = watched {
+                    tracing::info!("not watching the appearance: {e}");
+                }
+            });
+        if let Err(e) = spawned {
+            tracing::warn!("starting the appearance thread: {e}");
+        }
+    }
+    #[cfg(not(any(target_os = "linux", target_os = "freebsd")))]
+    let _ = changed;
+}
+
+#[cfg(any(target_os = "linux", target_os = "freebsd"))]
+fn from_scheme(scheme: ashpd::desktop::settings::ColorScheme) -> Appearance {
+    use ashpd::desktop::settings::ColorScheme;
+    match scheme {
+        ColorScheme::PreferDark => Appearance::Dark,
+        ColorScheme::PreferLight | ColorScheme::NoPreference => Appearance::Light,
+    }
+}
+
 /// `org.freedesktop.appearance color-scheme`; no preference is light.
 #[cfg(any(target_os = "linux", target_os = "freebsd"))]
 fn portal_appearance() -> Option<Appearance> {
-    use ashpd::desktop::settings::{ColorScheme, Settings};
+    use ashpd::desktop::settings::Settings;
     let scheme = async_io::block_on(async {
         let bus = crate::portal::session_bus().await?;
         Settings::with_connection(bus).await?.color_scheme().await
     })
     .ok()?;
-    Some(match scheme {
-        ColorScheme::PreferDark => Appearance::Dark,
-        ColorScheme::PreferLight | ColorScheme::NoPreference => Appearance::Light,
-    })
+    Some(from_scheme(scheme))
 }

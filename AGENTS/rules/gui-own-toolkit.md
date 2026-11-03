@@ -8,7 +8,9 @@ metadata:
 The GUI is built on `ossteam-ui`, our own toolkit in `crates/ossteam-ui/`
 (SPEC GUI-1, [ADR 0004](../../docs/adr/0004-own-gui-toolkit.md)): winit
 for windows and input, Vulkan through `ash` for drawing (not wgpu) and
-our own software renderer beside it (not tiny-skia), taffy for layout, cosmic-text and swash for text. The GUI's own widgets
+our own software renderer beside it (not tiny-skia), shaders in Slang
+compiled by `cargo xtask shaders`, taffy for layout, cosmic-text and
+swash for text. The GUI's own widgets
 stay in `crates/ossteam-gui/src/widgets/`. Do not add a third-party GUI
 framework or widget kit (`gpui-component`, egui, iced and the like).
 

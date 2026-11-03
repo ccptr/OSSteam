@@ -14,6 +14,7 @@ members = [
     "crates/ossteam-ipc",
     "crates/ossteamd",
     "crates/ossteam-cli",
+    "crates/ossteam-ui",
     "crates/ossteam-gui",
     "xtask",
 ]
@@ -31,6 +32,7 @@ default-members = [
     "crates/ossteam-ipc",
     "crates/ossteamd",
     "crates/ossteam-cli",
+    "crates/ossteam-ui",
     "crates/ossteam-gui",
 ]
 

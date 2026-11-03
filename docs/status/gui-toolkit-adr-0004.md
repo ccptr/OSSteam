@@ -15,6 +15,9 @@ LIC-4 names winit, and the §1 intro, §4, §5.1, §5.3, §16 title and §23
 rows follow. `docs/spec/gui.md` §2.1, §3, §4.2, §6 and §7 now describe
 the toolkit design.
 
+Also on 2026-11-02 the maintainer chose Slang for the shaders; the ADR's
+Shaders item says so.
+
 Waiting on the maintainer's review. After it: the spike (ADR step 2),
 then the toolkit and the port on a branch. Until then `ossteam-gui` is
 on gpui.

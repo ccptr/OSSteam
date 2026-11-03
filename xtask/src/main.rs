@@ -13,7 +13,10 @@
 //! - `build-steamclient [--release] [--target <triple>]`: builds the
 //!   Steamworks client library for a 64-bit target and its 32-bit
 //!   counterpart, laid out as the daemon expects (`lib32/`).
+//! - `shaders [--check]`: compiles `ossteam-ui`'s Slang shaders to the
+//!   committed SPIR-V, or checks that it matches (ADR 0004).
 
+mod shaders;
 mod steamclient;
 mod steamworks;
 
@@ -59,9 +62,15 @@ const ALLOWED: &[(&str, Option<&[&str]>)] = &[
         Some(&["ossteam-gameipc", "ossteam-types"]),
     ),
     ("ossteamd", None),
-    // LEAF-2: leaf clients reach the daemon through ossteam-ipc only.
+    // LEAF-2: leaf clients reach the daemon through ossteam-ipc only;
+    // the GUI also draws with ossteam-ui (WS-1).
     ("ossteam-cli", Some(&["ossteam-ipc", "ossteam-types"])),
-    ("ossteam-gui", Some(&["ossteam-ipc", "ossteam-types"])),
+    (
+        "ossteam-gui",
+        Some(&["ossteam-ipc", "ossteam-types", "ossteam-ui"]),
+    ),
+    // WS-1: the GUI toolkit depends on no other workspace crate.
+    ("ossteam-ui", Some(&[])),
     ("xtask", Some(&[])),
 ];
 
@@ -97,9 +106,10 @@ fn main() -> ExitCode {
             )),
         },
         Some("build-steamclient") => steamclient::build(args.collect()),
+        Some("shaders") => shaders::run(args.collect()),
         Some(other) => Err(anyhow::anyhow!("unknown command {other:?}")),
         None => Err(anyhow::anyhow!(
-            "usage: cargo xtask <check-layering|check-spdx|update-protos|import-steamworks|build-steamclient>"
+            "usage: cargo xtask <check-layering|check-spdx|update-protos|import-steamworks|build-steamclient|shaders>"
         )),
     };
     match result {

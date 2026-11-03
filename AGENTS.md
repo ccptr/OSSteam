@@ -18,7 +18,9 @@ Instructions for coding agents working on ossteam (format:
   `.cursorrules`, `.cursor/`, `.github/copilot-instructions.md`,
   `GEMINI.md` and the like), and do not keep project knowledge in an
   agent's private memory. When you learn something the next session
-  needs, update `docs/status.md`, this file or `AGENTS.local.md`.
+  needs, update `docs/status.md`, this file or `AGENTS.local.md`. The
+  one exception is the committed `CLAUDE.md`, which only points Claude
+  Code here. Keep it a pointer; don't add instructions or notes to it.
 - A subdirectory may get its own `AGENTS.md` when it needs rules of its
   own; the nearest one wins.
 

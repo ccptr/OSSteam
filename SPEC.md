@@ -236,7 +236,7 @@ crates/
   ossteam-ipc/             client IPC protocol + blocking client library
   ossteamd/                daemon binary
   ossteam-cli/             binary `ossteam` (clap)
-  ossteam-ui/              our GUI toolkit: window, layout, text, Vulkan renderer, focus (ADR 0004)
+  ossteam-ui/              our GUI toolkit: window, layout, text, Vulkan and software renderers, focus (ADR 0004)
   ossteam-gui/             binary `ossteam-gui` (ossteam-ui); src/widgets/
 xtask/                     codegen, packaging, license and layering checks
 docs/spec/                 subsystem specs (RE notes in our own words)
@@ -261,7 +261,7 @@ docs/acceptance/           per-milestone acceptance corpora and checklists
 | Concern | Choice | Notes |
 |---|---|---|
 | Toolchain | Pinned in `rust-toolchain.toml` | Currently 1.98.1, which the gpui revision still in use needs; bumped deliberately once ADR 0004's port removes gpui |
-| GUI | `ossteam-ui`, ours (ADR 0004), on `winit`, `ash` (Vulkan; MoltenVK on macOS), `taffy`, `cosmic-text` and `swash` | No third-party GUI framework or widget kit |
+| GUI | `ossteam-ui`, ours (ADR 0004), on `winit`, `ash` (Vulkan; MoltenVK on macOS), `taffy`, `cosmic-text` and `swash`; our own software renderer, presented with `softbuffer` | No third-party GUI framework or widget kit |
 | CLI | `clap` v4 (derive), `clap_complete` | |
 | Protobuf | `prost`, `prost-build` | Used for both Steam messages and our IPC |
 | WebSocket | `tungstenite` (non-blocking, ADR 0001) + `rustls` | rustls uses the `ring` provider and `rustls-platform-verifier` (SEC-3) |
@@ -1058,7 +1058,7 @@ Steamworks interfaces driven by ShimReport data.
 | A VAC implementation that is wrong could get users banned | Ship behind a feature flag (VAC-5), test differentially, and never ship an unvalidated build |
 | The Steam protocol changes | Keep spec pages current, use recorded-replay CI, run live tests on a schedule, track Valve's protocol updates |
 | Our own GUI toolkit is a large surface: text editing, IME, a Vulkan renderer, three platforms | Build only what the GUI uses; winit, cosmic-text and taffy do windows, shaping and layout; headless tests; a spike gates the port (ADR 0004) |
-| Vulkan is not everywhere: macOS needs MoltenVK, and some Windows machines have no driver | Ship MoltenVK in the macOS bundle; fail with a clear error when no device can be created (ADR 0004) |
+| Vulkan is not everywhere: macOS needs MoltenVK, and some Windows machines have no driver | Ship MoltenVK in the macOS bundle; draw with our own software renderer when no Vulkan device can be created (ADR 0004) |
 | The Steamworks interface versions in use are a large surface | Expand interfaces based on ShimReport data. Fail honestly in the meantime. |
 | The name "ossteam" contains "steam" | State non-affiliation clearly (LIC-8). Revisit the name before a 1.0 release (Q3). |
 | Coexisting with an official Steam install | DISC-3 conflict handling. Never overwrite Valve's entries. |

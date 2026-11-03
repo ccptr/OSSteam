@@ -34,7 +34,7 @@ These come from the maintainer. Don't trade them away for convenience.
 - [Spec first](AGENTS/rules/spec-first.md) — reverse engineering is written up in `docs/spec/` before code; no Valve code
 - [Review gates](AGENTS/rules/review-gates.md) — no DRM/VAC/cloud/friends/betas/workshop/offline code before review; ask about install-scripts §2.6
 - [Synchronous first](AGENTS/rules/synchronous-first.md) — async only behind a sync facade or via an ADR; the gpui GUI until ADR 0004's port
-- [Our own GUI toolkit](AGENTS/rules/gui-own-toolkit.md) — `ossteam-ui` on winit and ash (Vulkan), ADR 0004; no third-party GUI framework
+- [Our own GUI toolkit](AGENTS/rules/gui-own-toolkit.md) — `ossteam-ui` on winit, ash (Vulkan) and our own software renderer, ADR 0004; no third-party GUI framework
 - [SPEC changes](AGENTS/rules/spec-changes.md) — need the maintainer; say so plainly when reporting
 - [CI stays off](AGENTS/rules/ci-stays-off.md) — don't switch CI jobs back on; mark anything else off with `RELEASE-BLOCKER`
 - [Test account only](AGENTS/rules/test-account-only.md) — live runs use the maintainer's test account on the real install

@@ -175,7 +175,7 @@ page.
 - **Capsule images** are decoded on a background thread and scaled to
   fill the cell in device pixels, cropping what overflows. The 256 most
   recently drawn are kept and the others are dropped from memory and
-  from the GPU's atlas; `ossteam-ui` keeps no image the GUI has not
+  from the renderer (the GPU's atlas, with Vulkan); `ossteam-ui` keeps no image the GUI has not
   asked it to keep. (gpui's image loading kept every image at full size
   until the app exited: scrolling 10,000 capsules with it held 11.7 GB.)
 - While `ListApps.complete` is false the page says that the library is

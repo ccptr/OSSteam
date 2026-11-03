@@ -24,6 +24,7 @@ async-io = "2.6.0"
 
 [dev-dependencies]
 serde_json.workspace = true
+tracing-subscriber.workspace = true
 
 [lints]
 workspace = true

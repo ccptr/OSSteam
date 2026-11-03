@@ -1,6 +1,6 @@
 ---
 name: gui-toolkit-adr-0004
-description: ADR 0004 (own GUI toolkit ossteam-ui on winit + ash) and its SPEC changes are proposed, not reviewed; nothing is built yet
+description: ADR 0004 (own GUI toolkit ossteam-ui on winit + ash) and its SPEC changes are proposed, not reviewed; the spike is under way on a branch
 metadata:
   type: project
 ---
@@ -18,6 +18,10 @@ the toolkit design.
 Also on 2026-11-02 the maintainer chose Slang for the shaders; the ADR's
 Shaders item says so.
 
-Waiting on the maintainer's review. After it: the spike (ADR step 2),
-then the toolkit and the port on a branch. Until then `ossteam-gui` is
-on gpui.
+The ADR and its SPEC changes still wait on the maintainer's review. The
+maintainer asked on 2026-11-02 to start the spike (ADR step 2) meanwhile;
+it is on the branch `ossteam-ui-spike`, with its results and what is
+left in [adr-0004-spike](../acceptance/adr-0004-spike.md). The maintainer
+chose to keep winit's client-side decorations (sctk-adwaita, which draws
+with tiny-skia) for now. After the spike and the review: the toolkit and
+the port on a branch. Until then `ossteam-gui` is on gpui.

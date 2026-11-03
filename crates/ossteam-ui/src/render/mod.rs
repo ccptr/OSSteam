@@ -45,6 +45,9 @@ impl FromStr for Choice {
 pub struct FrameStats {
     /// From the start of drawing to the return of present.
     pub ms: f64,
+    /// Of `ms`, how long was spent waiting for an earlier frame to finish
+    /// on the GPU, which is how FIFO paces the Vulkan renderer.
+    pub wait_ms: f64,
     /// Pixels the software renderer redrew; 0 with Vulkan, which redraws all.
     pub pixels: i64,
     /// Nothing changed, so nothing was presented.
@@ -200,7 +203,7 @@ impl SoftwarePresenter {
         Ok(FrameStats {
             ms: started.elapsed().as_secs_f64() * 1000.0,
             pixels: drawn.pixels,
-            skipped: false,
+            ..Default::default()
         })
     }
 }

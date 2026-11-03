@@ -1,0 +1,17 @@
+---
+name: gui-own-toolkit
+description: The GUI moves to our own toolkit ossteam-ui (winit + ash/Vulkan, ADR 0004); no third-party GUI framework or widget kit; gpui only until the port
+metadata:
+  type: feedback
+---
+
+The GUI is built on `ossteam-ui`, our own toolkit in `crates/ossteam-ui/`
+(SPEC GUI-1, [ADR 0004](../../docs/adr/0004-own-gui-toolkit.md)): winit
+for windows and input, Vulkan through `ash` for drawing (not wgpu),
+taffy for layout, cosmic-text and swash for text. The GUI's own widgets
+stay in `crates/ossteam-gui/src/widgets/`. Do not add a third-party GUI
+framework or widget kit (`gpui-component`, egui, iced and the like).
+
+ADR 0004 is proposed and its port has not started: `ossteam-gui` is
+still on gpui. Fix bugs there as before, but don't build new gpui-only
+machinery the port would have to redo.

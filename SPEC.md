@@ -10,7 +10,8 @@
 ossteam is an open-source Steam client written in Rust. A single per-user
 daemon, `ossteamd`, owns the Steam session, the library and all game
 processes. Two thin leaf clients drive it: `ossteam`, a CLI built on clap, and
-`ossteam-gui`, a GUI built on gpui.
+`ossteam-gui`, a GUI built on `ossteam-ui`, our own GUI toolkit
+(ADR 0004).
 
 The key words MUST, MUST NOT, SHOULD, SHOULD NOT and MAY are used as in
 RFC 2119. Requirements carry an ID (`[AREA-n]`) so issues, ADRs and tests can
@@ -143,7 +144,7 @@ even if it works.
   `GPL-2.0-or-later`/`GPL-3.0-or-later`/`LGPL-*-or-later` crate. GPL-2.0-only
   dependencies are denied, because they cannot be combined with Apache-2.0
   code.
-- **[LIC-4]** gpui and much of the Rust ecosystem are licensed Apache-2.0.
+- **[LIC-4]** winit and much of the Rust ecosystem are licensed Apache-2.0.
   Apache-2.0 is compatible with GPLv3 but not with GPLv2. Our source is still
   GPL-2.0-or-later. Binaries that link Apache-2.0 code are therefore conveyed
   under the terms of GPL-3.0-or-later. `README` and the release notes say this
@@ -180,7 +181,7 @@ even if it works.
 ```
             ┌──────────────┐   ┌──────────────┐   ┌──────────────────┐
             │ ossteam (CLI)│   │ ossteam-gui  │   │ 3rd-party client │
-            │    clap      │   │    gpui      │   │                  │
+            │    clap      │   │  ossteam-ui  │   │                  │
             └──────┬───────┘   └──────┬───────┘   └────────┬─────────┘
                    │  client IPC (local socket / named pipe, §8)
                    └──────────────────┼─────────────────────┘
@@ -235,7 +236,8 @@ crates/
   ossteam-ipc/             client IPC protocol + blocking client library
   ossteamd/                daemon binary
   ossteam-cli/             binary `ossteam` (clap)
-  ossteam-gui/             binary `ossteam-gui` (gpui); src/widgets/
+  ossteam-ui/              our GUI toolkit: window, layout, text, Vulkan renderer, focus (ADR 0004)
+  ossteam-gui/             binary `ossteam-gui` (ossteam-ui); src/widgets/
 xtask/                     codegen, packaging, license and layering checks
 docs/spec/                 subsystem specs (RE notes in our own words)
 docs/adr/                  architecture decision records
@@ -246,7 +248,8 @@ docs/acceptance/           per-milestone acceptance corpora and checklists
 
 - **[WS-1]** Dependencies flow downward only: `types → vdf/proto → net/webapi
   → auth/pics/content/stats/launch → ossteamd`. Leaf clients depend only on
-  `ossteam-ipc` and `ossteam-types`.
+  `ossteam-ipc` and `ossteam-types`, and the GUI also on `ossteam-ui`.
+  `ossteam-ui` depends on no other workspace crate.
 - **[WS-2]** `ossteam-steamclient` depends only on `ossteam-gameipc` and
   `ossteam-types`, plus `std`, and keeps third-party dependencies to a
   minimum. It is built for i686 and x86_64 on Linux and Windows, and as a
@@ -257,8 +260,8 @@ docs/acceptance/           per-milestone acceptance corpora and checklists
 
 | Concern | Choice | Notes |
 |---|---|---|
-| Toolchain | Pinned in `rust-toolchain.toml` | Matches what the pinned gpui needs (currently 1.98.1) |
-| GUI | `gpui` + `gpui_platform`, git dependency pinned to a zed revision | Widgets are written by us on plain gpui. `gpui-component` is not used. |
+| Toolchain | Pinned in `rust-toolchain.toml` | Currently 1.98.1, which the gpui revision still in use needs; bumped deliberately once ADR 0004's port removes gpui |
+| GUI | `ossteam-ui`, ours (ADR 0004), on `winit`, `ash` (Vulkan; MoltenVK on macOS), `taffy`, `cosmic-text` and `swash` | No third-party GUI framework or widget kit |
 | CLI | `clap` v4 (derive), `clap_complete` | |
 | Protobuf | `prost`, `prost-build` | Used for both Steam messages and our IPC |
 | WebSocket | `tungstenite` (non-blocking, ADR 0001) + `rustls` | rustls uses the `ring` provider and `rustls-platform-verifier` (SEC-3) |
@@ -304,13 +307,13 @@ Adding an async runtime (tokio, async-std, smol) to the daemon requires an ADR
   that waits while the daemon is idle registers a wake-up on the token
   instead (`CancelToken::on_cancel`) and waits without a timeout, so that
   the slice does not spend the §20 wakeup budget (ADR 0001).
-- **[CONC-3]** Async is accepted for the following, and nowhere else without
-  an ADR:
-  1. **The GUI.** gpui is async-native. Views use `cx.spawn` and the
-     background executor. IPC events reach the UI through a blocking reader
-     thread that forwards into an async channel, which a gpui task drains.
-  2. **A dependency with no reasonable sync alternative**, wrapped behind a
-     synchronous facade so the async code stays in one place.
+- **[CONC-3]** Async is accepted only in a dependency with no reasonable
+  sync alternative, wrapped behind a synchronous facade so the async code
+  stays in one place (the desktop portal in the GUI, ADR 0004), and
+  nowhere else without an ADR. The GUI itself is synchronous: its event
+  loop waits for input, for messages from its IPC threads, and for timers.
+  Until ADR 0004's port lands, the GUI is on gpui and still uses gpui's
+  `cx.spawn` and an async channel for IPC events.
 - **[CONC-4]** Before async is considered anywhere else, the ADR must show a
   measured problem with the threaded design, such as thousands of concurrent
   waits or a missed latency budget from §20.
@@ -777,13 +780,15 @@ refuses to run without a TTY unless `--qr` is given.
 
 ---
 
-## 16. GUI (`ossteam-gui`, gpui)
+## 16. GUI (`ossteam-gui`, `ossteam-ui`)
 
 ### 16.1 Rules
 
-- **[GUI-1]** Widgets are built on plain `gpui` and live in
-  `crates/ossteam-gui/src/widgets/`. `gpui-component` is not used. Zed's gpui
-  examples serve as a reference.
+- **[GUI-1]** The GUI is built on `ossteam-ui`, our own toolkit in
+  `crates/ossteam-ui/` (ADR 0004). The GUI's own widgets live in
+  `crates/ossteam-gui/src/widgets/`. No third-party GUI framework or
+  widget kit is used. Until the port in ADR 0004 is done, `ossteam-gui`
+  is on gpui.
 - **[GUI-2]** The GUI renders state that came from the daemon. It keeps no
   model of its own beyond view state. All mutations happen through IPC, and
   an optimistic update is allowed only when the event that confirms it
@@ -793,6 +798,9 @@ refuses to run without a TTY unless `--qr` is given.
 - **[GUI-4]** The GUI provides keyboard navigation for every action, visible
   focus, and system light and dark themes, and passes the DPI and scaling
   checks on every platform.
+- **[GUI-5]** An idle window does not wake. The GUI draws only when input,
+  a daemon event, a call's result, a timer or a change of scale or
+  appearance changed something.
 
 ### 16.2 Views (M1)
 
@@ -1049,7 +1057,8 @@ Steamworks interfaces driven by ShimReport data.
 | Valve may disapprove of third-party clients, and accounts could be put at risk | Behave exactly like the official client on the wire (§19.3). Use test accounts for development. Document the risk to users in README. |
 | A VAC implementation that is wrong could get users banned | Ship behind a feature flag (VAC-5), test differentially, and never ship an unvalidated build |
 | The Steam protocol changes | Keep spec pages current, use recorded-replay CI, run live tests on a schedule, track Valve's protocol updates |
-| gpui has no stable release and its API churns | Pin a revision, isolate widgets in `src/widgets/`, bump the pin deliberately |
+| Our own GUI toolkit is a large surface: text editing, IME, a Vulkan renderer, three platforms | Build only what the GUI uses; winit, cosmic-text and taffy do windows, shaping and layout; headless tests; a spike gates the port (ADR 0004) |
+| Vulkan is not everywhere: macOS needs MoltenVK, and some Windows machines have no driver | Ship MoltenVK in the macOS bundle; fail with a clear error when no device can be created (ADR 0004) |
 | The Steamworks interface versions in use are a large surface | Expand interfaces based on ShimReport data. Fail honestly in the meantime. |
 | The name "ossteam" contains "steam" | State non-affiliation clearly (LIC-8). Revisit the name before a 1.0 release (Q3). |
 | Coexisting with an official Steam install | DISC-3 conflict handling. Never overwrite Valve's entries. |

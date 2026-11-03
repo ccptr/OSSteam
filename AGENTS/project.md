@@ -8,7 +8,8 @@ metadata:
 ossteam is a clean Rust rewrite of the Steam client, GPL-2.0-or-later. A
 per-user daemon, `ossteamd`, owns the Steam session, the library and game
 processes. Thin clients drive it: the `ossteam` CLI (clap) and
-`ossteam-gui` (gpui).
+`ossteam-gui`, which moves from gpui to our own
+toolkit `ossteam-ui` (ADR 0004, proposed).
 
 - [SPEC.md](../SPEC.md): the design, its rules (IDs like CONC-2, PLAT-1)
   and the milestones (§21).

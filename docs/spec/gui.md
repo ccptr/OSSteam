@@ -2,8 +2,8 @@
 
 | | |
 |---|---|
-| Status | Draft for M1e. ossteam's own design; nothing here is observed from the official client |
-| Requirements | SPEC §16 (GUI-1 to GUI-4), LEAF-1 to LEAF-3, CONC-3, D-2, §20 |
+| Status | Draft for M1e. ossteam's own design; nothing here is observed from the official client. §2.1, §3, §4.2, §6 and §7 describe the GUI on `ossteam-ui` (ADR 0004, proposed); until its port lands the code is on gpui, as this page at 1726cde describes |
+| Requirements | SPEC §16 (GUI-1 to GUI-5), LEAF-1 to LEAF-3, CONC-3, D-2, §20 |
 | Code | `crates/ossteam-gui` |
 
 `ossteam-gui` is a leaf client (LEAF-1): it shows what the daemon reports
@@ -43,17 +43,17 @@ Two states replace the whole window content:
 
 ### 2.1 Threads
 
-The GUI holds one `ossteam_ipc::Client` (CONC-3):
+The GUI holds one `ossteam_ipc::Client` and is synchronous (CONC-3,
+ADR 0004). The main thread runs the window's event loop; the other
+threads hand it their results as messages through `ossteam_ui::Sender`,
+which wakes the loop:
 
-- A **reader thread** takes events from the client and forwards them into
-  an async channel. A gpui task on the main thread drains it into the
-  store (§3).
-- **Calls** run on a pool of four GUI-owned threads, and their results
-  come back to the view that made them through a oneshot channel awaited
-  in `cx.spawn`. gpui's background executor is not used for calls: a
-  call can block for its whole timeout (30 s, 90 s for logins), and the
-  executor's threads also decode images, so blocked calls would stall
-  the library's artwork.
+- A **reader thread** takes events from the client and sends each to
+  the main thread, which applies it to the store (§3).
+- **Calls** run on a pool of four GUI-owned threads, and each result
+  comes back as a message for the view that made the call. Images are
+  decoded on threads of their own, so a call that blocks for its whole
+  timeout (30 s, 90 s for logins) never stalls the library's artwork.
 - `Launch` waits without a timeout while compatibility tools install
   (`launch.md` §8), so each launch gets a thread of its own.
 
@@ -86,7 +86,7 @@ after 8 s; warnings and errors stay until dismissed.
 
 ## 3. The store
 
-The store is a gpui entity holding the daemon's latest answers. It is
+The store is a plain struct holding the daemon's latest answers. It is
 the GUI's only copy of daemon state, and it changes only by replies and
 events (GUI-2):
 
@@ -158,8 +158,8 @@ page.
 - **Filters:** *Installed* (`installed_only`) and *Updates*
   (`AppSummary.update_available`, §5; filtered in the view, because
   `ListApps` has no such parameter).
-- **Grid** (default) and **list** layouts, both virtualised with
-  `uniform_list`: the grid as rows of capsules, the list as one row per
+- **Grid** (default) and **list** layouts, both virtualised (only the
+  visible rows are built): the grid as rows of capsules, the list as one row per
   app with its name and install state. (`AppSummary` has no size; the
   App page shows it.)
 - **Artwork.** A grid cell asks for `GetAsset{CAPSULE}`, with `high_dpi`
@@ -175,9 +175,9 @@ page.
 - **Capsule images** are decoded on a background thread and scaled to
   fill the cell in device pixels, cropping what overflows. The 256 most
   recently drawn are kept and the others are dropped from memory and
-  from the GPU's atlas. gpui's own image loading keeps every image at
-  full size until the app exits: scrolling 10,000 capsules with it held
-  11.7 GB.
+  from the GPU's atlas; `ossteam-ui` keeps no image the GUI has not
+  asked it to keep. (gpui's image loading kept every image at full size
+  until the app exited: scrolling 10,000 capsules with it held 11.7 GB.)
 - While `ListApps.complete` is false the page says that the library is
   still loading. `packages_without_info` is shown as a count, with the
   ids in its tooltip.
@@ -331,10 +331,9 @@ to `compat.default_tool`.
 | Ctrl-Q | Cmd-Q | Quit (the daemon keeps running) |
 
 Colours follow the system's light or dark appearance from the first
-frame and change when it does. On Linux, where gpui learns the
-appearance from the desktop portal only after the window's first frame,
-the GUI asks the portal itself as it starts and uses that answer until
-gpui reports one. Sizes are in logical pixels, and images are requested at double
+frame and change when it does. On Linux the GUI asks the desktop
+portal as it starts, before the window opens, and follows its change
+signal; elsewhere it takes the appearance winit reports. Sizes are in logical pixels, and images are requested at double
 size when the scale factor is above 1.
 
 ## 7. Testing
@@ -344,8 +343,8 @@ size when the scale factor is above 1.
   in plain functions with unit tests.
 - Store tests drive the event handling with recorded events.
 - An integration test runs the GUI's connection and store against a real
-  daemon with the fake CM (FAITH-4), with gpui's test platform instead of
-  a window. It is a daemon test (`testing/gui.rs`), since the fake CM and
+  daemon with the fake CM (FAITH-4), without a window: the store is
+  driven directly with the messages the threads of §2.1 send. It is a daemon test (`testing/gui.rs`), since the fake CM and
   the in-process daemon exist only in the daemon's tests; the GUI crate is
   a library for it, with a binary that only calls `run`. The test calls
   the daemon through the model as the pages do, and after each step the

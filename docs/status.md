@@ -14,6 +14,7 @@ Almost all remaining work needs one of these.
 - [Test account logged out](status/test-account-logged-out.md) — since 2026-10-18; blocks every live run and logged-in GUI check
 - [Discovery entries](status/discovery-entries-official-steam.md) — official Steam owns `~/.steam/sdk64`, so launches fail with exit 8
 - [install-scripts.md §2.6](status/install-scripts-2-6.md) — unverifiable `kvsignatures`; blocks HKLM writes and prefix scripts
+- [Own GUI toolkit](status/gui-toolkit-adr-0004.md) — ADR 0004 and its SPEC changes proposed 2026-11-02, not reviewed; the spike waits on review
 - [CONC-2 reworded](status/conc-2-reword.md) — SPEC rule and ADR 0001 amended in 471d6d3, not reviewed
 - [reference-hw.md §5](status/reference-hw-questions.md) — 5 questions; no §20 row until a reference machine is chosen
 - [Spec review gates](status/spec-review-gates.md) — the M2/M3 spec pages awaiting review before code

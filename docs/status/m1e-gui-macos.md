@@ -20,6 +20,8 @@ which changes under the parallel suite.
 - The M1a–M1d rows were dry-run on the gui_states bench (4a986d3,
   943535e, 22fe26d, abf4bdb..e86b78f) and recorded in m1e.md. Each still
   needs its live run.
+- The GUI is to move off gpui ([gui-toolkit-adr-0004](gui-toolkit-adr-0004.md));
+  rows passed on gpui are run again after the port.
 - Open, seen once: [lost-keyboard-focus](../../AGENTS/gui/lost-keyboard-focus.md).
 - Windows cross-clippy of the workspace is clean (706f5d8). The fake
   CM's QR auto-approval is Linux-only.

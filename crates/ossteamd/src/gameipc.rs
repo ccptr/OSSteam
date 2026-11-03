@@ -10,7 +10,7 @@ use std::thread;
 use std::time::Duration;
 
 use crossbeam_channel::{Sender, bounded};
-use interprocess::local_socket::{Listener, RecvHalf, SendHalf, Stream, prelude::*};
+use interprocess::local_socket::{Listener, Stream, prelude::*};
 use ossteam_gameipc::{FrameError, Message, PROTOCOL, Refused, read_message, write_message};
 use ossteam_ipc::{Endpoint, endpoint};
 
@@ -227,14 +227,15 @@ fn serve(conn: ConnId, mut stream: Stream, core: &Sender<Command>) {
         );
     }
 
-    let (rx, tx) = stream.split();
+    // The writer thread writes while this one reads: `&Stream` does both.
+    let stream = Arc::new(stream);
+    let tx = Arc::clone(&stream);
     let (out_tx, out_rx) = bounded::<Message>(CLIENT_QUEUE);
     let writer = thread::Builder::new()
         .name(format!("game-write-{conn}"))
         .spawn(move || {
-            let mut tx: SendHalf = tx;
             for msg in out_rx {
-                if write_message(&mut tx, &msg).is_err() {
+                if write_message(&mut &*tx, &msg).is_err() {
                     break;
                 }
             }
@@ -251,11 +252,11 @@ fn serve(conn: ConnId, mut stream: Stream, core: &Sender<Command>) {
     if core.send(Command::Shim(connected)).is_err() {
         return;
     }
-    read_loop(conn, rx, core);
+    read_loop(conn, &stream, core);
     let _ = core.send(Command::Shim(Event::Disconnected { conn }));
 }
 
-fn read_loop(conn: ConnId, mut rx: RecvHalf, core: &Sender<Command>) {
+fn read_loop(conn: ConnId, mut rx: &Stream, core: &Sender<Command>) {
     loop {
         let msg = match read_message(&mut rx) {
             Ok(m @ (Message::Request(_) | Message::Report(_))) => m,

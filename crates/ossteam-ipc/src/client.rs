@@ -15,7 +15,7 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use crossbeam_channel::{Receiver, RecvTimeoutError, Sender, bounded, unbounded};
-use interprocess::local_socket::{RecvHalf, SendHalf, prelude::*};
+use interprocess::local_socket::Stream;
 use ossteam_types::Secret;
 
 use crate::endpoint::Endpoint;
@@ -83,7 +83,9 @@ pub enum ClientError {
 type Reply = Result<response::Result, RemoteError>;
 
 struct Inner {
-    writer: Mutex<SendHalf>,
+    /// The connection, which the reader thread reads at the same time:
+    /// `&Stream` reads and writes. The lock keeps frames whole.
+    writer: Mutex<Arc<Stream>>,
     pending: Mutex<HashMap<u64, Sender<Reply>>>,
     next_id: AtomicU64,
     closed: AtomicBool,
@@ -128,11 +130,8 @@ impl Client {
         Self::handshake(stream, info)
     }
 
-    fn handshake(
-        stream: interprocess::local_socket::Stream,
-        info: &ClientInfo,
-    ) -> Result<Self, ClientError> {
-        let (mut rx, mut tx) = stream.split();
+    fn handshake(stream: Stream, info: &ClientInfo) -> Result<Self, ClientError> {
+        let stream = Arc::new(stream);
         let hello = Hello {
             protocol: Some(PROTOCOL_VERSION),
             kind: info.kind as i32,
@@ -140,13 +139,13 @@ impl Client {
             version: info.version.clone(),
         };
         write_frame(
-            &mut tx,
+            &mut &*stream,
             &v1::Envelope {
                 id: 0,
                 body: Some(Body::Hello(hello)),
             },
         )?;
-        let server = match read_frame(&mut rx)? {
+        let server = match read_frame(&mut &*stream)? {
             v1::Envelope {
                 body: Some(Body::Hello(h)),
                 ..
@@ -170,7 +169,7 @@ impl Client {
         }
 
         let inner = Arc::new(Inner {
-            writer: Mutex::new(tx),
+            writer: Mutex::new(Arc::clone(&stream)),
             pending: Mutex::new(HashMap::new()),
             next_id: AtomicU64::new(1),
             closed: AtomicBool::new(false),
@@ -179,7 +178,7 @@ impl Client {
         let reader_inner = Arc::clone(&inner);
         thread::Builder::new()
             .name("ossteam-ipc-reader".into())
-            .spawn(move || reader_loop(rx, &reader_inner, &ev_tx))
+            .spawn(move || reader_loop(&stream, &reader_inner, &ev_tx))
             .map_err(|e| ClientError::Protocol(format!("spawn reader thread: {e}")))?;
         Ok(Self {
             inner,
@@ -220,7 +219,7 @@ impl Client {
                 method: Some(method),
             })),
         };
-        let sent = write_frame(&mut *self.inner.writer.lock().unwrap(), &env);
+        let sent = write_frame(&mut &**self.inner.writer.lock().unwrap(), &env);
         scrub(&mut env);
         if let Err(e) = sent {
             self.inner.pending.lock().unwrap().remove(&id);
@@ -690,7 +689,7 @@ fn unexpected(r: response::Result) -> ClientError {
     ClientError::Protocol(format!("response does not match the request: {r:?}"))
 }
 
-fn reader_loop(mut rx: RecvHalf, inner: &Inner, events: &Sender<Event>) {
+fn reader_loop(mut rx: &Stream, inner: &Inner, events: &Sender<Event>) {
     loop {
         let env = match read_frame(&mut rx) {
             Ok(env) => env,

@@ -8,7 +8,7 @@ use std::thread;
 use std::time::Duration;
 
 use crossbeam_channel::{Sender, bounded};
-use interprocess::local_socket::{Listener, RecvHalf, SendHalf, Stream, prelude::*};
+use interprocess::local_socket::{Listener, Stream, prelude::*};
 use ossteam_ipc::frame::{FrameError, read_frame, write_frame};
 use ossteam_ipc::v1::{self, Envelope, ErrorCode, Hello, PeerKind, envelope::Body};
 use ossteam_ipc::{Endpoint, PROTOCOL_VERSION, RemoteError, endpoint};
@@ -116,15 +116,16 @@ fn serve(client: ClientId, mut stream: Stream, core: &Sender<Command>, alive: Se
         }
     };
 
-    let (rx, tx) = stream.split();
+    // The writer thread writes while this one reads: `&Stream` does both.
+    let stream = Arc::new(stream);
+    let tx = Arc::clone(&stream);
     let (out_tx, out_rx) = bounded::<Envelope>(CLIENT_QUEUE);
     let writer = thread::Builder::new()
         .name(format!("ipc-write-{client}"))
         .spawn(move || {
             let _alive = alive;
-            let mut tx: SendHalf = tx;
             for env in out_rx {
-                if write_frame(&mut tx, &env).is_err() {
+                if write_frame(&mut &*tx, &env).is_err() {
                     break;
                 }
             }
@@ -143,7 +144,7 @@ fn serve(client: ClientId, mut stream: Stream, core: &Sender<Command>, alive: Se
     {
         return;
     }
-    read_loop(client, rx, core);
+    read_loop(client, &stream, core);
     let _ = core.send(Command::Disconnected { client });
 }
 
@@ -202,7 +203,7 @@ fn handshake(stream: &mut Stream) -> Result<Hello, String> {
     Ok(hello)
 }
 
-fn read_loop(client: ClientId, mut rx: RecvHalf, core: &Sender<Command>) {
+fn read_loop(client: ClientId, mut rx: &Stream, core: &Sender<Command>) {
     loop {
         let env = match read_frame(&mut rx) {
             Ok(env) => env,

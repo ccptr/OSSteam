@@ -1,6 +1,6 @@
 ---
 name: headless-sway-input
-description: Driving keys, IME and the clipboard on a headless sway - wtype loses the first key, create the keyboard before the window, Xwayland needs setxkbmap and xdotool
+description: Driving keys, IME, the clipboard and the folder picker on a headless sway - wtype loses the first key, keyboard before the window, Xwayland needs setxkbmap, portals on a private bus
 metadata:
   type: reference
 ---
@@ -30,3 +30,15 @@ tool makes a virtual one, which changes how input tests behave
   `DISPLAY` set; sway passes X11 copies on to Wayland.
 - `VK_DRIVER_FILES=` set but empty hides every Vulkan driver; set it
   only to choose one (`/usr/share/vulkan/icd.d/lvp_icd.json` for lavapipe).
+- Screenshots: `grim -o HEADLESS-1`; without `-o` grim may capture a
+  black frame.
+- **Portals (the folder picker) on a private bus.** Set the environment
+  on `dbus-run-session` itself, not in the script it runs:
+  `env -u DISPLAY WAYLAND_DISPLAY=wayland-2 XDG_CURRENT_DESKTOP=sway
+  dbus-run-session -- script.sh`. The bus starts portals with its own
+  environment, so otherwise they open on the desktop. With the real
+  xdg-desktop-portal the GTK dialog opens on the sway, but it ignores
+  `wtype`'s Return and Escape. To test the call itself, start
+  `python3 -I crates/ossteam-ui/examples/fake_portal.py PATH cancel &`
+  on the private bus before the app: it owns the portal's name and
+  answers each request in turn.

@@ -27,8 +27,10 @@ cargo run --release -p ossteam-ui --example spike -- --renderer software --bench
 
 `crates/ossteam-ui/examples/wayland_ime.rs` is a scripted input method
 (`zwp_input_method_v2`, which sway has) for testing IME without
-installing one; how to drive the spike with it, `wtype` and `xdotool` is
-in [headless-sway-input](../../AGENTS/testing/headless-sway-input.md).
+installing one, and `examples/fake_portal.py` a stand-in portal file
+chooser for testing the folder picker (Ctrl+O in the spike) without a
+dialog; how to drive the spike with them, `wtype` and `xdotool` is in
+[headless-sway-input](../../AGENTS/testing/headless-sway-input.md).
 
 ## Linux x86_64: Arch Linux, Hyprland (Wayland), 1× scale, 2026-11-02
 
@@ -117,6 +119,26 @@ Driven on the headless sway with real key events (`wtype` on Wayland,
   both renderers. The first composition with Japanese text took 34 ms,
   once: loading the CJK fallback font on first use.
 
+### The folder picker
+
+On Linux the toolkit calls the portal's file chooser through ashpd on
+its own bus connection (item 4); Ctrl+O in the spike opens it on a
+thread and the answer comes back to the event loop. On the headless
+sway, each run on a private session bus (`dbus-run-session`):
+
+- **With xdg-desktop-portal and its GTK back end:** the dialog opens on
+  the sway with the spike's title ("Add library folder") in folder mode,
+  and the spike keeps drawing beside it: sway tiles the two, which
+  resizes the spike's window (item 9). GTK took typed text from `wtype`
+  but ignored its Return and Escape, so these runs never answered; a
+  pick through the real dialog is still to be checked by hand.
+- **With `fake_portal.py` in the portal's place**, both renderers: a
+  folder named with a space and a non-ASCII letter came back as that
+  path, and a cancel as none, each 0.3 s after the call (the stand-in's
+  delay). After the answer the event loop woke once with no event, at
+  0.3 s, then not at all for 4.7 s; the picker's thread had ended and
+  the `async-io` thread switched twice.
+
 Items:
 
 1. **Fonts, cold: open.** `cosmic-text` reads the header of every font
@@ -148,8 +170,8 @@ Items:
    `unix:abstract=`) and gives it to zbus, so the pool never starts.
    The same applies to the folder picker: `rfd`'s portal back end lets
    zbus connect, while ashpd's file chooser requests take a connection,
-   so on Linux the toolkit should call the portal through ashpd with
-   this connection (step 3; the ADR names `rfd`).
+   so on Linux the toolkit calls the portal through ashpd with this
+   connection (`portal.rs`); the maintainer agreed and the ADR says so.
 5. **Resizing with the software renderer: open.** After a resize the
    window gets new shared-memory buffers from softbuffer, and the first
    write to each costs page faults: copying a full 1600×1000 frame into
@@ -173,39 +195,33 @@ Items:
    instead of one per refresh. Harmless when frames come from input, as
    in the GUI, but a scroll animation would draw more frames than the
    display shows.
-8. **No clipboard on Windows: waits on a licence decision.** `arboard`
-   uses `clipboard-win` and `error-code` on Windows, both BSL-1.0, which
-   is not in SPEC LIC-3's allow-list. The spike leaves `arboard` out of
-   Windows builds, so the field there copies nothing and pastes nothing,
-   and says so in the log. `cargo deny check licenses` still reports the
-   two crates, because it joins dependency edges across its targets
-   (`arboard` is needed on Linux and macOS); none of them is built.
+8. **Clipboard on Windows: resolved.** `arboard` uses `clipboard-win`
+   and `error-code` on Windows, both BSL-1.0, which SPEC LIC-3 did not
+   allow. The maintainer added BSL-1.0 to LIC-3 on 2026-11-02, so
+   `arboard` serves the clipboard on Windows too, as the ADR says.
+   Not yet run under Wine.
+9. **Software renderer crashed when the window shrank: fixed.** The
+   canvas keeps the damage of recent frames to bring an older buffer up
+   to date, and it kept that history across a resize: when the picker's
+   dialog tiled the window to half its width, rectangles from the wider
+   frames were copied into the narrower buffer, out of bounds. The
+   history is now dropped on a resize, so a buffer older than it is
+   copied whole; a unit test covers it.
 
-## For the maintainer
+## Decisions
 
-**Which renderer `auto` prefers.** The software renderer meets §20
-with less memory than Vulkan (28 MB against 55 MB idle at 1600×1000;
-102 MB for lavapipe), so, as the ADR's step 2 says, which renderer
-`auto` prefers is the maintainer's call.
-What bears on it: both renderers draw scrolling and typing in 1 to 2 ms
-a frame; the software renderer's weak spot is the first frames after a
-resize at 4K (item 5); Vulkan costs 20 ms more at startup and twice the
-memory, and lavapipe five times the software renderer's (item 6).
+The maintainer decided on 2026-11-02:
 
-**The clipboard on Windows** (item 8). Either LIC-3 allows BSL-1.0
-(the Boost licence, which the FSF lists as compatible with the GPL; a
-SPEC change), and `arboard` is used on Windows as the ADR says; or the
-toolkit writes its own Windows clipboard (`OpenClipboard` and
-`CF_UNICODETEXT` through `windows-sys`, about 80 lines; an ADR change),
-and `cargo-deny` still needs `arboard` gone from the graph or an
-exception for the two crates.
-
-**The folder picker** (item 4): through ashpd with the toolkit's own
-bus connection rather than `rfd`, so it cannot start zbus's thread
-pool (an ADR change).
+- **`auto` prefers Vulkan**, with the software renderer when no Vulkan
+  device can be created. lavapipe still counts as a Vulkan device.
+- **`arboard` on every platform but Wayland**, with BSL-1.0 added to
+  SPEC LIC-3 (item 8).
+- **The folder picker through ashpd on Linux** (item 4), `rfd` on
+  Windows and macOS.
 
 ## Left
 
+- A pick through the portal's real dialog, by hand.
 - Scale factors 1.25, 1.5 and 2 on a headless sway, and whether the
   first frame is drawn at the output's scale.
 - IME on X11 (needs an XIM engine that composes, such as ibus-anthy or

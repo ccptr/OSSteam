@@ -1,6 +1,6 @@
 ---
 name: gui-toolkit-adr-0004
-description: ADR 0004 (own GUI toolkit ossteam-ui on winit + ash) and its SPEC changes are proposed, not reviewed; the spike is under way on a branch and asks which renderer auto prefers
+description: ADR 0004 (own GUI toolkit ossteam-ui on winit + ash) and its SPEC changes are proposed, not reviewed; the spike is nearly done on a branch, the maintainer's three decisions are in, and the port waits on what is left
 metadata:
   type: project
 ---
@@ -27,12 +27,19 @@ with tiny-skia) for now. After the spike and the review: the toolkit and
 the port on a branch. Until then `ossteam-gui` is on gpui.
 
 By the end of 2026-11-02 the spike has both renderers, the text field
-with IME and the clipboard, and its measures on Hyprland and on a
-headless sway (Wayland, Xwayland, lavapipe), all within §20 with no
-idle wakeups. Waiting on the maintainer: which renderer `auto` prefers
-(the ADR's step 2 hands it back, since the software renderer meets §20
-with half the memory), whether LIC-3 allows BSL-1.0 so `arboard` can
-serve the clipboard on Windows (spike item 8; until then Windows has
-none), and whether the folder picker goes through ashpd rather than
-`rfd` (spike item 4). Left: scale factors, IME on X11,
-Windows under Wine, a light desktop.
+with IME and the clipboard, the folder picker, and its measures on
+Hyprland and on a headless sway (Wayland, Xwayland, lavapipe), all
+within §20 with no idle wakeups, except fonts read from a cold disk
+cache (spike item 1). The maintainer then decided: `auto` prefers
+Vulkan; `arboard` on every platform but Wayland, with BSL-1.0 added to
+SPEC LIC-3; the folder picker through ashpd on Linux, `rfd` elsewhere.
+The ADR says so.
+
+On 2026-11-02 the maintainer also asked to replace gpui with
+`ossteam-ui` once nothing blocks it. Still in the way: the review of
+the ADR and its SPEC changes (it is still Proposed), the cold-font
+first frame (spike item 1, which breaks §20's 500 ms), and the spike's
+Left list (scale factors, Windows under Wine, a light desktop, a pick
+through the real portal dialog). The port is ADR steps 3 and 4: the
+toolkit itself (elements, layout, focus, lists, images), then the GUI
+on it.

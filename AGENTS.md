@@ -51,7 +51,7 @@ These come from the maintainer. Don't trade them away for convenience.
 - [Idle wakeups](AGENTS/testing/idle-wakeups.md) — count `voluntary_ctxt_switches` per thread
 - [Driving the GUI by keyboard](AGENTS/testing/gui-keyboard-driving.md) — `wtype`, tab order, `XDG_RUNTIME_DIR`
 - [Wayland scale tests](AGENTS/testing/wayland-scale-tests.md) — headless sway and `swaymsg`
-- [Input on headless sway](AGENTS/testing/headless-sway-input.md) — wtype's lost first key, IME with `wayland_ime`, Xwayland keymaps, clipboard tools
+- [Input on headless sway](AGENTS/testing/headless-sway-input.md) — wtype's lost first key, IME with `wayland_ime`, Xwayland keymaps, clipboard tools, portals on a private bus with `fake_portal.py`
 - [Daemon autostart](AGENTS/testing/daemon-autostart.md) — `--no-autostart status` only looks
 
 ## Reference

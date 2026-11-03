@@ -56,7 +56,7 @@ it does not wrap another GUI framework.
 | Layout | `taffy` (flexbox), behind a builder like the subset of gpui's `div()` the GUI uses | builder ours |
 | Text | `cosmic-text` for shaping, font fallback, line breaking and hit-testing; `swash` rasterises glyphs into an `etagere`-packed atlas | atlas and text field ours |
 | Clipboard | `smithay-clipboard` on Wayland, on winit's connection; `arboard` elsewhere | dependency |
-| Folder picker | `rfd`, its blocking API (the XDG portal on Linux) | dependency |
+| Folder picker | on Linux the portal's file chooser through `ashpd`, on our own bus connection; `rfd`'s blocking API on Windows and macOS | Linux call ours, the rest a dependency |
 | Opening URLs (GUI-3) | `open` | dependency |
 | Appearance | winit's theme where it reports one; on Linux the portal query in `theme.rs`, plus its change signal | ours |
 | Elements, focus, key bindings, scrolling, virtual lists, images, tests | — | ours |
@@ -94,7 +94,9 @@ it does not wrap another GUI framework.
   reach the toolkit (gui.md §4.2), so neither renderer scales them.
 - **Choosing.** `--renderer auto|vulkan|software` (`auto` by default).
   `auto` uses Vulkan, and the software renderer when no Vulkan device
-  can be created; the GUI logs which one it uses and why. A renderer
+  can be created; the GUI logs which one it uses and why. The
+  maintainer chose Vulkan as `auto`'s first choice on 2026-11-02, after
+  the spike (step 2). A renderer
   that fails mid-session (device lost) is replaced by the other for the
   rest of it, also logged.
 - **The Vulkan renderer.** Vulkan 1.2 as the baseline, which MoltenVK also
@@ -136,7 +138,11 @@ it does not wrap another GUI framework.
 Vulkan is synchronous, so the renderer has none. `ashpd`'s portal calls
 are futures; each is run to completion on the thread that asked, with
 `async_io::block_on` as `theme.rs` does today, the second case of
-CONC-3. `rfd` does the same inside its blocking API.
+CONC-3. Every portal call, the folder picker's included, uses a bus
+connection whose socket the toolkit connects itself: when zbus connects
+it, the `blocking` crate's thread pool starts and one of its threads
+wakes every 500 ms for the life of the process (against GUI-5). `rfd`,
+used off Linux, has no async in its blocking API.
 
 ### Steps
 
@@ -151,7 +157,8 @@ CONC-3. `rfd` does the same inside its blocking API.
    ≤ 500 ms; gpui's was 152 to 156 ms here) and draw no light frame on a
    dark desktop, with either renderer. If it cannot, this ADR is amended
    before the port. If the software renderer meets §20 with less memory,
-   which renderer `auto` prefers goes back to the maintainer.
+   which renderer `auto` prefers goes back to the maintainer. (It did;
+   they chose Vulkan.)
 3. **The toolkit**, up to what the GUI uses today and no further.
    `cargo xtask check-layering` learns WS-1's new rule for it.
 4. **The port**, on a branch; `main` keeps the gpui GUI until it is

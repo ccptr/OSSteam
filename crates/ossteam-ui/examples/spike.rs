@@ -755,6 +755,7 @@ impl Spike {
 
     fn go_idle(&mut self) {
         self.idle_wakeups = 0;
+        self.idle_events.clear();
         self.idle_since = Some(Instant::now());
         self.idle_threads = thread_switches();
         if self.args.bench.is_none() {
@@ -935,8 +936,9 @@ impl ApplicationHandler<UserEvent> for Spike {
                 self.log_input(format!("folder picker answered {answer}"));
                 self.picked
                     .push(json!({ "answer": answer, "ms": round1(took_ms) }));
-                // A frame, so the idle measure starts again from here.
-                self.request_redraw();
+                // The idle measure starts again from the answer, so it
+                // shows whether the portal call left anything awake.
+                self.go_idle();
             }
         }
     }

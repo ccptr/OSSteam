@@ -3,6 +3,8 @@
 //! is asked of the desktop portal as the process starts, so the first
 //! frame already has it; elsewhere winit reports it with the window.
 
+#[cfg(any(target_os = "linux", target_os = "freebsd"))]
+use std::os::unix::ffi::OsStrExt;
 use std::sync::mpsc;
 use std::time::Duration;
 
@@ -53,9 +55,89 @@ impl StartupAppearance {
 #[cfg(any(target_os = "linux", target_os = "freebsd"))]
 fn portal_appearance() -> Option<Appearance> {
     use ashpd::desktop::settings::{ColorScheme, Settings};
-    let scheme = async_io::block_on(async { Settings::new().await?.color_scheme().await }).ok()?;
+    let scheme = async_io::block_on(async {
+        let bus = match session_bus_socket() {
+            Some(socket) => {
+                ashpd::zbus::connection::Builder::async_io_unix_stream(socket)
+                    .build()
+                    .await?
+            }
+            None => ashpd::zbus::Connection::session().await?,
+        };
+        Settings::with_connection(bus).await?.color_scheme().await
+    })
+    .ok()?;
     Some(match scheme {
         ColorScheme::PreferDark => Appearance::Dark,
         ColorScheme::PreferLight | ColorScheme::NoPreference => Appearance::Light,
     })
+}
+
+/// The session bus's socket, connected here rather than by zbus: zbus
+/// connects on the `blocking` crate's thread pool, whose last thread then
+/// wakes every 500 ms for the life of the process (GUI-5). `None` for an
+/// address this does not handle, which zbus then connects.
+#[cfg(any(target_os = "linux", target_os = "freebsd"))]
+fn session_bus_socket() -> Option<std::os::unix::net::UnixStream> {
+    use std::os::unix::net::UnixStream;
+    let Ok(address) = std::env::var("DBUS_SESSION_BUS_ADDRESS") else {
+        let dir = std::env::var_os("XDG_RUNTIME_DIR")?;
+        return UnixStream::connect(std::path::Path::new(&dir).join("bus")).ok();
+    };
+    // `unix:path=/run/user/1000/bus,guid=…`, possibly several separated by `;`.
+    for entry in address.split(';') {
+        let Some(params) = entry.strip_prefix("unix:") else {
+            continue;
+        };
+        for param in params.split(',') {
+            let Some((key, value)) = param.split_once('=') else {
+                continue;
+            };
+            let Some(value) = unescape_address(value) else {
+                continue;
+            };
+            let socket = match key {
+                "path" => UnixStream::connect(std::ffi::OsStr::from_bytes(&value)),
+                #[cfg(target_os = "linux")]
+                "abstract" => {
+                    use std::os::linux::net::SocketAddrExt;
+                    std::os::unix::net::SocketAddr::from_abstract_name(&value)
+                        .and_then(|addr| UnixStream::connect_addr(&addr))
+                }
+                _ => continue,
+            };
+            if let Ok(socket) = socket {
+                return Some(socket);
+            }
+        }
+    }
+    None
+}
+
+/// Undoes a D-Bus address value's `%XX` escapes.
+#[cfg(any(target_os = "linux", target_os = "freebsd"))]
+fn unescape_address(value: &str) -> Option<Vec<u8>> {
+    let mut out = Vec::with_capacity(value.len());
+    let mut bytes = value.bytes();
+    while let Some(b) = bytes.next() {
+        if b == b'%' {
+            let hex = [bytes.next()?, bytes.next()?];
+            out.push(u8::from_str_radix(std::str::from_utf8(&hex).ok()?, 16).ok()?);
+        } else {
+            out.push(b);
+        }
+    }
+    Some(out)
+}
+
+#[cfg(all(test, any(target_os = "linux", target_os = "freebsd")))]
+mod tests {
+    #[test]
+    fn address_unescapes() {
+        assert_eq!(
+            super::unescape_address("/run/user/1000/a%2cb").as_deref(),
+            Some(&b"/run/user/1000/a,b"[..])
+        );
+        assert_eq!(super::unescape_address("%2"), None);
+    }
 }

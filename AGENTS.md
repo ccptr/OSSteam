@@ -51,6 +51,7 @@ These come from the maintainer. Don't trade them away for convenience.
 - [Idle wakeups](AGENTS/testing/idle-wakeups.md) — count `voluntary_ctxt_switches` per thread
 - [Driving the GUI by keyboard](AGENTS/testing/gui-keyboard-driving.md) — `wtype`, tab order, `XDG_RUNTIME_DIR`
 - [Wayland scale tests](AGENTS/testing/wayland-scale-tests.md) — headless sway and `swaymsg`
+- [Input on headless sway](AGENTS/testing/headless-sway-input.md) — wtype's lost first key, IME with `wayland_ime`, Xwayland keymaps, clipboard tools
 - [Daemon autostart](AGENTS/testing/daemon-autostart.md) — `--no-autostart status` only looks
 
 ## Reference
@@ -59,5 +60,6 @@ These come from the maintainer. Don't trade them away for convenience.
 - [Research sources](AGENTS/research-sources.md) — outside sources, and which are facts-only
 - [GUI focus](AGENTS/gui/focus.md) — focus handles, shared ids, reveal and page scrolling
 - [GUI lost keyboard focus](AGENTS/gui/lost-keyboard-focus.md) — seen once; check compositor focus first
+- [Portal wakeups](AGENTS/gui/portal-wakeups.md) — connect the session bus yourself, or zbus's thread pool wakes every 500 ms
 - [Steamworks ABI test](AGENTS/steamworks/abi-test.md) — what tests/abi.rs covers and the layout gotchas it found
 - [macOS discovery](AGENTS/steamworks/macos-discovery.md) — the ipctool Mach service and what is unverified

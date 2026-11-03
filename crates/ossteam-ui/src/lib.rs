@@ -3,14 +3,17 @@
 //! winit, layout into a [`scene::Scene`], and two renderers that draw it,
 //! Vulkan through `ash` and our own software renderer.
 //!
-//! This is the spike of ADR 0004 step 2: the scene, text, both renderers
-//! and the appearance query, enough for `examples/spike.rs` to measure
-//! them. Elements, layout, focus and the event loop come in step 3.
+//! This is the spike of ADR 0004 step 2: the scene, text, a text field
+//! with IME and the clipboard, both renderers and the appearance query,
+//! enough for `examples/spike.rs` to measure them. Elements, layout,
+//! focus and the event loop come in step 3.
 
 pub mod appearance;
+pub mod clipboard;
 pub mod render;
 pub mod scene;
 pub mod text;
+pub mod text_field;
 
 /// An error from the toolkit, with its context in the message.
 pub type Error = Box<dyn std::error::Error + Send + Sync>;

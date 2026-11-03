@@ -46,7 +46,8 @@ pub struct FrameStats {
     /// From the start of drawing to the return of present.
     pub ms: f64,
     /// Of `ms`, how long was spent waiting for an earlier frame to finish
-    /// on the GPU, which is how FIFO paces the Vulkan renderer.
+    /// on the GPU or for the display to take one: how FIFO paces the
+    /// Vulkan renderer. Acquiring and presenting count as waiting.
     pub wait_ms: f64,
     /// Pixels the software renderer redrew; 0 with Vulkan, which redraws all.
     pub pixels: i64,
@@ -151,6 +152,7 @@ impl SoftwarePresenter {
             });
         };
         let drawn = self.canvas.draw(scene, glyphs);
+        let drawn_at = started.elapsed();
         if self.canvas.last_damage().is_empty() && (scene.width, scene.height) == self.size {
             return Ok(FrameStats {
                 skipped: true,
@@ -167,6 +169,7 @@ impl SoftwarePresenter {
             .surface
             .buffer_mut()
             .map_err(|e| format!("softbuffer buffer: {e}"))?;
+        let buffer_at = started.elapsed();
         let age = buffer.age() as usize;
         let pixels = self.canvas.pixels();
         let width = scene.width as usize;
@@ -196,10 +199,20 @@ impl SoftwarePresenter {
                 })
             })
             .collect();
+        let copied_at = started.elapsed();
         self.window.pre_present_notify();
         buffer
             .present_with_damage(&damage)
             .map_err(|e| format!("softbuffer present: {e}"))?;
+        tracing::debug!(
+            draw = ?drawn_at,
+            buffer = ?(buffer_at - drawn_at),
+            copy = ?(copied_at - buffer_at),
+            present = ?(started.elapsed() - copied_at),
+            age,
+            pixels = drawn.pixels,
+            "software frame"
+        );
         Ok(FrameStats {
             ms: started.elapsed().as_secs_f64() * 1000.0,
             pixels: drawn.pixels,

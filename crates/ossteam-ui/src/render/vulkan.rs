@@ -707,7 +707,7 @@ impl VulkanRenderer {
         // SAFETY: the fence is ours and was submitted with this frame's work.
         unsafe { self.device.wait_for_fences(&[fence], true, u64::MAX) }
             .map_err(vk_err("waiting for a frame"))?;
-        let waited = started.elapsed().as_secs_f64() * 1000.0;
+        let mut waited = started.elapsed();
 
         let size_changed = self
             .swapchain
@@ -722,6 +722,9 @@ impl VulkanRenderer {
             });
         }
         let chain = self.swapchain.as_ref().expect("built above");
+        // Acquiring and presenting can block until the display takes a
+        // frame (Mesa's X11 driver does), which is waiting, not work.
+        let acquiring = Instant::now();
         // SAFETY: the semaphore is unsignalled: its last wait has completed
         // with the fence waited on above.
         let acquired = unsafe {
@@ -732,6 +735,7 @@ impl VulkanRenderer {
                 vk::Fence::null(),
             )
         };
+        waited += acquiring.elapsed();
         let image = match acquired {
             Ok((image, suboptimal)) => {
                 self.rebuild |= suboptimal;
@@ -776,8 +780,11 @@ impl VulkanRenderer {
             .swapchains(&swapchains)
             .image_indices(&images);
         self.window.pre_present_notify();
+        let presenting = Instant::now();
         // SAFETY: as above.
-        match unsafe { self.swapchain_fn.queue_present(self.queue, &present) } {
+        let presented = unsafe { self.swapchain_fn.queue_present(self.queue, &present) };
+        waited += presenting.elapsed();
+        match presented {
             Ok(suboptimal) => self.rebuild |= suboptimal,
             Err(vk::Result::ERROR_OUT_OF_DATE_KHR) => self.rebuild = true,
             Err(e) => return Err(format!("presenting: {e}").into()),
@@ -785,7 +792,7 @@ impl VulkanRenderer {
         self.frame = (self.frame + 1) % FRAMES_IN_FLIGHT;
         Ok(FrameStats {
             ms: started.elapsed().as_secs_f64() * 1000.0,
-            wait_ms: waited,
+            wait_ms: waited.as_secs_f64() * 1000.0,
             pixels: 0,
             skipped: false,
         })

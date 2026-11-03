@@ -20,6 +20,8 @@ use crate::text::{GlyphCache, GlyphImage};
 const TILE: i32 = 64;
 /// Damage, in pixels, above which tiles are drawn on several threads.
 const PARALLEL_PIXELS: i64 = 256 * 256;
+/// At most this many threads draw a frame.
+const MAX_THREADS: usize = 8;
 /// How many frames of damage are kept for buffers presented again later
 /// (a buffer's age).
 const HISTORY: usize = 3;
@@ -132,7 +134,7 @@ impl Canvas {
     pub fn new() -> Self {
         let threads = std::thread::available_parallelism()
             .map_or(1, |n| n.get())
-            .min(4);
+            .min(MAX_THREADS);
         Self {
             width: 0,
             height: 0,
@@ -284,20 +286,24 @@ impl Canvas {
         };
         let bands = self.pixels.chunks_mut(band_rows.max(1));
         if stats.pixels > PARALLEL_PIXELS && self.threads > 1 {
-            let mut bands: Vec<(usize, &mut [u32])> = bands
+            let bands: Vec<(usize, &mut [u32])> = bands
                 .enumerate()
                 .filter(|(ty, _)| {
                     (0..tiles_x as usize).any(|tx| tiles[ty * tiles_x as usize + tx].is_some())
                 })
                 .collect();
-            let per_thread = bands.len().div_ceil(self.threads);
+            // Every n-th band to each thread, so busy and quiet parts of the
+            // window are shared out evenly.
+            let n = self.threads.min(bands.len());
+            let mut shares: Vec<Vec<(usize, &mut [u32])>> = (0..n).map(|_| Vec::new()).collect();
+            for (i, band) in bands.into_iter().enumerate() {
+                shares[i % n].push(band);
+            }
             std::thread::scope(|s| {
-                while !bands.is_empty() {
-                    let take = per_thread.min(bands.len());
-                    let chunk: Vec<_> = bands.drain(..take).collect();
+                for share in shares {
                     let draw_band = &draw_band;
                     s.spawn(move || {
-                        for (ty, band) in chunk {
+                        for (ty, band) in share {
                             draw_band(ty, band);
                         }
                     });

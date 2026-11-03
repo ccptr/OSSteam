@@ -1,6 +1,6 @@
 ---
 name: gui-toolkit-adr-0004
-description: ADR 0004 (own GUI toolkit ossteam-ui on winit + ash) and its SPEC changes are proposed, not reviewed; the spike is under way on a branch
+description: ADR 0004 (own GUI toolkit ossteam-ui on winit + ash) and its SPEC changes are proposed, not reviewed; the spike is under way on a branch and asks which renderer auto prefers
 metadata:
   type: project
 ---
@@ -25,3 +25,14 @@ left in [adr-0004-spike](../acceptance/adr-0004-spike.md). The maintainer
 chose to keep winit's client-side decorations (sctk-adwaita, which draws
 with tiny-skia) for now. After the spike and the review: the toolkit and
 the port on a branch. Until then `ossteam-gui` is on gpui.
+
+By the end of 2026-11-02 the spike has both renderers, the text field
+with IME and the clipboard, and its measures on Hyprland and on a
+headless sway (Wayland, Xwayland, lavapipe), all within §20 with no
+idle wakeups. Waiting on the maintainer: which renderer `auto` prefers
+(the ADR's step 2 hands it back, since the software renderer meets §20
+with half the memory), whether LIC-3 allows BSL-1.0 so `arboard` can
+serve the clipboard on Windows (spike item 8; until then Windows has
+none), and whether the folder picker goes through ashpd rather than
+`rfd` (spike item 4). Left: scale factors, IME on X11,
+Windows under Wine, a light desktop.

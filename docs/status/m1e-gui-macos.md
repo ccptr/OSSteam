@@ -20,14 +20,14 @@ which changes under the parallel suite.
 - The M1a–M1d rows were dry-run on the gui_states bench (4a986d3,
   943535e, 22fe26d, abf4bdb..e86b78f) and recorded in m1e.md. Each still
   needs its live run.
-- The GUI moved off gpui on the branch `ossteam-ui-port`
-  ([gui-toolkit-adr-0004](gui-toolkit-adr-0004.md)); rows passed on gpui
-  are run again on it.
+- The GUI moved to `ossteam-ui` on the branch `ossteam-ui-port`
+  ([gui-toolkit-adr-0004](gui-toolkit-adr-0004.md)); the rows passed
+  before were run again on it, and on 2026-11-03 parts of the M1a, M1b
+  and M1c rows ran live on the test account (recorded in m1e.md).
 - Open, seen once: [lost-keyboard-focus](../../AGENTS/gui/lost-keyboard-focus.md).
 - Windows cross-clippy of the workspace is clean (706f5d8). The fake
   CM's QR auto-approval is Linux-only.
 
-Left: the logged-in GUI checks
-([test-account-logged-out](test-account-logged-out.md)), the macOS
+Left: the rest of the logged-in GUI checks (m1e.md), the macOS
 acceptance runs ([hardware-mac-windows](hardware-mac-windows.md)), and
 the §20 rows ([reference-hw-questions](reference-hw-questions.md)).

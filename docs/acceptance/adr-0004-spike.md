@@ -2,7 +2,8 @@
 
 [ADR 0004](../adr/0004-own-gui-toolkit.md) step 2. The spike shows whether
 our own toolkit meets §20 and GUI-4 with both renderers before the port
-starts. The gpui spike it is compared with is in [m0.md](m0.md).
+starts. The M0 spike on the previous framework, which it is compared with,
+is in [m0.md](m0.md).
 
 The harness is `crates/ossteam-ui/examples/spike.rs`: a header, a search
 field with a shadow that filters the list as you type, a virtual list of
@@ -113,8 +114,10 @@ Driven on the headless sway with real key events (`wtype` on Wayland,
   it; both renderers draw it alike (screenshots differ by at most one
   level in a channel). The caret rectangle winit gives the compositor
   for the candidate window came back to the input method as 2×19 px, the
-  caret's size, after every change. Not tested on X11: no XIM engine
-  that composes is installed here (ibus has only its keyboard layouts).
+  caret's size, after every change. On X11, checked in the GUI on
+  2026-11-03 since no composing engine is installed here: ibus's XIM
+  front end with its Ctrl-Shift-U entry composed "ue9", drawn
+  underlined at the cursor, and committed "é".
 - **Input to presented frame:** p50 0.8 to 3.3 ms on Wayland and X11,
   both renderers. The first composition with Japanese text took 34 ms,
   once: loading the CJK fallback font on first use.
@@ -153,7 +156,7 @@ the window was open (1 → 2 → 1.5 → 1.25 → 1). Both renderers, Wayland.
 | Live changes | each redrawn at the new scale in one frame | same |
 | Resident memory, idle, 1600×1000 | 54.8 to 55.1 MB | 28.2 MB |
 
-- **The first frame is drawn at scale 1, as gpui's was (m0.md item 3).**
+- **The first frame is drawn at scale 1, as the previous framework's was (m0.md item 3).**
   winit opens the window at 1, and sway sends the fractional scale only
   after the surface's first commit, so the first frame cannot know it.
   The second frame, at the output's scale, comes about a millisecond

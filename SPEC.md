@@ -260,7 +260,7 @@ docs/acceptance/           per-milestone acceptance corpora and checklists
 
 | Concern | Choice | Notes |
 |---|---|---|
-| Toolchain | Pinned in `rust-toolchain.toml` | Currently 1.98.1, which the gpui revision still in use needs; bumped deliberately once ADR 0004's port removes gpui |
+| Toolchain | Pinned in `rust-toolchain.toml` | Currently 1.98.1; bumped deliberately, as a change of its own |
 | GUI | `ossteam-ui`, ours (ADR 0004), on `winit`, `ash` (Vulkan; MoltenVK on macOS), `taffy`, `cosmic-text` and `swash`; our own software renderer, presented with `softbuffer` | No third-party GUI framework or widget kit |
 | CLI | `clap` v4 (derive), `clap_complete` | |
 | Protobuf | `prost`, `prost-build` | Used for both Steam messages and our IPC |
@@ -312,8 +312,6 @@ Adding an async runtime (tokio, async-std, smol) to the daemon requires an ADR
   stays in one place (the desktop portal in the GUI, ADR 0004), and
   nowhere else without an ADR. The GUI itself is synchronous: its event
   loop waits for input, for messages from its IPC threads, and for timers.
-  Until ADR 0004's port lands, the GUI is on gpui and still uses gpui's
-  `cx.spawn` and an async channel for IPC events.
 - **[CONC-4]** Before async is considered anywhere else, the ADR must show a
   measured problem with the threaded design, such as thousands of concurrent
   waits or a missed latency budget from §20.
@@ -786,9 +784,8 @@ refuses to run without a TTY unless `--qr` is given.
 
 - **[GUI-1]** The GUI is built on `ossteam-ui`, our own toolkit in
   `crates/ossteam-ui/` (ADR 0004). The GUI's own widgets live in
-  `crates/ossteam-gui/src/widgets/`. No third-party GUI framework or
-  widget kit is used. Until the port in ADR 0004 is done, `ossteam-gui`
-  is on gpui.
+  `crates/ossteam-gui/src/widgets.rs`. No third-party GUI framework or
+  widget kit is used.
 - **[GUI-2]** The GUI renders state that came from the daemon. It keeps no
   model of its own beyond view state. All mutations happen through IPC, and
   an optimistic update is allowed only when the event that confirms it
@@ -918,8 +915,8 @@ These are measured on reference hardware defined in
 - `ossteam-vdf` complete for text and binary KeyValues.
 - The IPC skeleton: `Hello`, `GetStatus`, and `daemon start/stop/status`
   wired end to end through the CLI and a GUI window.
-- gpui spike results recorded for every platform: window, DPI, clipboard,
-  first-frame time.
+- GUI toolkit spike results recorded for every platform: window, DPI,
+  clipboard, first-frame time.
 - Spec pages written: `cm.md`, `auth.md`, `ipc.md`.
 
 **Exit:** `ossteam daemon status` and an empty `ossteam-gui` window work on

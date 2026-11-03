@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| Status | Draft for M1e. ossteam's own design; nothing here is observed from the official client. §2.1, §3, §4.2, §6 and §7 describe the GUI on `ossteam-ui` (ADR 0004, accepted 2026-11-03); until its port lands the code is on gpui, as this page at 1726cde describes |
+| Status | Draft for M1e. ossteam's own design; nothing here is observed from the official client. The GUI is on `ossteam-ui` (ADR 0004, accepted 2026-11-03) |
 | Requirements | SPEC §16 (GUI-1 to GUI-5), LEAF-1 to LEAF-3, CONC-3, D-2, §20 |
 | Code | `crates/ossteam-gui` |
 
@@ -144,8 +144,9 @@ Three parts:
   a confirmation are offered, both show.
 
 Cancel calls `CancelLogin`. `LoginEnded` with an error shows it above the
-form and keeps the account name; with an account, the GUI goes to the
-Library page. The password field is cleared as soon as the request is
+form and keeps the account name, and the cursor goes to the password
+field so the password can be typed again; with an account, the GUI goes
+to the Library page. The password field is cleared as soon as the request is
 sent, and its buffer is zeroed (IPC-10).
 
 ### 4.2 Library
@@ -155,6 +156,9 @@ page.
 
 - **Search** sends `ListApps{filter}`, 150 ms after the last key press,
   so that the GUI matches the CLI's `library <filter>` exactly (LEAF-3).
+  Enter sends it at once and moves focus to the apps; when the reply
+  arrives, the first app is selected unless the selected one is among
+  them, so a second Enter opens it.
 - **Filters:** *Installed* (`installed_only`) and *Updates*
   (`AppSummary.update_available`, §5; filtered in the view, because
   `ListApps` has no such parameter).
@@ -176,8 +180,9 @@ page.
   fill the cell in device pixels, cropping what overflows. The 256 most
   recently drawn are kept and the others are dropped from memory and
   from the renderer (the GPU's atlas, with Vulkan); `ossteam-ui` keeps no image the GUI has not
-  asked it to keep. (gpui's image loading kept every image at full size
-  until the app exited: scrolling 10,000 capsules with it held 11.7 GB.)
+  asked it to keep. (An image cache that keeps every image at full size
+  until the app exits holds 11.7 GB after a scroll through 10,000
+  capsules.)
 - While `ListApps.complete` is false the page says that the library is
   still loading. `packages_without_info` is shown as a count, with the
   ids in its tooltip.

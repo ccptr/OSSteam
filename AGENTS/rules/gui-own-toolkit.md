@@ -12,11 +12,11 @@ our own software renderer beside it (not tiny-skia), shaders in Slang
 compiled by `cargo xtask shaders`, taffy for layout, cosmic-text and
 swash for text. The GUI's own controls
 are in `crates/ossteam-gui/src/widgets.rs`. Do not add a third-party GUI
-framework or widget kit (`gpui-component`, egui, iced and the like).
+framework or widget kit (egui, iced and the like).
 
-The toolkit's API is its own, not a copy of gpui's (the maintainer,
-2026-11-03): don't port gpui code or mirror its names. Write the GUI's
-views and widgets anew against `ossteam-ui`.
+The toolkit's API is its own, not a copy of another framework's (the
+maintainer, 2026-11-03): don't port another framework's code or mirror
+its names. Write the GUI's views and widgets anew against `ossteam-ui`.
 
-The port (ADR 0004 step 4) removed gpui from the workspace on
-2026-11-03; don't bring it, or its patches, back.
+The port (ADR 0004 step 4) removed the previous framework from the
+workspace on 2026-11-03; don't bring it, or its patches, back.

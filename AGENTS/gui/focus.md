@@ -5,8 +5,8 @@ metadata:
   type: reference
 ---
 
-The keyboard-only row first passed on Linux on gpui (887ef16); the
-`ossteam-ui` port keeps the same behaviour with the toolkit's own
+The keyboard-only row first passed on Linux before the port (887ef16);
+the `ossteam-ui` port keeps the same behaviour with the toolkit's own
 machinery.
 
 - Every control's focus handle is named after its id
@@ -18,6 +18,10 @@ machinery.
 - A control that goes away leaves focus on its page (`Gui::focus_lost`);
   Tab from a focused element that is not a tab stop goes on to the next
   stop after it, Shift-Tab to the one before.
+- A running sign-in's Cancel takes the focus handle of the button that
+  started it (Sign in, Show QR code), and a sign-in that ends without an
+  account puts the cursor in the password field (`pages/login.rs`,
+  `before_view`).
 - Choosers return focus to what opened them, with the ring if the
   keyboard opened them (`pages/app.rs`, `close_chooser`).
 - The toolkit keeps the keyboard-focused control in view, and an

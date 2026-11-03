@@ -12,7 +12,8 @@ use std::sync::Arc;
 use crate::image::{Image, ImageId};
 
 /// A colour in sRGB with straight alpha. Both renderers blend in sRGB
-/// space, so they agree with each other (and with what gpui drew).
+/// space, so they agree with each other (and with what the GUI drew
+/// before it moved to this toolkit).
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct Color {
     pub r: f32,

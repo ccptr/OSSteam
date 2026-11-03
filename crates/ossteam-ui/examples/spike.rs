@@ -9,7 +9,7 @@
 //! ```
 //!
 //! It reports the time to the first presented frame from the start of
-//! `main` (as the gpui spike in m0.md did) with its parts, the scale
+//! `main` (as the M0 spike in m0.md did) with its parts, the scale
 //! factor and appearance the first frame was drawn with and any later
 //! changes, the renderer and why it was chosen, how often the event loop
 //! woke while the window was idle (GUI-5), and the resident memory when

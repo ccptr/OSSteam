@@ -34,6 +34,15 @@ order (00dca80), ISteamUserStats (b4b2808), RemoteStorage local files
 - The C++ ABI test: [abi-test](../../AGENTS/steamworks/abi-test.md).
 - Windows job-object, registry and named-pipe code passes under Wine
   only.
+- Spacewar (480) on Linux, live 2026-11-03: its one launch option is
+  `SteamWorksExample.exe` with no `oslist`, its depot 481 holds Windows
+  files only, and the file is `SteamworksExample.exe`. `launch` and the
+  GUI's Play both refuse with "… is missing; verify app 480" (exit 5),
+  since the daemon matches the name with case and picks Steam Linux
+  Runtime 1.0 ("it has a Linux version") rather than Proton. How the
+  official client resolves the name's case, and which tool it runs
+  Spacewar with on Linux, is not in `launch.md`; spec it before
+  changing either.
 
 Left: launch-time install-script steps
 ([install-scripts-2-6](install-scripts-2-6.md)); live runs (Spacewar 480,

@@ -13,4 +13,7 @@ idle. `CancelToken::on_cancel` (ossteam-types) now wakes the poller:
 p95 2.4 ms), labelled as not results. The GUI row was dry-run on the
 gui_states bench (4a986d3).
 
-Left: the live runs ([test-account-logged-out](test-account-logged-out.md)).
+Left: the live runs. The test account is signed in again since
+2026-11-03 (a wrong password, *Remember me* off and QR passed live
+through the GUI that day; see
+[gui-toolkit-adr-0004](gui-toolkit-adr-0004.md)).

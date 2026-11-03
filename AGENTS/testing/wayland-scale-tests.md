@@ -15,5 +15,5 @@ scale with `swaymsg output HEADLESS-1 scale N`.
   `SWAYSOCK=/run/user/$(id -u)/sway-ipc.$(id -u).$(pgrep -x sway).sock`
   (the headless sway's pid, not the desktop's if that is sway too).
 - winit's window opens at scale 1 and learns the output's scale after
-  its first commit, so the first frame is at 1 on sway (gpui did the
-  same); check the second frame and the `ScaleFactorChanged` event.
+  its first commit, so the first frame is at 1 on sway; check the
+  second frame and the `ScaleFactorChanged` event.

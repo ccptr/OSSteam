@@ -1,4 +1,4 @@
-# ADR 0004: Our own GUI toolkit, `ossteam-ui`, replaces gpui
+# ADR 0004: Our own GUI toolkit, `ossteam-ui`
 
 | | |
 |---|---|
@@ -9,31 +9,33 @@
 
 ## Context
 
-`ossteam-gui` is built on gpui, pinned to one zed revision (GUI-1, §5.3).
-The maintainer has decided to replace it with a GUI toolkit of our own.
-What gpui has cost so far, as recorded in this repository:
+`ossteam-gui` is built on a third-party GUI framework (the previous
+framework below), pinned to one git revision of the editor it comes
+from (GUI-1, §5.3). The maintainer has decided to replace it with a GUI
+toolkit of our own. What the previous framework has cost so far, as
+recorded in this repository:
 
-- **No stable release.** The API churns, so it is pinned to one zed
+- **No stable release.** The API churns, so it is pinned to one
   revision and bumped by hand (§23). The toolchain follows that revision
-  (`rust-toolchain.toml`), and the workspace repeats four of zed's own
-  `[patch.crates-io]` entries, plus a proptest patch for its
+  (`rust-toolchain.toml`), and the workspace repeats four of its
+  upstream's `[patch.crates-io]` entries, plus a proptest patch for its
   `test-support`.
-- **Async.** gpui is async-native, so the GUI is the one place where
+- **Async.** The framework is async-native, so the GUI is the one place where
   SPEC §2.3's synchronous default does not hold (CONC-3 item 1): views
   call `cx.spawn`, and IPC events reach the UI through an async channel.
 - **Behaviour we had to work around** (`docs/acceptance/m0.md`,
   `docs/spec/gui.md`): every window starts `Light` on Linux and learns
   the appearance after its first frame, which flashed a dark desktop
   white (`theme::StartupAppearance` works around it); windows open at
-  scale 1 and learn the output's scale after the first commit; gpui's
+  scale 1 and learn the output's scale after the first commit; its
   image loading keeps every image at full size until exit, 11.7 GB after
   scrolling 10,000 capsules (`thumbnails.rs` replaces it); an inactive
   window draws 30 frames a second while it scrolls (`m1e.md`).
-- **Tests** of the GUI's connection and store need gpui's test platform
+- **Tests** of the GUI's connection and store need the framework's test platform
   and its executor clock (`ossteamd` `testing/gui.rs`), although nothing
   they check is drawn.
 
-At the pinned revision gpui is itself built on crates we can use
+At the pinned revision the framework is itself built on crates we can use
 directly: taffy, cosmic-text, swash and etagere are already in
 `Cargo.lock` through it, and so are `ash` and `gpu-allocator`, through
 its wgpu. Its platform layer (windows, input, IME, clipboard, dialogs)
@@ -42,7 +44,7 @@ is its own.
 ## Decision
 
 A new workspace crate, `crates/ossteam-ui`, is ossteam's GUI toolkit.
-`ossteam-gui` is ported onto it, and gpui is removed once the port
+`ossteam-gui` is ported onto it, and the previous framework is removed once the port
 passes the checks below. The toolkit is ours from the platform layer up:
 it does not wrap another GUI framework.
 
@@ -53,7 +55,7 @@ it does not wrap another GUI framework.
 | Windows, input events, IME events, DPI, event loop | `winit` | dependency |
 | Drawing on the GPU | Vulkan through `ash`; `ash-window` for the surface, `gpu-allocator` for memory; MoltenVK on macOS | renderer, pipelines and shaders ours |
 | Drawing on the CPU | our own rasteriser; `softbuffer` hands the finished pixels to the window | renderer ours, presenting a dependency |
-| Layout | `taffy` (flexbox), behind our own element builder (`element.rs`, `style.rs`), not a copy of gpui's | builder ours |
+| Layout | `taffy` (flexbox), behind our own element builder (`element.rs`, `style.rs`), not a copy of the previous framework's | builder ours |
 | Text | `cosmic-text` for shaping, font fallback, line breaking and hit-testing; `swash` rasterises glyphs into an `etagere`-packed atlas | atlas, text field and finding the fonts ours: the UI family's files first, the rest on the font thread for fallback (spike item 1) |
 | Clipboard | `smithay-clipboard` on Wayland, on winit's connection; `arboard` elsewhere | dependency |
 | Folder picker | on Linux the portal's file chooser through `ashpd`, on our own bus connection; `rfd`'s blocking API on Windows and macOS | Linux call ours, the rest a dependency |
@@ -155,35 +157,35 @@ used off Linux, has no async in its blocking API.
 1. **Review** of this ADR and the SPEC changes made with it. (The
    maintainer accepted both on 2026-11-03.)
 2. **Spike**: `crates/ossteam-ui/examples/spike.rs` reports what the
-   gpui spike did (m0.md: first frame, scale and appearance at the first
+   M0 spike did (m0.md: first frame, scale and appearance at the first
    frame, clipboard), each for both renderers with the resident memory
    when idle and while scrolling, plus a text field with IME and a 10,000-row virtual
    list scrolled one row per frame, on Wayland and X11, and on Windows
    under Wine for what Wine can show (winevulkan on the host's driver),
    and on lavapipe under headless sway. It must meet §20 (first frame
-   ≤ 500 ms; gpui's was 152 to 156 ms here) and draw no light frame on a
+   ≤ 500 ms; the previous framework's was 152 to 156 ms here) and draw no light frame on a
    dark desktop, with either renderer. If it cannot, this ADR is amended
    before the port. If the software renderer meets §20 with less memory,
    which renderer `auto` prefers goes back to the maintainer. (It did;
    they chose Vulkan.)
 3. **The toolkit**, up to what the GUI uses today and no further.
    `cargo xtask check-layering` learns WS-1's new rule for it.
-4. **The port**, on a branch; `main` keeps the gpui GUI until it is
-   done. The modules without gpui (`queue`, `rate`, `format`, `args`,
+4. **The port**, on a branch; `main` keeps the previous GUI until it is
+   done. The modules that do not use the framework (`queue`, `rate`, `format`, `args`,
    the QR matrix, the store's event handling) move over unchanged; the
    store stops being an entity; `testing/gui.rs` drives it directly.
    The views and widgets are written anew against the toolkit's own API,
-   not translated from gpui's (the maintainer's direction, 2026-11-03).
+   not translated from the previous framework's (the maintainer's direction, 2026-11-03).
 5. **Before merging**: the M1e rows already passed on Linux pass again
    (keyboard only, no daemon and Retry, the gui_states dry runs, the §20
-   scroll bench). Then gpui, its four patches and the proptest patch are
+   scroll bench). Then the previous framework, its four patches and the proptest patch are
    removed, and the toolchain is bumped deliberately on its own.
 
 ### Alternatives considered
 
-- **Keep gpui.** The costs above stay; the maintainer has chosen not to.
-- **Fork gpui into the workspace.** Ends the churn, but keeps the async
-  model and a large codebase written for zed.
+- **Keep the previous framework.** The costs above stay; the maintainer has chosen not to.
+- **Fork it into the workspace.** Ends the churn, but keeps the async
+  model and a large codebase written for another application.
 - **Another framework** (egui, iced, Slint, Xilem and the like). Not
   ours; each brings its own model, churn or runtime.
 - **Our own platform layer instead of winit.** Windows, input and IME on
@@ -204,7 +206,7 @@ used off Linux, has no async in its blocking API.
 
 - The GUI becomes synchronous, and CONC-3 loses its GUI exception.
 - We own text editing and IME, focus, and drawing on three platforms.
-  Everything gpui did on macOS and Windows must be checked again on real
+  Everything the previous framework did on macOS and Windows must be checked again on real
   hardware, which the project does not have yet (status:
   hardware-mac-windows).
 - The port is the size of the GUI (about 8,300 lines in 27 files today)
@@ -222,12 +224,12 @@ used off Linux, has no async in its blocking API.
   compare the two, and differences in anti-aliasing and text blending
   are accepted when they are within a few levels per channel.
 - Fewer git dependencies and patches, and the toolchain no longer
-  follows zed.
+  follows another project's.
 - winit is Apache-2.0 only, so LIC-4 still holds; it names winit instead
-  of gpui.
+  of the previous framework.
 - Accessibility through AccessKit (`accesskit_winit`) becomes possible,
   since we own the element tree. It is not needed for parity and is
   left for later.
 - `README.md` (build packages, licence note) and the agent notes that
-  describe gpui behaviour (`AGENTS/gui/`) change with the port, not
-  before.
+  describe the previous framework's behaviour (`AGENTS/gui/`) change with
+  the port, not before.

@@ -25,6 +25,14 @@ tool makes a virtual one, which changes how input tests behave
   Xwayland display (`ls /tmp/.X11-unix`; it starts with the first X
   client) and type with `xdotool`. Even then its first key is sometimes
   never delivered (about 1 run in 6); rerun before suspecting the app.
+- **IME on X11** without a composing engine installed: ibus's own
+  Ctrl-Shift-U entry composes through XIM. On a private bus
+  (`dbus-run-session`) with `DISPLAY` set to sway's Xwayland and
+  `GSETTINGS_BACKEND=memory`, start `ibus-daemon --xim
+  --panel=disable`, `ibus engine xkb:us::eng`, then the app with
+  `XMODIFIERS=@im=ibus` and no `WAYLAND_DISPLAY`; `xdotool key
+  ctrl+shift+u`, `type e9`, `key space` composes "ue9" and commits é.
+  ibus leaves `~/.config/ibus/bus/*-unix-<display>` behind; remove it.
 - Clipboard checks: `wl-paste -n` / `wl-copy --paste-once` with
   `WAYLAND_DISPLAY=wayland-2`, `xclip -selection clipboard` with
   `DISPLAY` set; sway passes X11 copies on to Wayland.

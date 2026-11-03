@@ -1,11 +1,12 @@
 ---
 name: gui-toolkit-adr-0004
-description: ADR 0004 (own GUI toolkit ossteam-ui on winit + ash) and its SPEC changes accepted 2026-11-03; spike done but for the maintainer's checks; toolkit (step 3) and the port (step 4) done on the branch ossteam-ui-port, gpui gone from the workspace; not merged or pushed
+description: ADR 0004 (own GUI toolkit ossteam-ui on winit + ash) and its SPEC changes accepted 2026-11-03; spike done but for the maintainer's checks; toolkit (step 3) and the port (step 4) done on the branch ossteam-ui-port, the previous framework gone from the workspace; live checks on the test account passed 2026-11-03; not merged or pushed
 metadata:
   type: project
 ---
 
-On 2026-11-02 the maintainer asked to replace gpui with an in-house GUI
+On 2026-11-02 the maintainer asked to replace the GUI's third-party
+framework with an in-house GUI
 toolkit, as a new crate on our own stack, renderer on `ash` (Vulkan),
 not wgpu, plus our own software renderer (used when Vulkan is missing,
 or forced with `--renderer`; the spike measures both, memory included). [ADR 0004](../adr/0004-own-gui-toolkit.md) was proposed with
@@ -24,7 +25,7 @@ it is on the branch `ossteam-ui-spike`, with its results and what is
 left in [adr-0004-spike](../acceptance/adr-0004-spike.md). The maintainer
 chose to keep winit's client-side decorations (sctk-adwaita, which draws
 with tiny-skia) for now. After the spike and the review: the toolkit and
-the port on a branch. Until then `ossteam-gui` is on gpui.
+the port on a branch.
 
 By the end of 2026-11-02 the spike has both renderers, the text field
 with IME and the clipboard, the folder picker, and its measures on
@@ -35,8 +36,8 @@ Vulkan; `arboard` on every platform but Wayland, with BSL-1.0 added to
 SPEC LIC-3; the folder picker through ashpd on Linux, `rfd` elsewhere.
 The ADR says so.
 
-On 2026-11-02 the maintainer also asked to replace gpui with
-`ossteam-ui` once nothing blocks it. On 2026-11-03 they accepted the
+On 2026-11-02 the maintainer also asked to replace the previous
+framework with `ossteam-ui` once nothing blocks it. On 2026-11-03 they accepted the
 ADR and its SPEC changes, and agreed to this order: the spike's scale
 and Wine runs, then the toolkit (step 3) starting with loading only the
 fonts the GUI uses (spike item 1, the cold first frame that breaks
@@ -45,7 +46,7 @@ maintainer's: a light desktop and a pick through the real portal
 dialog.
 
 The scale and Wine runs were done on 2026-11-03: sharp at 1.25, 1.5
-and 2 with both renderers, the first frame at scale 1 as gpui's was;
+and 2 with both renderers, the first frame at scale 1 as before;
 under Wine both renderers draw and the clipboard works, but any winit
 window spins there (Wine's bug), and a prefix without fonts made the
 spike panic (spike items 10 and 11). Idle wakeups on Windows wait for
@@ -58,7 +59,7 @@ one from 101 ms to 17 to 30 ms; no fonts at all is an error, not a
 panic (spike items 1 and 10).
 
 Also on 2026-11-03 the maintainer asked for a clean implementation that
-does not port gpui code: the toolkit's API is its own (`panel()`,
+does not port the previous framework's code: the toolkit's API is its own (`panel()`,
 `.row()`, `.pad()`, `.on_click(|state, cx| …)`, actions as plain types,
 `"primary+f"` keystrokes), and the GUI's views will be written anew
 against it. The ADR's Layout row and its Identity, Focus and Images
@@ -119,7 +120,8 @@ The port (step 4) was done on 2026-11-03 on the branch
 `ossteam-ui-port`, which is not merged or pushed. Every page is written
 anew against `ossteam-ui` (`gui.rs`, `widgets.rs`, `pages/`); the
 model, store, daemon connection and formatting are the same code, now
-plain structs whose results come back as messages. gpui, its patches
+plain structs whose results come back as messages. The previous
+framework, its patches
 and its git sources are gone from `Cargo.toml`, `deny.toml` and the
 lock file, and the GUI needs no Linux development packages to build.
 The toolkit gained on the way: Tab from a focused element that is not a
@@ -141,11 +143,48 @@ test passes; the toolkit's and GUI's tests pass under Wine, given a
 prefix with fonts, and the Windows build draws its no-daemon page
 there.
 
-Still the maintainer's: merging and pushing, the rows of m1e.md passed
-on gpui run again on `ossteam-ui` (live, on the test account), a pick
-through the real portal dialog, IME on X11, a light desktop, real
-Windows and macOS. SPEC.md still speaks of gpui where it says "until
-ADR 0004's port lands": the notes under CONC-3 and GUI-1 (which also
-names `src/widgets/`, now `src/widgets.rs`) and §23's toolchain row,
-whose 1.98.1 pin was for gpui. Those lines are the maintainer's to
-change once the port is merged. Open as before: the font fallback.
+Live on 2026-11-03, on the maintainer's desktop (Hyprland, a 165 Hz
+monitor at scale 1) against the real daemon and the test account, by
+keyboard but for what needed the maintainer:
+
+- Sign-in: a wrong password refused by Steam (`INVALID_PASSWORD (5)`);
+  a password sign-in with *Remember me* off (not listed, nothing in the
+  keyring; Steam asked no Steam Guard code); QR, which the maintainer
+  saw rotate and sign in; log out from the account menu deleting the
+  token.
+- The Dota 2 App page (hero, logo, its four DLC as `info` lists them);
+  persona Invisible, Offline and Online from Settings, each sent to the
+  CM and shown on the account button.
+- Spacewar installed, a damaged file repaired by Verify, uninstalled,
+  each matching `ossteam jobs`; Play failed with the error `launch`
+  gives (see [m1c-play](m1c-play.md)).
+- A library folder added through the real portal dialog
+  (`xdg-desktop-portal-gtk`) and removed; the GUI following the desktop
+  from dark to light and back.
+- First frame 31 to 58 ms (Vulkan) and 14 to 15 ms (software); the 10k
+  scroll at 165 Hz: worst frame 4.6 ms, no frame missed with Vulkan in
+  two runs, 0 to 2 of 11,411 with the software renderer.
+- Idle, the main thread wakes about every 1.5 s, when Hyprland pings
+  the window (`xdg_wm_base.ping`, which it uses to find hung apps), and
+  the clipboard thread, which shares winit's connection, with it. Sway
+  sends no pings, so there are no wakeups there.
+
+Fixed from it: after a refused sign-in the cursor goes back to the
+password field, and a running sign-in's Cancel keeps the focus of the
+button that started it; Enter in the library search selects the first
+result once it arrives, with the focus ring on the grid, so a second
+Enter opens it.
+
+At the maintainer's request the same day, SPEC.md (CONC-3, GUI-1,
+§21 M0, §23), gui.md, ADR 0004 and the other notes stopped naming the
+previous framework; git history keeps it.
+
+IME on X11 works: on the headless sway's Xwayland, ibus's XIM front
+end composed "ue9" in the library search (drawn underlined at the
+cursor) and committed "é" (ibus's Ctrl-Shift-U entry, since no
+composing engine is installed here).
+
+Still the maintainer's: merging and pushing, real Windows
+and macOS. The rows of m1e.md not run live (Steam Guard codes, a second
+account, a PICS change, a download big enough to pause, Proton) wait as
+before. Open as before: the font fallback.

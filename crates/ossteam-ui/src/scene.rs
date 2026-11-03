@@ -168,6 +168,10 @@ pub struct ImageQuad {
     pub height: u32,
     /// Multiplies every pixel.
     pub opacity: f32,
+    /// The rounded rectangle the image shows through, in device pixels,
+    /// its corners cut at `corner_radius`; a radius of 0 cuts nothing.
+    pub round: Rect,
+    pub corner_radius: f32,
 }
 
 impl ImageQuad {
@@ -243,6 +247,8 @@ impl Item {
                 i.x.hash(&mut h);
                 (i.y as f32 + dy).to_bits().hash(&mut h);
                 i.opacity.to_bits().hash(&mut h);
+                i.round.translate(0.0, dy).hash_into(&mut h);
+                i.corner_radius.to_bits().hash(&mut h);
             }
         }
         h.finish()
@@ -369,6 +375,26 @@ impl Scene {
 
     /// Draws `image` with its top-left corner at `(x, y)`.
     pub fn image(&mut self, image: &Arc<Image>, x: i32, y: i32, opacity: f32) {
+        let bounds = Rect::new(
+            x as f32,
+            y as f32,
+            image.width() as f32,
+            image.height() as f32,
+        );
+        self.image_rounded(image, x, y, opacity, bounds, 0.0);
+    }
+
+    /// Draws `image` with its top-left corner at `(x, y)`, showing only
+    /// what lies inside `round` with its corners cut at `corner_radius`.
+    pub fn image_rounded(
+        &mut self,
+        image: &Arc<Image>,
+        x: i32,
+        y: i32,
+        opacity: f32,
+        round: Rect,
+        corner_radius: f32,
+    ) {
         self.images
             .entry(image.id())
             .or_insert_with(|| image.clone());
@@ -379,6 +405,8 @@ impl Scene {
             width: image.width(),
             height: image.height(),
             opacity,
+            round,
+            corner_radius,
         }));
     }
 

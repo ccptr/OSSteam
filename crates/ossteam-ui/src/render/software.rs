@@ -14,7 +14,7 @@ use std::collections::{HashMap, VecDeque};
 use std::time::Instant;
 
 use crate::image::Image;
-use crate::render::shape::quad_pixel;
+use crate::render::shape::{quad_pixel, rounded_rect_distance};
 use crate::scene::{Color, ImageQuad, Item, Primitive, Quad, Rect, Scene, ScrollLayer};
 use crate::text::{GlyphCache, GlyphImage};
 
@@ -613,10 +613,34 @@ fn draw_image(target: &mut Target<'_>, image: &Image, at: &ImageQuad, clip: &Pix
     }
     let w = image.width() as usize;
     let px = image.pixels();
-    let o = (at.opacity.clamp(0.0, 1.0) * 255.0 + 0.5) as u32;
+    let opacity = at.opacity.clamp(0.0, 1.0);
+    let full = (opacity * 255.0 + 0.5) as u32;
+    // The corners to cut, as in `shaders/image.slang`: pixels whose
+    // centres lie this far inside `round` are whole.
+    let r = at.corner_radius;
+    let round = at.round;
+    let (hw, hh) = (round.w / 2.0, round.h / 2.0);
+    let (cx, cy) = (round.x + hw, round.y + hh);
+    let inner = PixelRect {
+        x0: (round.x + r + 1.0).ceil() as i32,
+        y0: (round.y + r + 1.0).ceil() as i32,
+        x1: (round.right() - r - 1.0).floor() as i32,
+        y1: (round.bottom() - r - 1.0).floor() as i32,
+    };
     for y in area.y0..area.y1 {
         let row = (y - bounds.y0) as usize * w;
+        let whole_row = r <= 0.0 || (y >= inner.y0 && y < inner.y1);
         for x in area.x0..area.x1 {
+            let o = if whole_row || (x >= inner.x0 && x < inner.x1) {
+                full
+            } else {
+                let d = rounded_rect_distance(x as f32 + 0.5 - cx, y as f32 + 0.5 - cy, hw, hh, r);
+                let cover = (0.5 - d).clamp(0.0, 1.0);
+                if cover <= 0.0 {
+                    continue;
+                }
+                (opacity * cover * 255.0 + 0.5) as u32
+            };
             let i = (row + (x - bounds.x0) as usize) * 4;
             let s = &px[i..i + 4];
             let p = target.at(x, y);
@@ -801,6 +825,40 @@ mod tests {
                     stats.pixels
                 );
             }
+        }
+    }
+
+    #[test]
+    fn a_rounded_image_is_cut_like_a_rounded_quad() {
+        let glyphs = GlyphCache::default();
+        let bounds = Rect::new(10.0, 10.0, 40.0, 30.0);
+        let red = crate::image::Image::from_rgba(40, 30, [255, 0, 0, 255].repeat(40 * 30))
+            .expect("40×30");
+        let draw = |image: bool| {
+            let mut scene = Scene::new(60, 50, Color::rgb(0x000000));
+            if image {
+                scene.image_rounded(&red, 10, 10, 1.0, bounds, 9.0);
+            } else {
+                scene.quad(Quad {
+                    corner_radius: 9.0,
+                    ..Quad::filled(bounds, Color::rgb(0xff0000))
+                });
+            }
+            let mut canvas = Canvas::new();
+            canvas.draw(&scene, &glyphs);
+            canvas.pixels().to_vec()
+        };
+        let (image, quad) = (draw(true), draw(false));
+        let at = |x: usize, y: usize| image[y * 60 + x];
+        assert_eq!(at(10, 10), 0x000000, "the corner is cut");
+        assert_eq!(at(30, 25), 0xff0000, "the middle is whole");
+        assert_eq!(at(30, 10), 0xff0000, "an edge is whole");
+        for (i, (a, b)) in image.iter().zip(&quad).enumerate() {
+            let red = |p: u32| (p >> 16 & 0xff) as i32;
+            assert!(
+                (red(*a) - red(*b)).abs() <= 1,
+                "pixel {i}: image {a:06x}, quad {b:06x}"
+            );
         }
     }
 

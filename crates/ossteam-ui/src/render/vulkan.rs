@@ -44,7 +44,7 @@ const QUAD_STRIDE: u32 = 5 * 16;
 /// Bytes per glyph instance: dest, atlas slot, colour, clip.
 const GLYPH_STRIDE: u32 = 4 * 16;
 /// Bytes per image instance: dest, clip, params (opacity).
-const IMAGE_STRIDE: u32 = 3 * 16;
+const IMAGE_STRIDE: u32 = 4 * 16;
 
 fn vk_err(what: &'static str) -> impl FnOnce(vk::Result) -> Error {
     move |e| format!("{what}: {e}").into()
@@ -446,7 +446,7 @@ impl VulkanRenderer {
                 self.create_pipeline(GLYPH_SPV, self.glyph_layout, GLYPH_STRIDE, 4)?;
             // Images bind one texture each, through the glyphs' layout.
             self.image_pipeline =
-                self.create_pipeline(IMAGE_SPV, self.glyph_layout, IMAGE_STRIDE, 3)?;
+                self.create_pipeline(IMAGE_SPV, self.glyph_layout, IMAGE_STRIDE, 4)?;
             let sizes = [vk::DescriptorPoolSize {
                 ty: vk::DescriptorType::SAMPLED_IMAGE,
                 descriptor_count: MAX_IMAGES,
@@ -1071,7 +1071,9 @@ impl VulkanRenderer {
                         let b = i.bounds();
                         push_vec4(&mut self.bytes, [b.x, b.y, b.w, b.h]);
                         push_vec4(&mut self.bytes, clip);
-                        push_vec4(&mut self.bytes, [i.opacity, 0.0, 0.0, 0.0]);
+                        push_vec4(&mut self.bytes, [i.opacity, i.corner_radius, 0.0, 0.0]);
+                        let r = i.round;
+                        push_vec4(&mut self.bytes, [r.x, r.y, r.w, r.h]);
                         Kind::Image(i.id)
                     }
                     Primitive::Glyph(g) => {

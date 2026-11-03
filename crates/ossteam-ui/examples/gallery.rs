@@ -126,11 +126,7 @@ fn icon(size: u32, hue: usize) -> Arc<Image> {
             let d = ((x as f32 + 0.5 - c).powi(2) + (y as f32 + 0.5 - c).powi(2)).sqrt();
             let dot = (size as f32 * 0.22 - d).clamp(0.0, 1.0);
             let mix = |v: u8| ((v as f32 * (0.6 + 0.4 * t)) * (1.0 - dot) + 255.0 * dot) as u8;
-            // Round corners through alpha.
-            let corner =
-                (c - 0.5 - (x as f32 + 0.5 - c).abs()).min(c - 0.5 - (y as f32 + 0.5 - c).abs());
-            let a = if corner < 0.0 { 0 } else { 255 };
-            px.extend_from_slice(&[mix(r), mix(g), mix(b), a]);
+            px.extend_from_slice(&[mix(r), mix(g), mix(b), 255]);
         }
     }
     Image::from_rgba(size, size, px).expect("size matches")
@@ -313,7 +309,11 @@ impl Gallery {
                         .background(if selected { p.raised } else { p.background })
                         .hover_style(move |st| st.background(p.raised))
                         .on_click(move |s: &mut Self, _| s.selected = i)
-                        .child(image(s.icons[i % s.icons.len()].clone()).no_shrink())
+                        .child(
+                            image(s.icons[i % s.icons.len()].clone())
+                                .no_shrink()
+                                .radius(6.0),
+                        )
                         .child(text(format!("Game {i}")).grow())
                         .child(
                             panel()

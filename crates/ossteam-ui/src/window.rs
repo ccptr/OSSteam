@@ -1765,7 +1765,8 @@ impl<S: 'static> Painter<'_, S> {
                 let x = (c.x + (c.w - img.width() as f32) / 2.0).round() as i32;
                 let y = (c.y + (c.h - img.height() as f32) / 2.0).round() as i32;
                 self.scene.push_clip(b);
-                self.scene.image(img, x, y, alpha);
+                // Clips are rectangles; the element's own radius rounds it.
+                self.scene.image_rounded(img, x, y, alpha, b, radius);
                 self.scene.pop_clip();
             }
             Kind::Canvas(paint) => {

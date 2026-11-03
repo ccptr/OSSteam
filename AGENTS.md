@@ -59,7 +59,7 @@ These come from the maintainer. Don't trade them away for convenience.
 - [Project](AGENTS/project.md) — what ossteam is and where the spec, runbooks and ADRs live
 - [Research sources](AGENTS/research-sources.md) — outside sources, and which are facts-only
 - [GUI focus](AGENTS/gui/focus.md) — focus handles, shared ids, reveal and page scrolling
-- [ossteam-ui runtime](AGENTS/gui/ossteam-ui-runtime.md) — pre_present_notify only before a present, clipboard dropped before winit's connection, scrolled layers are damage, the gallery example
+- [ossteam-ui runtime](AGENTS/gui/ossteam-ui-runtime.md) — pre_present_notify only before a present, clipboard dropped before winit's connection, scrolled layers are damage, font fallback maps every face it tries, the gallery example
 - [GUI lost keyboard focus](AGENTS/gui/lost-keyboard-focus.md) — seen once; check compositor focus first
 - [Portal wakeups](AGENTS/gui/portal-wakeups.md) — connect the session bus yourself, or zbus's thread pool wakes every 500 ms
 - [Steamworks ABI test](AGENTS/steamworks/abi-test.md) — what tests/abi.rs covers and the layout gotchas it found

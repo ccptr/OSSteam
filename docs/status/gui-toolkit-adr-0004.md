@@ -92,7 +92,25 @@ before a frame the software renderer then skipped, which on Wayland
 stopped all later redraws; and the Wayland clipboard's worker crashed
 when it outlived winit's connection at exit.
 
-Open: resident memory in the gallery is 75 MB with Vulkan and 49 MB
-with software (the spike: about 55 and 28 MB); not yet looked into.
+Resident memory in the gallery was 75 MB with Vulkan and 49 MB with
+software (the spike: 55 and 28 MB). Of the 20 MB more, 16 MB was 72
+Noto Sans files: the gallery's "▾" is not in Noto Sans, and shaping it
+before the rest of the fonts had loaded sent cosmic-text through every
+face it had, each mapped and kept. `text.rs` now merges the rest of the
+fonts first when the UI face lacks a character; the gallery is at 58
+and 31 MB, the rest being its larger heap and code and DejaVu Sans for
+the "▾". (26 MB of the Vulkan figure is libLLVM, which Mesa's radeon
+driver links; it was in the spike too.)
+
+Open: a character whose fonts are not on cosmic-text's fallback lists
+still makes it open faces until one has it, and one that no font has
+opens them all: on this machine 2,637 files mapped, 489 MB resident
+and 0.3 to 1.6 s on the UI thread for one call (Tangut, installed but
+not on the lists: 220 files, 20 MB). Common scripts and emoji map one
+font each. Steam names can carry such characters, so this wants our
+own fallback (an index of which face covers which characters, built on
+the font thread) before the friends list is ported; the maintainer to
+decide.
+
 The text field gained a secret mode for the login page's password
 (bullets; Copy and Cut do nothing). Next: the port (step 4).

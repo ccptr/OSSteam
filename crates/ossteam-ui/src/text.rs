@@ -285,6 +285,36 @@ impl TextSystem {
         self.rest.is_some()
     }
 
+    /// Merges the rest of the system's fonts before shaping `text` if the
+    /// UI face lacks one of its characters. Shaping it with only the UI
+    /// family loaded would send cosmic-text through every face it has,
+    /// each mapped and kept for good: "▾" alone made 72 Noto Sans files,
+    /// 16 MB, resident. The check after shaping stays for the rarer case
+    /// that another face of the family lacks what this one has.
+    fn merge_rest_if_lacking(&mut self, text: &str, weight: Weight) {
+        if self.rest.is_none() {
+            return;
+        }
+        let query = fontdb::Query {
+            families: &[fontdb::Family::SansSerif],
+            weight,
+            ..fontdb::Query::default()
+        };
+        let Some(id) = self.fonts.db().query(&query) else {
+            return;
+        };
+        let Some(font) = self.fonts.get_font(id, weight) else {
+            return;
+        };
+        let charmap = font.as_swash().charmap();
+        if text
+            .chars()
+            .any(|c| !c.is_whitespace() && !c.is_control() && charmap.map(c) == 0)
+        {
+            self.merge_rest();
+        }
+    }
+
     /// Waits for the rest of the system's fonts and adds them. The faces
     /// already loaded keep their ids, so shaped text and cached glyphs
     /// stay valid.
@@ -305,6 +335,7 @@ impl TextSystem {
     /// Shapes one line of text in the default sans-serif face, `size`
     /// logical pixels high.
     pub fn shape(&mut self, text: &str, size: f32) -> ShapedText {
+        self.merge_rest_if_lacking(text, Weight::NORMAL);
         let shaped = self.shape_with_loaded(text, size);
         if self.rest.is_some() && shaped.has_missing_glyphs(text) {
             // A face the UI family lacks: wait for the rest of the fonts.
@@ -350,6 +381,7 @@ impl TextSystem {
     /// (`None`: one line per paragraph), breaking between words where it
     /// can and inside a word that is wider than a line.
     pub fn layout(&mut self, text: &str, attrs: TextAttrs, max_width: Option<f32>) -> TextLayout {
+        self.merge_rest_if_lacking(text, Weight(attrs.weight));
         let laid = self.layout_with_loaded(text, attrs, max_width);
         if self.rest.is_some() && laid.has_missing_glyphs(text) {
             self.merge_rest();

@@ -7,6 +7,8 @@ license.workspace = true
 publish.workspace = true
 
 [dependencies]
+# The clipboard off Wayland.
+arboard = { version = "3.7.0", default-features = false }
 ash = "0.38.0"
 ash-window = "0.13.0"
 cosmic-text = { version = "0.19.0", default-features = false, features = ["std", "swash", "fontconfig"] }
@@ -18,16 +20,16 @@ tracing.workspace = true
 unicode-segmentation = "1.13.3"
 winit = { version = "0.30.13", default-features = false, features = ["rwh_06", "x11", "wayland", "wayland-dlopen", "wayland-csd-adwaita-notitle"] }
 
-# The desktop portal's colour scheme before the first frame (gui.md §6).
+# The desktop portal: the colour scheme before the first frame (gui.md §6)
+# and the folder picker.
 [target.'cfg(any(target_os = "linux", target_os = "freebsd"))'.dependencies]
-ashpd = { version = "0.13.13", default-features = false, features = ["async-io", "settings"] }
+ashpd = { version = "0.13.13", default-features = false, features = ["async-io", "settings", "file_chooser"] }
 async-io = "2.6.0"
 smithay-clipboard = "0.7.3"
 
-# The clipboard off Wayland. Not on Windows: arboard uses clipboard-win
-# there, which is BSL-1.0, not in SPEC LIC-3's allow-list.
-[target.'cfg(not(windows))'.dependencies]
-arboard = { version = "3.7.0", default-features = false }
+# The folder picker off Linux.
+[target.'cfg(any(windows, target_os = "macos"))'.dependencies]
+rfd = { version = "0.17.2", default-features = false }
 
 [dev-dependencies]
 serde_json.workspace = true

@@ -140,7 +140,7 @@ even if it works.
 ### 3.2 Dependency licenses
 
 - **[LIC-3]** `cargo-deny` enforces an allow-list: MIT, Apache-2.0,
-  BSD-2-Clause, BSD-3-Clause, ISC, 0BSD, CC0-1.0, Zlib, Unicode-3.0, MPL-2.0, and any
+  BSD-2-Clause, BSD-3-Clause, ISC, 0BSD, CC0-1.0, Zlib, BSL-1.0, Unicode-3.0, MPL-2.0, and any
   `GPL-2.0-or-later`/`GPL-3.0-or-later`/`LGPL-*-or-later` crate. GPL-2.0-only
   dependencies are denied, because they cannot be combined with Apache-2.0
   code.

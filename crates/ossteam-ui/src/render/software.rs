@@ -212,6 +212,9 @@ impl Canvas {
             self.width = scene.width;
             self.height = scene.height;
             self.pixels = vec![0; scene.width as usize * scene.height as usize];
+            // Damage drawn at another size does not bring a buffer of this
+            // size up to date: a buffer older than the resize is copied whole.
+            self.history.clear();
         }
         let damage = if full {
             stats.full = true;
@@ -747,6 +750,23 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn damage_does_not_reach_back_across_a_resize() {
+        let glyphs = GlyphCache::default();
+        let mut canvas = Canvas::new();
+        for offset in [0, 7, 30] {
+            let mut scene = Scene::new(100, 100, Color::rgb(0x202020));
+            quads(&mut scene, offset);
+            canvas.draw(&scene, &glyphs);
+        }
+        let mut scene = Scene::new(50, 100, Color::rgb(0x202020));
+        quads(&mut scene, 30);
+        canvas.draw(&scene, &glyphs);
+        assert_eq!(canvas.damage_since(2), None);
+        let full = canvas.damage_since(1).expect("the frame after the resize");
+        assert!(full.iter().all(|r| r.x1 <= 50 && r.y1 <= 100));
     }
 
     #[test]

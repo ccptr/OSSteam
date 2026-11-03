@@ -27,6 +27,8 @@
 //! Without `--bench`, the window waits `--settle` seconds (3 by default)
 //! before it reports; Page Up, Page Down and the arrows scroll the list
 //! meanwhile, and Escape clears the field or, when it is empty, reports.
+//! Ctrl+O (Cmd+O on macOS) opens the folder picker; the report shows what
+//! was picked and how long the dialog took to answer.
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -34,6 +36,7 @@ use std::time::{Duration, Instant};
 
 use ossteam_ui::appearance::{Appearance, StartupAppearance};
 use ossteam_ui::clipboard::Clipboard;
+use ossteam_ui::folder_picker;
 use ossteam_ui::render::{Choice, Renderer};
 use ossteam_ui::scene::{Color, Quad, Rect, Scene};
 use ossteam_ui::text::{ShapedText, TextSystem};
@@ -42,7 +45,7 @@ use serde_json::json;
 use winit::application::ApplicationHandler;
 use winit::dpi::{PhysicalPosition, PhysicalSize};
 use winit::event::{ElementState, MouseButton, MouseScrollDelta, WindowEvent};
-use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
+use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop, EventLoopProxy};
 use winit::keyboard::{Key, ModifiersState, NamedKey};
 use winit::window::{CursorIcon, Window, WindowId};
 
@@ -143,6 +146,15 @@ fn parse_args() -> Result<Args, String> {
 }
 
 /// Milliseconds since `start`.
+/// Command on macOS, Ctrl elsewhere, as in `text_field::command_for`.
+fn command_key(mods: ModifiersState) -> bool {
+    if cfg!(target_os = "macos") {
+        mods.super_key()
+    } else {
+        mods.control_key()
+    }
+}
+
 fn ms(start: Instant) -> f64 {
     start.elapsed().as_secs_f64() * 1000.0
 }
@@ -227,6 +239,12 @@ struct Bench {
     peak_rss_kib: u64,
 }
 
+/// What other threads send the event loop.
+enum UserEvent {
+    /// The folder picker's answer, and how long it took.
+    Picked(Result<Option<std::path::PathBuf>, String>, f64),
+}
+
 struct Spike {
     args: Args,
     started: Instant,
@@ -290,6 +308,9 @@ struct Spike {
     /// When the input the next frame shows arrived.
     pending_input: Option<Instant>,
     input_latency_ms: Vec<f64>,
+    proxy: EventLoopProxy<UserEvent>,
+    picking: bool,
+    picked: Vec<serde_json::Value>,
 }
 
 impl Spike {
@@ -329,6 +350,32 @@ impl Spike {
     fn request_redraw(&self) {
         if let Some(w) = &self.window {
             w.request_redraw();
+        }
+    }
+
+    /// Opens the folder picker; its answer comes back as a user event.
+    fn pick_folder(&mut self) {
+        if self.picking {
+            return;
+        }
+        self.picking = true;
+        self.log_input("folder picker opened".into());
+        let proxy = self.proxy.clone();
+        let pick = move || {
+            let t = Instant::now();
+            let answer =
+                folder_picker::pick_folder("Add library folder").map_err(|e| e.to_string());
+            let _ = proxy.send_event(UserEvent::Picked(answer, ms(t)));
+        };
+        // AppKit's panels run only on the main thread (folder_picker.rs).
+        if cfg!(target_os = "macos") {
+            pick();
+        } else if let Err(e) = std::thread::Builder::new()
+            .name("folder-picker".into())
+            .spawn(pick)
+        {
+            self.picking = false;
+            self.log_input(format!("folder picker: no thread: {e}"));
         }
     }
 
@@ -764,6 +811,7 @@ impl Spike {
                 "rows_matching": self.filtered.as_ref().map(Vec::len),
                 "clipboard": self.clipboard.as_ref().map(Clipboard::kind),
                 "clipboard_open_ms": self.clipboard_ms,
+                "folder_picker": self.picked,
                 "input": self.input_log,
                 "input_to_present_ms": summary(&self.input_latency_ms),
             },
@@ -871,7 +919,28 @@ fn session_kind() -> &'static str {
     }
 }
 
-impl ApplicationHandler for Spike {
+impl ApplicationHandler<UserEvent> for Spike {
+    fn user_event(&mut self, _: &ActiveEventLoop, event: UserEvent) {
+        if let Some(since) = self.idle_since {
+            self.idle_log(since, "user event".into());
+        }
+        match event {
+            UserEvent::Picked(answer, took_ms) => {
+                self.picking = false;
+                let answer = match answer {
+                    Ok(Some(path)) => json!({ "path": path.display().to_string() }),
+                    Ok(None) => json!("cancelled"),
+                    Err(e) => json!({ "error": e }),
+                };
+                self.log_input(format!("folder picker answered {answer}"));
+                self.picked
+                    .push(json!({ "answer": answer, "ms": round1(took_ms) }));
+                // A frame, so the idle measure starts again from here.
+                self.request_redraw();
+            }
+        }
+    }
+
     fn new_events(&mut self, _: &ActiveEventLoop, cause: winit::event::StartCause) {
         if let Some(since) = self.idle_since {
             self.idle_wakeups += 1;
@@ -1033,6 +1102,9 @@ impl ApplicationHandler for Spike {
                     Key::Named(NamedKey::PageUp) => self.offset - page,
                     Key::Named(NamedKey::Home) if !self.field_focused => 0,
                     Key::Named(NamedKey::End) if !self.field_focused => self.max_offset(),
+                    Key::Character(ref c) if c == "o" && command_key(self.modifiers) => {
+                        return self.pick_folder();
+                    }
                     _ => {
                         if self.field_focused && !composing {
                             let command = command_for(
@@ -1106,7 +1178,8 @@ impl ApplicationHandler for Spike {
         if self.done {
             return;
         }
-        if let Some(deadline) = self.deadline {
+        // An open folder picker holds the report until it answers.
+        if let Some(deadline) = self.deadline.filter(|_| !self.picking) {
             if Instant::now() >= deadline {
                 self.idle_rss = resident_kib();
                 self.report(event_loop);
@@ -1137,7 +1210,7 @@ fn main() {
     // Both start with the process, so they overlap opening the window.
     let appearance_query = Some(StartupAppearance::query());
     let fonts_thread = Some(TextSystem::load_in_background());
-    let event_loop = match EventLoop::new() {
+    let event_loop = match EventLoop::with_user_event().build() {
         Ok(l) => l,
         Err(e) => {
             println!("{}", json!({ "window": false, "error": e.to_string() }));
@@ -1193,6 +1266,9 @@ fn main() {
         input_log: Vec::new(),
         pending_input: None,
         input_latency_ms: Vec::new(),
+        proxy: event_loop.create_proxy(),
+        picking: false,
+        picked: Vec::new(),
     };
     if let Err(e) = event_loop.run_app(&mut spike) {
         eprintln!("spike: event loop: {e}");

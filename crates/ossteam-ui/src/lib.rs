@@ -4,12 +4,15 @@
 //! Vulkan through `ash` and our own software renderer.
 //!
 //! This is the spike of ADR 0004 step 2: the scene, text, a text field
-//! with IME and the clipboard, both renderers and the appearance query,
-//! enough for `examples/spike.rs` to measure them. Elements, layout,
+//! with IME and the clipboard, the folder picker, both renderers and the
+//! appearance query, enough for `examples/spike.rs` to measure them. Elements, layout,
 //! focus and the event loop come in step 3.
 
 pub mod appearance;
 pub mod clipboard;
+pub mod folder_picker;
+#[cfg(any(target_os = "linux", target_os = "freebsd"))]
+mod portal;
 pub mod render;
 pub mod scene;
 pub mod text;

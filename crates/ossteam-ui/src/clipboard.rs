@@ -1,8 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 //! The system clipboard, for text (ADR 0004): `smithay-clipboard` on
-//! Wayland, on winit's own connection, and `arboard` on X11 and macOS.
-//! Windows has none yet: `arboard` uses `clipboard-win` there, whose
-//! BSL-1.0 licence is not in SPEC LIC-3's allow-list.
+//! Wayland, on winit's own connection, and `arboard` on X11, Windows and
+//! macOS.
 //!
 //! Both are synchronous: reading waits for the application that owns the
 //! clipboard to send its text. On Wayland a client may take the clipboard
@@ -21,7 +20,6 @@ pub struct Clipboard {
 enum Inner {
     #[cfg(any(target_os = "linux", target_os = "freebsd"))]
     Wayland(smithay_clipboard::Clipboard),
-    #[cfg(not(windows))]
     Arboard(arboard::Clipboard),
     /// No clipboard could be opened: copying does nothing and pasting
     /// finds nothing.
@@ -42,7 +40,6 @@ impl Clipboard {
                 // clipboard as this function's documentation requires.
                 Inner::Wayland(unsafe { smithay_clipboard::Clipboard::new(h.display.as_ptr()) })
             }
-            #[cfg(not(windows))]
             _ => match arboard::Clipboard::new() {
                 Ok(c) => Inner::Arboard(c),
                 Err(e) => {
@@ -50,12 +47,6 @@ impl Clipboard {
                     Inner::Unavailable
                 }
             },
-            #[cfg(windows)]
-            _ => {
-                let _ = display;
-                tracing::warn!("no clipboard: not implemented on Windows yet");
-                Inner::Unavailable
-            }
         };
         Self { inner }
     }
@@ -65,7 +56,6 @@ impl Clipboard {
         match self.inner {
             #[cfg(any(target_os = "linux", target_os = "freebsd"))]
             Inner::Wayland(_) => "wayland",
-            #[cfg(not(windows))]
             Inner::Arboard(_) => "arboard",
             Inner::Unavailable => "unavailable",
         }
@@ -77,7 +67,6 @@ impl TextClipboard for Clipboard {
         let read: Result<String, String> = match &mut self.inner {
             #[cfg(any(target_os = "linux", target_os = "freebsd"))]
             Inner::Wayland(c) => c.load().map_err(|e| e.to_string()),
-            #[cfg(not(windows))]
             Inner::Arboard(c) => c.get_text().map_err(|e| e.to_string()),
             Inner::Unavailable => Err("no clipboard".into()),
         };
@@ -89,7 +78,6 @@ impl TextClipboard for Clipboard {
         match &mut self.inner {
             #[cfg(any(target_os = "linux", target_os = "freebsd"))]
             Inner::Wayland(c) => c.store(text),
-            #[cfg(not(windows))]
             Inner::Arboard(c) => {
                 if let Err(e) = c.set_text(text) {
                     tracing::warn!("copying to the clipboard: {e}");

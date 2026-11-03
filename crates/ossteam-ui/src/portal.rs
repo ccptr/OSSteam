@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 //! The desktop portal (`org.freedesktop.portal.Desktop`) through our own
-//! D-Bus client (`dbus/`, ADR 0004): the appearance setting and its
+//! D-Bus client (`ossteam-dbus`, ADR 0004): the appearance setting and its
 //! change signal, and the file chooser. Each call blocks the thread that
 //! makes it, and waits in a read that does not wake until the bus
 //! sends something (GUI-5).
@@ -8,7 +8,7 @@
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU32, Ordering};
 
-use crate::dbus::{self, Connection, Message, Value};
+use ossteam_dbus::{self as dbus, Connection, Message, Value};
 
 const DESKTOP: &str = "org.freedesktop.portal.Desktop";
 const DESKTOP_PATH: &str = "/org/freedesktop/portal/desktop";
@@ -160,8 +160,8 @@ mod tests {
     use std::sync::{Arc, Mutex};
 
     use super::*;
-    use crate::dbus::test_bus::{self, error, reply, signal};
-    use crate::dbus::{Kind, Type, UNKNOWN_METHOD};
+    use ossteam_dbus::test_bus::{self, error, reply, signal};
+    use ossteam_dbus::{Kind, Type, UNKNOWN_METHOD};
 
     fn member(m: &Message) -> &str {
         m.member.as_deref().unwrap_or_default()

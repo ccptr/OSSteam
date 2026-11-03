@@ -40,7 +40,7 @@ mod imp {
     use super::Error;
 
     pub fn pick_folder(title: &str) -> Result<Option<PathBuf>, Error> {
-        let picked = crate::dbus::Connection::session()
+        let picked = ossteam_dbus::Connection::session()
             .and_then(|mut bus| crate::portal::pick_folder(&mut bus, title));
         let uri = match picked {
             Ok(Some(uri)) => uri,

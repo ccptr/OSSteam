@@ -59,7 +59,7 @@ pub fn watch(changed: impl Fn(Appearance) + Send + 'static) {
         let spawned = std::thread::Builder::new()
             .name("appearance".into())
             .spawn(move || {
-                let end = match crate::dbus::Connection::session() {
+                let end = match ossteam_dbus::Connection::session() {
                     Ok(mut bus) => crate::portal::watch_color_scheme(&mut bus, |scheme| {
                         changed(from_scheme(scheme));
                     }),
@@ -88,6 +88,6 @@ fn from_scheme(scheme: u32) -> Appearance {
 /// `org.freedesktop.appearance color-scheme`; no preference is light.
 #[cfg(any(target_os = "linux", target_os = "freebsd"))]
 fn portal_appearance() -> Option<Appearance> {
-    let mut bus = crate::dbus::Connection::session().ok()?;
+    let mut bus = ossteam_dbus::Connection::session().ok()?;
     crate::portal::color_scheme(&mut bus).ok().map(from_scheme)
 }

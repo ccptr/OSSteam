@@ -189,8 +189,9 @@ large (505 packages in the lock file, 328 crates on Linux, the GUI's
 204) and chose to replace `ashpd` with our own minimal D-Bus client. ADR
 0004 is amended (its Amendments section) and SPEC CONC-3 no longer names
 the portal as the GUI's async exception: nothing in ossteam is async
-now. The client is `ossteam-ui`'s `src/dbus/` with the portal's calls
-in `src/portal.rs`; `ashpd`, `async-io` and `futures-lite` are gone,
+now. The client is its own crate, `ossteam-dbus` (at the maintainer's
+request; WS-1 and the layering check name it), with the portal's calls
+in `ossteam-ui`'s `src/portal.rs`; `ashpd`, `async-io` and `futures-lite` are gone,
 and with them zbus. The GUI's dependencies on Linux went from 204 crates
 to 153, the workspace's from 328 to 284, and the lock file from 505 to
 469. Checked: unit tests against GLib's encoding of the same messages

@@ -69,8 +69,10 @@ const ALLOWED: &[(&str, Option<&[&str]>)] = &[
         "ossteam-gui",
         Some(&["ossteam-ipc", "ossteam-types", "ossteam-ui"]),
     ),
-    // WS-1: the GUI toolkit depends on no other workspace crate.
-    ("ossteam-ui", Some(&[])),
+    // WS-1: the GUI toolkit depends only on our D-Bus client, which
+    // depends on no other workspace crate.
+    ("ossteam-ui", Some(&["ossteam-dbus"])),
+    ("ossteam-dbus", Some(&[])),
     ("xtask", Some(&[])),
 ];
 

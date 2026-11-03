@@ -2260,6 +2260,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "ossteam-dbus"
+version = "0.1.0"
+dependencies = [
+ "rustix 1.1.6",
+]
+
+[[package]]
 name = "ossteam-gameipc"
 version = "0.1.0"
 dependencies = [
@@ -2386,9 +2393,9 @@ dependencies = [
  "etagere",
  "fontconfig-parser",
  "gpu-allocator",
+ "ossteam-dbus",
  "raw-window-handle",
  "rfd",
- "rustix 1.1.6",
  "serde_json",
  "smithay-clipboard",
  "softbuffer",

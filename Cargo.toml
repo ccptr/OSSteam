@@ -14,6 +14,7 @@ members = [
     "crates/ossteam-ipc",
     "crates/ossteamd",
     "crates/ossteam-cli",
+    "crates/ossteam-dbus",
     "crates/ossteam-ui",
     "crates/ossteam-gui",
     "xtask",
@@ -32,6 +33,7 @@ default-members = [
     "crates/ossteam-ipc",
     "crates/ossteamd",
     "crates/ossteam-cli",
+    "crates/ossteam-dbus",
     "crates/ossteam-ui",
     "crates/ossteam-gui",
 ]
@@ -53,6 +55,7 @@ ossteam-content = { path = "crates/ossteam-content" }
 ossteam-launch = { path = "crates/ossteam-launch" }
 ossteam-gameipc = { path = "crates/ossteam-gameipc" }
 ossteam-ipc = { path = "crates/ossteam-ipc" }
+ossteam-dbus = { path = "crates/ossteam-dbus" }
 ossteam-ui = { path = "crates/ossteam-ui" }
 ossteam-gui = { path = "crates/ossteam-gui" }
 

@@ -5,7 +5,7 @@
 | Status | Accepted (2026-11-03); amended 2026-11-03 (see Amendments) |
 | Date | 2026-11-02 |
 | Requirements | GUI-1 to GUI-5, CONC-3, SYNC-1, SYNC-2, WS-1, LIC-4, §20 |
-| Code | `crates/ossteam-ui` (to be written), `crates/ossteam-gui` |
+| Code | `crates/ossteam-ui`, `crates/ossteam-dbus`, `crates/ossteam-gui` |
 
 ## Context
 
@@ -58,7 +58,7 @@ it does not wrap another GUI framework.
 | Layout | `taffy` (flexbox), behind our own element builder (`element.rs`, `style.rs`), not a copy of the previous framework's | builder ours |
 | Text | `cosmic-text` for shaping, font fallback, line breaking and hit-testing; `swash` rasterises glyphs into an `etagere`-packed atlas | atlas, text field and finding the fonts ours: the UI family's files first, the rest on the font thread for fallback (spike item 1) |
 | Clipboard | `smithay-clipboard` on Wayland, on winit's connection; `arboard` elsewhere | dependency |
-| Folder picker | on Linux the portal's file chooser (`portal.rs`) through our own D-Bus client (`dbus/`); `rfd`'s blocking API on Windows and macOS | Linux call and D-Bus client ours, the rest a dependency |
+| Folder picker | on Linux the portal's file chooser (`portal.rs`) through our own D-Bus client (`ossteam-dbus`); `rfd`'s blocking API on Windows and macOS | Linux call and D-Bus client ours, the rest a dependency |
 | Opening URLs (GUI-3) | `open` | dependency |
 | Appearance | winit's theme where it reports one; on Linux the portal's setting and its change signal, through the same D-Bus client (`appearance.rs`, `portal.rs`) | ours |
 | Elements, focus, key bindings, scrolling, virtual lists, images, tests | — | ours |
@@ -144,7 +144,8 @@ it does not wrap another GUI framework.
 ### No async
 
 Vulkan is synchronous, so the renderer has none. On Linux the desktop
-portal goes through our own D-Bus client (`dbus/`): a blocking local
+portal goes through our own D-Bus client, the crate `ossteam-dbus`
+(WS-1): a blocking local
 socket, the `EXTERNAL` login, method calls, match rules and signals, and
 in `portal.rs` the portal's requests, whose answer comes as a signal on
 an object we name before the call. Each portal call blocks the thread
@@ -257,4 +258,6 @@ GUI therefore has no async at all, and CONC-3 names no exception for it.
   needs (no file descriptors, no objects of our own beyond answering
   `Ping`, local sockets only), tested against GLib's encoding of the
   same messages, dbus-daemon and dbus-broker, `fake_portal.py` and
-  xdg-desktop-portal with its GTK back end.
+  xdg-desktop-portal with its GTK back end. The client is its own crate,
+  `ossteam-dbus`, which `ossteam-ui` alone depends on (WS-1 names it);
+  the portal's calls stay in `ossteam-ui`'s `portal.rs`.

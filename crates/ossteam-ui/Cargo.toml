@@ -28,10 +28,9 @@ winit = { version = "0.30.13", default-features = false, features = ["rwh_06", "
 zeroize.workspace = true
 
 [target.'cfg(any(target_os = "linux", target_os = "freebsd"))'.dependencies]
-# Our user id, for the D-Bus login (`dbus/`), which the desktop portal's
-# calls use: the colour scheme before the first frame (gui.md §6) and the
-# folder picker.
-rustix = { workspace = true, features = ["process"] }
+# The desktop portal: the colour scheme before the first frame (gui.md §6)
+# and the folder picker (`portal.rs`).
+ossteam-dbus.workspace = true
 smithay-clipboard = "0.7.3"
 
 # The UI font and the font directories, from fontconfig's configuration
@@ -49,6 +48,8 @@ tracing-subscriber.workspace = true
 
 # examples/wayland_ime.rs, an input method for testing IME on a compositor.
 [target.'cfg(any(target_os = "linux", target_os = "freebsd"))'.dev-dependencies]
+# `portal.rs`'s tests run against its bus on a socket pair.
+ossteam-dbus = { workspace = true, features = ["test-bus"] }
 wayland-client = "0.31.15"
 wayland-protocols-misc = { version = "0.3.12", features = ["client"] }
 

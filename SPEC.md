@@ -236,6 +236,7 @@ crates/
   ossteam-ipc/             client IPC protocol + blocking client library
   ossteamd/                daemon binary
   ossteam-cli/             binary `ossteam` (clap)
+  ossteam-dbus/            a minimal blocking D-Bus client, for the desktop portal (ADR 0004)
   ossteam-ui/              our GUI toolkit: window, layout, text, Vulkan and software renderers, focus (ADR 0004)
   ossteam-gui/             binary `ossteam-gui` (ossteam-ui); src/widgets/
 xtask/                     codegen, packaging, license and layering checks
@@ -249,7 +250,8 @@ docs/acceptance/           per-milestone acceptance corpora and checklists
 - **[WS-1]** Dependencies flow downward only: `types → vdf/proto → net/webapi
   → auth/pics/content/stats/launch → ossteamd`. Leaf clients depend only on
   `ossteam-ipc` and `ossteam-types`, and the GUI also on `ossteam-ui`.
-  `ossteam-ui` depends on no other workspace crate.
+  `ossteam-ui` depends only on `ossteam-dbus`, which depends on no other
+  workspace crate.
 - **[WS-2]** `ossteam-steamclient` depends only on `ossteam-gameipc` and
   `ossteam-types`, plus `std`, and keeps third-party dependencies to a
   minimum. It is built for i686 and x86_64 on Linux and Windows, and as a

@@ -1,0 +1,18 @@
+[package]
+name = "ossteam-dbus"
+description = "A minimal, synchronous D-Bus client for the desktop portal (ADR 0004)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[features]
+# `test_bus`: a bus on a socket pair, for other crates' tests.
+test-bus = []
+
+[target.'cfg(unix)'.dependencies]
+# Our user id, which the EXTERNAL login sends.
+rustix = { workspace = true, features = ["process"] }
+
+[lints]
+workspace = true

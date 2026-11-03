@@ -13,8 +13,6 @@
 pub mod app;
 pub mod appearance;
 pub mod clipboard;
-#[cfg(any(target_os = "linux", target_os = "freebsd"))]
-mod dbus;
 pub mod element;
 pub mod folder_picker;
 mod fonts;

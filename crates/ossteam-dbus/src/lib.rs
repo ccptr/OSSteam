@@ -1,13 +1,17 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 //! A minimal, synchronous D-Bus client (ADR 0004), enough for the desktop
-//! portal: connect to the session bus, log in with `EXTERNAL`, call
-//! methods, add match rules and wait for signals. Everything blocks the
-//! thread that uses it; a thread waiting for a signal sleeps in `read`
-//! and does not wake until a message comes (GUI-5).
+//! portal that `ossteam-ui` calls: connect to the session bus, log in
+//! with `EXTERNAL`, call methods, add match rules and wait for signals.
+//! Everything blocks the thread that uses it; a thread waiting for a
+//! signal sleeps in `read` and does not wake until a message comes
+//! (GUI-5).
 //!
 //! Not here, because the portal needs none of it: file descriptors,
 //! serving objects (calls to us are answered with an error, `Ping`
-//! excepted), and buses other than local sockets.
+//! excepted), and buses other than local sockets. D-Bus runs over Unix
+//! sockets, so on other platforms the crate is empty.
+
+#![cfg(unix)]
 
 mod wire;
 
@@ -18,9 +22,7 @@ use std::os::unix::ffi::OsStrExt;
 use std::os::unix::net::UnixStream;
 use std::path::Path;
 
-#[cfg(test)]
-pub use wire::Type;
-pub use wire::{Kind, Message, Value, WireError};
+pub use wire::{Kind, Message, Type, Value, WireError};
 
 const BUS: &str = "org.freedesktop.DBus";
 const BUS_PATH: &str = "/org/freedesktop/DBus";
@@ -325,8 +327,9 @@ pub fn percent_decode(value: &str) -> Option<Vec<u8>> {
     Some(out)
 }
 
-/// A bus for tests, on the other end of a socket pair.
-#[cfg(test)]
+/// A bus for tests, on the other end of a socket pair (the `test-bus`
+/// feature).
+#[cfg(any(test, feature = "test-bus"))]
 pub mod test_bus {
     use std::io::{Read, Write};
     use std::os::unix::net::UnixStream;

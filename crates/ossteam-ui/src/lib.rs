@@ -5,12 +5,14 @@
 //!
 //! This is the spike of ADR 0004 step 2: the scene, text, a text field
 //! with IME and the clipboard, the folder picker, both renderers and the
-//! appearance query, enough for `examples/spike.rs` to measure them. Elements, layout,
-//! focus and the event loop come in step 3.
+//! appearance query, enough for `examples/spike.rs` to measure them. Step 3,
+//! the toolkit itself, has begun with the fonts (`fonts.rs`); elements,
+//! layout, focus and the event loop follow.
 
 pub mod appearance;
 pub mod clipboard;
 pub mod folder_picker;
+mod fonts;
 #[cfg(any(target_os = "linux", target_os = "freebsd"))]
 mod portal;
 pub mod render;

@@ -197,13 +197,35 @@ arrived as `AudioVolumeDown`).
 
 Items:
 
-1. **Fonts, cold: open.** `cosmic-text` reads the header of every font
-   file the system has (2,703 faces here) before the first text can be
-   shaped. Warm that takes about 60 ms and overlaps opening the window;
-   with a cold disk cache it took 967 ms, which alone breaks §20's
-   500 ms. Loading only the faces the GUI asks for, and the fallback
-   faces as text needs them, would fix it; to be designed with the
-   toolkit (step 3).
+1. **Fonts, cold: fixed (step 3, 2026-11-03).** `cosmic-text` read the
+   header of every font file the system has (2,703 faces here) before
+   the first text could be shaped. Warm that took about 60 ms; with a
+   cold disk cache 967 ms once, and about 2 s with every font file
+   dropped from the page cache (`posix_fadvise(DONTNEED)` on each, 1.9
+   GB), which alone broke §20's 500 ms. Now the font thread lists the
+   font directories by name, loads only the files named like the UI
+   family (fontconfig's `sans-serif` here: Noto Sans, 72 faces; Segoe UI
+   or Tahoma on Windows, SF on macOS) and hands over the text system;
+   then it reads the rest. Text the UI family cannot draw waits for the
+   rest, which are merged once and keep the loaded faces' ids
+   (`fonts.rs`, `text.rs`). On the headless sway, both renderers:
+
+   | | Before | After |
+   |---|---|---|
+   | UI font ready, cold (3 runs each) | 1,920 / 2,049 ms | 54 to 58 ms |
+   | First frame, cold | 1,962 / 2,091 ms | 63 to 65 ms |
+   | First frame, warm | 101 ms | 17 ms (software), 30 ms (Vulkan) |
+
+   Only the font files were dropped from the cache: the directories'
+   entries and fontconfig's configuration stayed cached, so a cold
+   boot also pays for listing about 2,700 names. Typing "日本 ✓" (not
+   in Noto Sans) one second after a cold start waited 873 ms for the
+   rest, then drew with the fallback faces; later edits took 1 to
+   14 ms. A first frame whose text needs a fallback face (a library
+   with CJK names) waits the same way, so on a cold boot it can still
+   take as long as reading every font; drawing it with missing glyphs
+   and redrawing when the rest arrive would trade that for a frame of
+   empty boxes. Left as is until the port shows which screens need it.
 2. **Idle wakeups: none.** With `WAYLAND_DEBUG=1`, every wakeup on
    Hyprland after the first frame's configure and focus events is the
    compositor's `xdg_wm_base.ping`, every 1.5 s, which the window must
@@ -263,15 +285,17 @@ Items:
    frames were copied into the narrower buffer, out of bounds. The
    history is now dropped on a resize, so a buffer older than it is
    copied whole; a unit test covers it.
-10. **No fonts: the spike panicked; open.** A fresh Wine prefix has no
+10. **No fonts: the spike panicked; fixed.** A fresh Wine prefix has no
     files in `C:\windows\Fonts` (Wine's own fonts live outside it), so
     `fontdb` found no faces and cosmic-text panicked shaping the first
     line ("no default font found"). Windows always has Segoe UI, but
     the toolkit must not panic: with no usable face it reports that
     and exits, and it looks for the platform's UI font by name (Segoe
     UI, the system font on macOS, fontconfig's sans-serif on Linux)
-    instead of relying on cosmic-text's fallback lists. Part of the
-    font work in step 3 (item 1).
+    instead of relying on cosmic-text's fallback lists. Now, under
+    Wine, the scratch prefix gets Tahoma (2 faces in 1.7 ms) and an
+    empty one "found no fonts (looked in C:\windows\Fonts, …)" instead
+    of a panic.
 11. **Idle under Wine: Wine and winit spin; not ours.** Under Wine 11.21
     the event loop woke about 30,000 times a second with no events.
     `WINEDEBUG=+server` shows Wine's queue keeping `QS_PAINT` in its
@@ -279,6 +303,10 @@ Items:
     `MsgWaitForMultipleObjectsEx(QS_ALLINPUT)` returns at once. A bare
     winit 0.30.13 window (no ossteam code, never drawn) does the same.
     Idle wakeups on Windows wait for real Windows.
+12. **macOS: `block 0.1.6` will be rejected by a future Rust.**
+    `ash-window` 0.13 reaches it through `raw-window-metal` and `cocoa`;
+    clippy for `aarch64-apple-darwin` warns. To be replaced or bumped
+    before the toolchain bump in step 5.
 
 ## Decisions
 

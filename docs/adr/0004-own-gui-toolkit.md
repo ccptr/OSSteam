@@ -54,7 +54,7 @@ it does not wrap another GUI framework.
 | Drawing on the GPU | Vulkan through `ash`; `ash-window` for the surface, `gpu-allocator` for memory; MoltenVK on macOS | renderer, pipelines and shaders ours |
 | Drawing on the CPU | our own rasteriser; `softbuffer` hands the finished pixels to the window | renderer ours, presenting a dependency |
 | Layout | `taffy` (flexbox), behind a builder like the subset of gpui's `div()` the GUI uses | builder ours |
-| Text | `cosmic-text` for shaping, font fallback, line breaking and hit-testing; `swash` rasterises glyphs into an `etagere`-packed atlas | atlas and text field ours |
+| Text | `cosmic-text` for shaping, font fallback, line breaking and hit-testing; `swash` rasterises glyphs into an `etagere`-packed atlas | atlas, text field and finding the fonts ours: the UI family's files first, the rest on the font thread for fallback (spike item 1) |
 | Clipboard | `smithay-clipboard` on Wayland, on winit's connection; `arboard` elsewhere | dependency |
 | Folder picker | on Linux the portal's file chooser through `ashpd`, on our own bus connection; `rfd`'s blocking API on Windows and macOS | Linux call ours, the rest a dependency |
 | Opening URLs (GUI-3) | `open` | dependency |

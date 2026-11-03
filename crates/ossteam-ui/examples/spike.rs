@@ -39,7 +39,7 @@ use ossteam_ui::clipboard::Clipboard;
 use ossteam_ui::folder_picker;
 use ossteam_ui::render::{Choice, Renderer};
 use ossteam_ui::scene::{Color, Quad, Rect, Scene};
-use ossteam_ui::text::{ShapedText, TextSystem};
+use ossteam_ui::text::{FontsLoading, ShapedText, TextSystem};
 use ossteam_ui::text_field::{Command, FieldStyle, TextField, command_for};
 use serde_json::json;
 use winit::application::ApplicationHandler;
@@ -249,7 +249,7 @@ struct Spike {
     args: Args,
     started: Instant,
     appearance_query: Option<StartupAppearance>,
-    fonts_thread: Option<std::thread::JoinHandle<TextSystem>>,
+    fonts_thread: Option<FontsLoading>,
     text: Option<TextSystem>,
     window: Option<Arc<Window>>,
     renderer: Option<Renderer>,
@@ -792,7 +792,13 @@ impl Spike {
             "device": self.device,
             "first_frame": self.first_frame,
             "timeline": self.timeline.iter().map(|(what, at)| json!([what, round1(*at)])).collect::<Vec<_>>(),
-            "fonts": self.text.as_ref().map(|t| json!({ "faces": t.face_count(), "load_ms": round1(t.load_ms) })),
+            "fonts": self.text.as_ref().map(|t| json!({
+                "family": t.family(),
+                "faces": t.face_count(),
+                "load_ms": round1(t.load_ms),
+                "rest_ms": t.rest_ms().map(round1),
+                "rest_pending": t.rest_pending(),
+            })),
             "appearance_changes": self.changes,
             "frames_drawn": self.frames,
             "frames": self.frame_log,
@@ -1013,7 +1019,18 @@ impl ApplicationHandler<UserEvent> for Spike {
         }
         self.timeline.push(("renderer created", ms(self.started)));
         if let Some(fonts) = self.fonts_thread.take() {
-            self.text = Some(fonts.join().expect("the font thread"));
+            match fonts.wait() {
+                Ok(text) => self.text = Some(text),
+                Err(e) => {
+                    println!(
+                        "{}",
+                        json!({ "window": true, "error": format!("fonts: {e}") })
+                    );
+                    self.done = true;
+                    event_loop.exit();
+                    return;
+                }
+            }
         }
         self.timeline.push(("fonts loaded", ms(self.started)));
         // The search field has the focus from the start.

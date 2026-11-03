@@ -50,3 +50,10 @@ under Wine both renderers draw and the clipboard works, but any winit
 window spins there (Wine's bug), and a prefix without fonts made the
 spike panic (spike items 10 and 11). Idle wakeups on Windows wait for
 real Windows.
+
+Step 3 began the same day with the fonts (`fonts.rs`): only the UI
+family's files load before the first frame, the rest on the font
+thread. The cold first frame went from about 2 s to 64 ms and the warm
+one from 101 ms to 17 to 30 ms; no fonts at all is an error, not a
+panic (spike items 1 and 10). Next in step 3: elements, layout, focus,
+lists and images, up to what the GUI uses.

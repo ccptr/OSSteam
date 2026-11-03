@@ -4,13 +4,14 @@
 //! renderer copies each glyph it draws into its atlas once.
 
 use std::collections::HashMap;
-use std::sync::Arc;
+use std::sync::{Arc, mpsc};
 use std::time::Instant;
 
 use cosmic_text::{
-    Attrs, Buffer, FontSystem, LayoutGlyph, Metrics, Shaping, SwashCache, SwashContent,
+    Attrs, Buffer, FontSystem, LayoutGlyph, Metrics, Shaping, SwashCache, SwashContent, fontdb,
 };
 
+use crate::fonts;
 use crate::scene::{Color, Glyph, Rect, Scene};
 
 /// A glyph at a size and subpixel position: the glyph cache's key.
@@ -91,6 +92,17 @@ pub struct Cluster {
 }
 
 impl ShapedText {
+    /// Whether a visible character of `text` (the text this was shaped
+    /// from) got no glyph: no loaded face has it.
+    fn has_missing_glyphs(&self, text: &str) -> bool {
+        self.glyphs.iter().any(|g| {
+            g.glyph_id == 0
+                && text
+                    .get(g.start..g.end)
+                    .is_some_and(|s| s.chars().any(|c| !c.is_whitespace() && !c.is_control()))
+        })
+    }
+
     /// The x position of a byte offset into the text: the caret's position.
     pub fn x_of(&self, offset: usize) -> f32 {
         for c in &self.clusters {
@@ -115,45 +127,155 @@ impl ShapedText {
     }
 }
 
+/// The fonts could not be loaded.
+#[derive(Debug)]
+pub struct FontError(String);
+
+impl std::fmt::Display for FontError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
+impl std::error::Error for FontError {}
+
+/// The fonts being loaded on their own thread
+/// ([`TextSystem::load_in_background`]).
+pub struct FontsLoading(mpsc::Receiver<Result<TextSystem, FontError>>);
+
+impl FontsLoading {
+    /// Waits until the UI font is loaded. The rest of the system's fonts
+    /// may still be loading; text that needs them waits for them.
+    pub fn wait(self) -> Result<TextSystem, FontError> {
+        self.0
+            .recv()
+            .unwrap_or_else(|_| Err(FontError("the font thread ended without fonts".into())))
+    }
+}
+
 /// Fonts, shaping and the glyph cache.
 pub struct TextSystem {
     fonts: FontSystem,
     swash: SwashCache,
     pub glyphs: GlyphCache,
-    /// How long loading the system's fonts took.
+    /// How long loading the UI font took, from the start of loading.
     pub load_ms: f64,
+    /// The UI family, if one of the platform's was found (`fonts.rs`).
+    family: Option<String>,
+    /// The rest of the system's fonts, from the font thread, and how long
+    /// they took; merged when text first needs them.
+    rest: Option<mpsc::Receiver<(fontdb::Database, f64)>>,
+    rest_ms: Option<f64>,
 }
 
 impl TextSystem {
-    /// Loads the system's fonts. This reads every font file's header and
-    /// can take hundreds of milliseconds, so start it on a thread of its
-    /// own when the process starts ([`TextSystem::load_in_background`]).
-    pub fn load() -> Self {
-        let started = Instant::now();
-        let fonts = FontSystem::new();
-        Self {
-            fonts,
-            swash: SwashCache::new(),
-            glyphs: GlyphCache::default(),
-            load_ms: started.elapsed().as_secs_f64() * 1000.0,
-        }
+    /// Loads the UI font, then the rest of the system's fonts. Use
+    /// [`TextSystem::load_in_background`] so the UI font is ready sooner.
+    pub fn load() -> Result<Self, FontError> {
+        let loading = Self::load_in_background();
+        let mut text = loading.wait()?;
+        text.merge_rest();
+        Ok(text)
     }
 
-    pub fn load_in_background() -> std::thread::JoinHandle<TextSystem> {
-        std::thread::Builder::new()
+    /// Starts loading on a thread of its own: the UI family's files
+    /// first (a handful), then the rest of the system's fonts, which can
+    /// take a second from a cold disk cache. Start it when the process
+    /// starts; [`FontsLoading::wait`] returns as soon as the UI font is
+    /// ready.
+    pub fn load_in_background() -> FontsLoading {
+        let (ready, ready_rx) = mpsc::channel();
+        let spawned = std::thread::Builder::new()
             .name("fonts".into())
-            .spawn(TextSystem::load)
-            .expect("starting the font thread")
+            .spawn(move || {
+                let started = Instant::now();
+                let found = fonts::discover();
+                let load_ms = started.elapsed().as_secs_f64() * 1000.0;
+                if found.db.is_empty() {
+                    let dirs: Vec<_> = found.dirs.iter().map(|d| d.display().to_string()).collect();
+                    let _ = ready.send(Err(FontError(format!(
+                        "found no fonts (looked in {})",
+                        dirs.join(", ")
+                    ))));
+                    return;
+                }
+                let (rest_tx, rest_rx) = mpsc::channel();
+                let locale = sys_locale::get_locale().unwrap_or_else(|| "en-US".into());
+                let text = TextSystem {
+                    fonts: FontSystem::new_with_locale_and_db(locale, found.db),
+                    swash: SwashCache::new(),
+                    glyphs: GlyphCache::default(),
+                    load_ms,
+                    family: found.family,
+                    rest: (!found.rest.is_empty()).then_some(rest_rx),
+                    rest_ms: None,
+                };
+                if ready.send(Ok(text)).is_err() || found.rest.is_empty() {
+                    return;
+                }
+                let rest = fonts::load_files(&found.rest);
+                let _ = rest_tx.send((rest, started.elapsed().as_secs_f64() * 1000.0));
+            });
+        if let Err(e) = spawned {
+            let (tx, rx) = mpsc::channel();
+            let _ = tx.send(Err(FontError(format!("starting the font thread: {e}"))));
+            return FontsLoading(rx);
+        }
+        FontsLoading(ready_rx)
     }
 
-    /// How many font faces were found.
+    /// How many font faces are loaded.
     pub fn face_count(&self) -> usize {
         self.fonts.db().len()
+    }
+
+    /// The UI family, if one of the platform's was found; otherwise every
+    /// font was loaded before the first frame and fontdb's defaults stand.
+    pub fn family(&self) -> Option<&str> {
+        self.family.as_deref()
+    }
+
+    /// When the rest of the system's fonts had loaded, from the start of
+    /// loading, if text has needed them so far.
+    pub fn rest_ms(&self) -> Option<f64> {
+        self.rest_ms
+    }
+
+    /// Whether the rest of the system's fonts are still to be merged.
+    pub fn rest_pending(&self) -> bool {
+        self.rest.is_some()
+    }
+
+    /// Waits for the rest of the system's fonts and adds them. The faces
+    /// already loaded keep their ids, so shaped text and cached glyphs
+    /// stay valid.
+    fn merge_rest(&mut self) {
+        let Some(rest) = self.rest.take() else {
+            return;
+        };
+        let Ok((db, ms)) = rest.recv() else {
+            return;
+        };
+        let live = self.fonts.db_mut();
+        for face in db.faces() {
+            live.push_face_info(face.clone());
+        }
+        self.rest_ms = Some(ms);
     }
 
     /// Shapes one line of text in the default sans-serif face, `size`
     /// logical pixels high.
     pub fn shape(&mut self, text: &str, size: f32) -> ShapedText {
+        let shaped = self.shape_with_loaded(text, size);
+        if self.rest.is_some() && shaped.has_missing_glyphs(text) {
+            // A face the UI family lacks: wait for the rest of the fonts.
+            self.merge_rest();
+            return self.shape_with_loaded(text, size);
+        }
+        shaped
+    }
+
+    fn shape_with_loaded(&mut self, text: &str, size: f32) -> ShapedText {
         let line_height = (size * 1.3).ceil();
         let mut buffer = Buffer::new(&mut self.fonts, Metrics::new(size, line_height));
         buffer.set_size(None, None);

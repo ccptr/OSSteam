@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 //! The daemon connection (`gui.md` §2). One `Client` is shared by a reader
-//! thread, which forwards events into an async channel that a gpui task
-//! drains, and by a pool of call threads whose results come back through
-//! oneshot channels (SPEC CONC-3).
+//! thread, which hands each event to a callback, and by a pool of call
+//! threads, which hand each result to the callback the call came with
+//! (SPEC CONC-3). The GUI's callbacks send them to the main thread as
+//! messages; the daemon's tests take them from a channel.
 
-use std::future::Future;
 use std::sync::Arc;
 use std::thread;
 
@@ -83,7 +83,8 @@ impl std::fmt::Display for CallError {
     }
 }
 
-type CallJob = Box<dyn FnOnce(&Client) + Send>;
+/// A call for a call thread; `None` when it cannot be made.
+type CallJob = Box<dyn FnOnce(Option<&Client>) + Send>;
 
 /// A handle for making calls. Clones share the connection; the call
 /// threads end when the last clone is dropped.
@@ -103,7 +104,7 @@ impl Daemon {
                 .name(format!("daemon-call-{n}"))
                 .spawn(move || {
                     for job in jobs {
-                        job(&client);
+                        job(Some(&client));
                     }
                 });
             if let Err(e) = spawned {
@@ -113,24 +114,21 @@ impl Daemon {
         Self { client, calls }
     }
 
-    /// Runs `f` on a call thread. The future resolves with its result.
-    pub fn call<T, F>(&self, f: F) -> impl Future<Output = Result<T, CallError>> + use<T, F>
+    /// Runs `f` on a call thread and hands its result to `done`, on that
+    /// thread; with no call thread left, `done` gets the disconnection at
+    /// once.
+    pub fn call<T, F>(&self, f: F, done: impl FnOnce(Result<T, CallError>) + Send + 'static)
     where
-        T: Send + 'static,
         F: FnOnce(&Client) -> Result<T, ClientError> + Send + 'static,
     {
-        let (tx, rx) = async_channel::bounded(1);
         let job: CallJob = Box::new(move |client| {
-            let _ = tx.try_send(f(client).map_err(CallError::from));
+            done(match client {
+                Some(c) => f(c).map_err(CallError::from),
+                None => Err(CallError::disconnected()),
+            })
         });
-        let sent = self.calls.send(job).is_ok();
-        async move {
-            if !sent {
-                return Err(CallError::disconnected());
-            }
-            rx.recv()
-                .await
-                .unwrap_or_else(|_| Err(CallError::disconnected()))
+        if let Err(crossbeam_channel::SendError(job)) = self.calls.send(job) {
+            job(None);
         }
     }
 
@@ -139,65 +137,78 @@ impl Daemon {
     pub fn call_unbounded<T, F>(
         &self,
         f: F,
-    ) -> impl Future<Output = Result<T, CallError>> + use<T, F>
-    where
+        done: impl FnOnce(Result<T, CallError>) + Send + 'static,
+    ) where
         T: Send + 'static,
         F: FnOnce(&Client) -> Result<T, ClientError> + Send + 'static,
     {
-        let (tx, rx) = async_channel::bounded(1);
         let client = self.client.clone();
+        let done = Arc::new(std::sync::Mutex::new(Some(done)));
+        let on_error = done.clone();
         let spawned = thread::Builder::new()
             .name("daemon-launch".into())
             .spawn(move || {
-                let _ = tx.try_send(f(&client).map_err(CallError::from));
-            })
-            .map_err(|e| CallError {
+                let r = f(&client).map_err(CallError::from);
+                if let Some(done) = done.lock().ok().and_then(|mut d| d.take()) {
+                    done(r);
+                }
+            });
+        if let Err(e) = spawned
+            && let Some(done) = on_error.lock().ok().and_then(|mut d| d.take())
+        {
+            done(Err(CallError {
                 code: None,
                 message: format!("cannot start a thread for the call: {e}"),
-            });
-        async move {
-            spawned?;
-            rx.recv()
-                .await
-                .unwrap_or_else(|_| Err(CallError::disconnected()))
+            }));
         }
     }
 }
 
+/// Hands an update to whoever follows the connection; `false` once
+/// nobody does, which ends the reader thread.
+pub trait OnUpdate: Fn(Update) -> bool + Send + Sync + 'static {}
+impl<F: Fn(Update) -> bool + Send + Sync + 'static> OnUpdate for F {}
+
 /// Connects on a new thread (starting the daemon unless `autostart` is
 /// off) and reports what happens until the connection ends.
-pub fn connect(autostart: bool) -> async_channel::Receiver<Update> {
-    spawn(move |info| {
-        let mut opts = ConnectOptions::new(info);
-        opts.autostart = autostart;
-        Client::connect(&opts)
-    })
+pub fn connect(autostart: bool, on_update: impl OnUpdate) {
+    spawn(
+        move |info| {
+            let mut opts = ConnectOptions::new(info);
+            opts.autostart = autostart;
+            Client::connect(&opts)
+        },
+        on_update,
+    );
 }
 
 /// As [`connect`], to the daemon at `endpoint` and without starting one.
-pub fn connect_endpoint(endpoint: Endpoint) -> async_channel::Receiver<Update> {
-    spawn(move |info| Client::connect_endpoint(&endpoint, &info))
+pub fn connect_endpoint(endpoint: Endpoint, on_update: impl OnUpdate) {
+    spawn(
+        move |info| Client::connect_endpoint(&endpoint, &info),
+        on_update,
+    );
 }
 
 fn spawn(
     connect: impl FnOnce(ClientInfo) -> Result<Client, ClientError> + Send + 'static,
-) -> async_channel::Receiver<Update> {
-    let (tx, rx) = async_channel::unbounded();
-    let on_spawn_error = tx.clone();
+    on_update: impl OnUpdate,
+) {
+    let on_update = Arc::new(on_update);
+    let thread_update = on_update.clone();
     let spawned = thread::Builder::new()
         .name("daemon-connection".into())
-        .spawn(move || run(connect, &tx));
+        .spawn(move || run(connect, &*thread_update));
     if let Err(e) = spawned {
-        let _ = on_spawn_error.try_send(Update::Closed(format!(
+        on_update(Update::Closed(format!(
             "cannot start the connection thread: {e}"
         )));
     }
-    rx
 }
 
 fn run(
     connect: impl FnOnce(ClientInfo) -> Result<Client, ClientError>,
-    tx: &async_channel::Sender<Update>,
+    on_update: &dyn Fn(Update) -> bool,
 ) {
     let info = ClientInfo {
         kind: PeerKind::Gui,
@@ -207,7 +218,7 @@ fn run(
     let client = match connect(info) {
         Ok(c) => Arc::new(c),
         Err(e) => {
-            let _ = tx.send_blocking(Update::Closed(e.to_string()));
+            on_update(Update::Closed(e.to_string()));
             return;
         }
     };
@@ -217,17 +228,14 @@ fn run(
     {
         Ok(i) => i,
         Err(e) => {
-            let _ = tx.send_blocking(Update::Closed(e.to_string()));
+            on_update(Update::Closed(e.to_string()));
             return;
         }
     };
-    if tx
-        .send_blocking(Update::Ready(
-            Daemon::new(client.clone()),
-            Box::new(initial),
-        ))
-        .is_err()
-    {
+    if !on_update(Update::Ready(
+        Daemon::new(client.clone()),
+        Box::new(initial),
+    )) {
         return;
     }
     let reason = loop {
@@ -237,7 +245,7 @@ fn run(
         match e.kind {
             Some(event::Kind::DaemonStopping(_)) => break "ossteamd stopped".to_owned(),
             Some(kind) => {
-                if tx.send_blocking(Update::Event(kind)).is_err() {
+                if !on_update(Update::Event(kind)) {
                     return;
                 }
             }
@@ -245,7 +253,7 @@ fn run(
             None => {}
         }
     };
-    let _ = tx.send_blocking(Update::Closed(reason));
+    on_update(Update::Closed(reason));
 }
 
 fn read_initial(c: &Client) -> Result<Initial, ClientError> {

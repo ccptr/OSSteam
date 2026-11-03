@@ -33,7 +33,7 @@ These come from the maintainer. Don't trade them away for convenience.
 - [Platform-standard directories](AGENTS/rules/platform-directories.md) — only those, except the ABI discovery entries
 - [Spec first](AGENTS/rules/spec-first.md) — reverse engineering is written up in `docs/spec/` before code; no Valve code
 - [Review gates](AGENTS/rules/review-gates.md) — no DRM/VAC/cloud/friends/betas/workshop/offline code before review; ask about install-scripts §2.6
-- [Synchronous first](AGENTS/rules/synchronous-first.md) — async only behind a sync facade or via an ADR; the gpui GUI until ADR 0004's port
+- [Synchronous first](AGENTS/rules/synchronous-first.md) — async only behind a sync facade or via an ADR; the GUI too
 - [Our own GUI toolkit](AGENTS/rules/gui-own-toolkit.md) — `ossteam-ui` on winit, ash (Vulkan) and our own software renderer, ADR 0004; no third-party GUI framework
 - [SPEC changes](AGENTS/rules/spec-changes.md) — need the maintainer; say so plainly when reporting
 - [CI stays off](AGENTS/rules/ci-stays-off.md) — don't switch CI jobs back on; mark anything else off with `RELEASE-BLOCKER`
@@ -58,7 +58,7 @@ These come from the maintainer. Don't trade them away for convenience.
 
 - [Project](AGENTS/project.md) — what ossteam is and where the spec, runbooks and ADRs live
 - [Research sources](AGENTS/research-sources.md) — outside sources, and which are facts-only
-- [GUI focus](AGENTS/gui/focus.md) — focus handles, shared ids, reveal and page scrolling
+- [GUI focus](AGENTS/gui/focus.md) — named focus handles, shared ids, the page focus, reveal and page scrolling
 - [ossteam-ui runtime](AGENTS/gui/ossteam-ui-runtime.md) — pre_present_notify only before a present, clipboard dropped before winit's connection, scrolled layers are damage, font fallback maps every face it tries, the gallery example
 - [GUI lost keyboard focus](AGENTS/gui/lost-keyboard-focus.md) — seen once; check compositor focus first
 - [Portal wakeups](AGENTS/gui/portal-wakeups.md) — connect the session bus yourself, or zbus's thread pool wakes every 500 ms

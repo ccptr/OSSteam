@@ -2,18 +2,22 @@
 //! Library capsules and App page artwork, decoded at the size they are
 //! drawn (`gui.md` §4.2, §4.3).
 //!
-//! gpui's own image loading keeps every image it has decoded, at full
-//! size, until the app exits: scrolling a library of 10,000 apps held
-//! gigabytes. Images here are scaled to where they are drawn on a
-//! background thread, and only the most recently drawn are kept; the
-//! others leave the GPU's atlas too.
+//! Images are scaled to where they are drawn on worker threads, newest
+//! request first (what was asked for last is what is on screen), and only
+//! the most recently drawn are kept: an image dropped here leaves the
+//! renderer too, which keeps nothing the GUI has not kept (ADR 0004).
 
-use std::collections::HashMap;
+use std::cell::RefCell;
+use std::collections::{HashMap, VecDeque};
 use std::path::Path;
-use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Condvar, Mutex};
 
-use gpui::{AppContext, Context, RenderImage, Task, Window};
 use image::imageops::FilterType;
+use ossteam_ui::image::Image;
+
+/// Decoding threads, started as loads need them.
+const WORKERS: usize = 4;
 
 /// How an image is scaled to its box.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
@@ -25,14 +29,18 @@ pub enum Fit {
 }
 
 /// An image file in a box in device pixels.
-type Key = (Arc<Path>, u32, u32, Fit);
+pub type Key = (Arc<Path>, u32, u32, Fit);
+
+/// A finished load, for [`Thumbnails::loaded`] on the thread that owns the
+/// cache.
+pub struct Loaded(Key, Option<Arc<Image>>);
+
+/// Hands a finished load to the thread that owns the cache.
+pub type Post = Arc<dyn Fn(Loaded) + Send + Sync>;
 
 enum State {
-    /// Dropping the task cancels the load.
-    Loading {
-        _load: Task<()>,
-    },
-    Ready(Arc<RenderImage>),
+    Loading,
+    Ready(Arc<Image>),
     Failed,
 }
 
@@ -43,106 +51,165 @@ struct Entry {
 
 pub enum Thumbnail {
     Loading,
-    Ready(Arc<RenderImage>),
+    Ready(Arc<Image>),
     Failed,
 }
 
+/// The loads not started yet, newest last, shared with the workers.
+#[derive(Default)]
+struct Queue {
+    waiting: Mutex<VecDeque<Key>>,
+    ready: Condvar,
+    /// The cache is gone; the workers end.
+    closed: AtomicBool,
+}
+
 pub struct Thumbnails {
+    /// Filled as views build what is visible, so behind a cell: building
+    /// takes the state by reference.
+    inner: RefCell<Inner>,
+    capacity: usize,
+    queue: Arc<Queue>,
+    post: Post,
+}
+
+#[derive(Default)]
+struct Inner {
     entries: HashMap<Key, Entry>,
     clock: u64,
-    capacity: usize,
+    workers: usize,
 }
 
 impl Thumbnails {
-    /// A cache of the `capacity` images drawn last.
-    pub fn new(capacity: usize) -> Self {
+    /// A cache of the `capacity` images drawn last; finished loads go to
+    /// `post`.
+    pub fn new(capacity: usize, post: Post) -> Self {
         Self {
-            entries: HashMap::new(),
-            clock: 0,
+            inner: RefCell::default(),
             capacity,
+            queue: Arc::default(),
+            post,
         }
     }
 
     /// The image at `path` scaled to a box of `width` × `height` device
-    /// pixels, loaded in the background on first use. Views call this
-    /// while drawing; the entity notifies when a load ends.
-    pub fn get(
-        &mut self,
-        path: &Arc<Path>,
-        (width, height): (u32, u32),
-        fit: Fit,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) -> Thumbnail {
-        self.clock += 1;
+    /// pixels, loaded in the background on first use. Views call this for
+    /// what they show, as they build it.
+    pub fn get(&self, path: &Arc<Path>, (width, height): (u32, u32), fit: Fit) -> Thumbnail {
+        let mut inner = self.inner.borrow_mut();
+        inner.clock += 1;
+        let clock = inner.clock;
         let key = (path.clone(), width, height, fit);
-        if let Some(e) = self.entries.get_mut(&key) {
-            e.used = self.clock;
+        if let Some(e) = inner.entries.get_mut(&key) {
+            e.used = clock;
             return match &e.state {
-                State::Loading { .. } => Thumbnail::Loading,
+                State::Loading => Thumbnail::Loading,
                 State::Ready(image) => Thumbnail::Ready(image.clone()),
                 State::Failed => Thumbnail::Failed,
             };
         }
-        let task = {
-            let key = key.clone();
-            let (path, w, h, fit) = key.clone();
-            let load = cx.background_spawn(async move {
-                let bytes = std::fs::read(&path).ok()?;
-                decode(&bytes, w, h, fit).ok()
-            });
-            cx.spawn(async move |this, cx| {
-                let image = load.await;
-                let _ = this.update(cx, |t, cx| {
-                    if let Some(e) = t.entries.get_mut(&key) {
-                        e.state = match image {
-                            Some(i) => State::Ready(Arc::new(i)),
-                            None => State::Failed,
-                        };
-                        cx.notify();
-                    }
-                });
-            })
-        };
-        self.entries.insert(
-            key,
+        inner.entries.insert(
+            key.clone(),
             Entry {
-                state: State::Loading { _load: task },
-                used: self.clock,
+                state: State::Loading,
+                used: clock,
             },
         );
-        self.evict(window, cx);
+        if let Ok(mut waiting) = self.queue.waiting.lock() {
+            waiting.push_back(key);
+        }
+        self.queue.ready.notify_one();
+        if inner.workers < WORKERS && self.start_worker() {
+            inner.workers += 1;
+        }
+        self.evict(&mut inner);
         Thumbnail::Loading
     }
 
-    /// Drops the least recently drawn beyond the capacity. A dropped load
-    /// is cancelled.
-    fn evict(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if self.entries.len() <= self.capacity {
+    /// Takes a finished load; dropped if its entry was evicted meanwhile.
+    pub fn loaded(&mut self, Loaded(key, image): Loaded) {
+        if let Some(e) = self.inner.get_mut().entries.get_mut(&key) {
+            e.state = match image {
+                Some(i) => State::Ready(i),
+                None => State::Failed,
+            };
+        }
+    }
+
+    fn start_worker(&self) -> bool {
+        let queue = self.queue.clone();
+        let post = self.post.clone();
+        std::thread::Builder::new()
+            .name("thumbnails".into())
+            .spawn(move || work(&queue, &*post))
+            .is_ok()
+    }
+
+    /// Drops the least recently drawn beyond the capacity; a load not
+    /// started yet is not made.
+    fn evict(&self, inner: &mut Inner) {
+        if inner.entries.len() <= self.capacity {
             return;
         }
-        let mut by_use: Vec<_> = self
+        let mut by_use: Vec<_> = inner
             .entries
             .iter()
             .map(|(k, e)| (e.used, k.clone()))
             .collect();
         by_use.sort_unstable_by_key(|(used, _)| *used);
-        let excess = self.entries.len() - self.capacity;
-        for (_, key) in by_use.into_iter().take(excess) {
-            if let Some(Entry {
-                state: State::Ready(image),
-                ..
-            }) = self.entries.remove(&key)
-            {
-                cx.drop_image(image, Some(window));
-            }
+        let excess = inner.entries.len() - self.capacity;
+        let gone: Vec<Key> = by_use.into_iter().take(excess).map(|(_, k)| k).collect();
+        for key in &gone {
+            inner.entries.remove(key);
+        }
+        if let Ok(mut waiting) = self.queue.waiting.lock() {
+            waiting.retain(|k| !gone.contains(k));
         }
     }
 }
 
-/// Decodes an image and scales it to a box of `width` × `height`, into
-/// gpui's BGRA.
-pub fn decode(bytes: &[u8], width: u32, height: u32, fit: Fit) -> image::ImageResult<RenderImage> {
+impl Drop for Thumbnails {
+    fn drop(&mut self) {
+        // Under the lock, so a worker cannot miss it between its check
+        // and its wait.
+        if let Ok(_waiting) = self.queue.waiting.lock() {
+            self.queue.closed.store(true, Ordering::Relaxed);
+        }
+        self.queue.ready.notify_all();
+    }
+}
+
+/// A worker: decodes the newest waiting load; it sleeps while nothing
+/// waits, and ends when the cache is gone.
+fn work(queue: &Queue, post: &(dyn Fn(Loaded) + Send + Sync)) {
+    loop {
+        let key = {
+            let Ok(mut waiting) = queue.waiting.lock() else {
+                return;
+            };
+            loop {
+                if queue.closed.load(Ordering::Relaxed) {
+                    return;
+                }
+                if let Some(key) = waiting.pop_back() {
+                    break key;
+                }
+                waiting = match queue.ready.wait(waiting) {
+                    Ok(w) => w,
+                    Err(_) => return,
+                };
+            }
+        };
+        let (path, w, h, fit) = key.clone();
+        let image = std::fs::read(&path)
+            .ok()
+            .and_then(|bytes| decode(&bytes, w, h, fit).ok());
+        post(Loaded(key, image));
+    }
+}
+
+/// Decodes an image and scales it to a box of `width` × `height`.
+pub fn decode(bytes: &[u8], width: u32, height: u32, fit: Fit) -> image::ImageResult<Arc<Image>> {
     let image = image::load_from_memory(bytes)?;
     let (width, height) = (width.max(1), height.max(1));
     let scaled = match fit {
@@ -150,11 +217,12 @@ pub fn decode(bytes: &[u8], width: u32, height: u32, fit: Fit) -> image::ImageRe
         Fit::Contain if image.width() <= width && image.height() <= height => image,
         Fit::Contain => image.resize(width, height, FilterType::Triangle),
     };
-    let mut pixels = scaled.into_rgba8();
-    for p in pixels.as_chunks_mut::<4>().0 {
-        p.swap(0, 2);
-    }
-    Ok(RenderImage::new([image::Frame::new(pixels)]))
+    let (w, h) = (scaled.width(), scaled.height());
+    Image::from_rgba(w, h, scaled.into_rgba8().into_raw()).map_err(|_| {
+        image::ImageError::Limits(image::error::LimitError::from_kind(
+            image::error::LimitErrorKind::DimensionError,
+        ))
+    })
 }
 
 #[cfg(test)]
@@ -170,31 +238,24 @@ mod tests {
     }
 
     #[test]
-    fn decoded_at_the_cell_size_in_bgra() {
+    fn decoded_at_the_cell_size() {
         let image = decode(&png(600, 900, [10, 20, 30]), 146, 221, Fit::Cover).expect("decodes");
-        let size = image.size(0);
-        assert_eq!((size.width.0, size.height.0), (146, 221));
-        assert_eq!(
-            &image.as_bytes(0).expect("one frame")[..4],
-            &[30, 20, 10, 255]
-        );
+        assert_eq!((image.width(), image.height()), (146, 221));
+        assert_eq!(&image.pixels()[..4], &[10, 20, 30, 255]);
     }
 
     #[test]
     fn a_wider_image_is_cropped_to_cover() {
         let image = decode(&png(920, 430, [0, 0, 0]), 146, 221, Fit::Cover).expect("decodes");
-        let size = image.size(0);
-        assert_eq!((size.width.0, size.height.0), (146, 221));
+        assert_eq!((image.width(), image.height()), (146, 221));
     }
 
     #[test]
     fn contain_keeps_the_shape_and_never_enlarges() {
         let image = decode(&png(1280, 720, [0, 0, 0]), 640, 280, Fit::Contain).expect("decodes");
-        let size = image.size(0);
-        assert_eq!((size.width.0, size.height.0), (498, 280));
+        assert_eq!((image.width(), image.height()), (498, 280));
         let image = decode(&png(200, 80, [0, 0, 0]), 640, 280, Fit::Contain).expect("decodes");
-        let size = image.size(0);
-        assert_eq!((size.width.0, size.height.0), (200, 80));
+        assert_eq!((image.width(), image.height()), (200, 80));
     }
 
     #[test]

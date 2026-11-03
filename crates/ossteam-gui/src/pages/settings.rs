@@ -1,21 +1,27 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
-//! The Settings page (`gui.md` §4.5).
+//! The Settings page (`gui.md` §4.5): library folders, the daemon's
+//! settings, the account and the daemon.
 
 use std::collections::HashMap;
+use std::path::PathBuf;
 use std::time::Duration;
 
-use gpui::{
-    AnyElement, App, Context, Entity, FocusHandle, Focusable, PathPromptOptions, ScrollHandle,
-    SharedString, Subscription, Window, div, prelude::*,
-};
 use ossteam_ipc::v1::{self, ErrorCode, PersonaState, SettingKind, SettingSource};
+use ossteam_ui::element::{FocusHandle, ScrollHandle, panel, text};
+use ossteam_ui::folder_picker::{self, pick_folder};
+use ossteam_ui::style::{Align, Styled};
+use ossteam_ui::text_field::TextField;
+use ossteam_ui::window::{Cx, ViewCx};
 
 use crate::format;
+use crate::gui::Gui;
 use crate::model::Model;
-use crate::pages::{error_text, muted, panel, row, section};
 use crate::store::Read;
-use crate::theme::palette;
-use crate::widgets::{TextInput, TextInputEvent, button, choice, page_scroll, reveal, switch};
+use crate::theme::Palette;
+use crate::widgets::{
+    self, El, SMALL, button, choice, error_text, group, muted, row, scrolling_page, section,
+    switch, text_field, title,
+};
 
 const DOWNLOAD_KEYS: [&str; 5] = [
     "content.bandwidth_limit",
@@ -26,501 +32,434 @@ const DOWNLOAD_KEYS: [&str; 5] = [
 ];
 const DEFAULT_TOOL: &str = "compat.default_tool";
 const TOOL_PREFIX: &str = "compat.tool.";
+const PICKER_TITLE: &str = "Add library folder";
 
+#[derive(Default)]
 pub struct SettingsPage {
-    model: Entity<Model>,
-    focus: FocusHandle,
     scroll: ScrollHandle,
-    /// Text fields of integer and string settings, made when first shown.
-    inputs: HashMap<String, Entity<TextInput>>,
-    /// Switches of boolean settings, to focus after a reset.
-    switches: HashMap<String, FocusHandle>,
-    errors: HashMap<String, SharedString>,
-    folder_error: Option<SharedString>,
-    account_error: Option<SharedString>,
-    daemon_error: Option<SharedString>,
+    /// Text fields of integer and string settings.
+    inputs: HashMap<String, TextField>,
+    errors: HashMap<String, String>,
+    folder_error: Option<String>,
+    /// The folder picker is open.
+    picking: bool,
+    account_error: Option<String>,
+    daemon_error: Option<String>,
     confirm_logout: bool,
     /// Shutdown failed with CONFLICT: offer to stop the games too.
     offer_force: bool,
-    _subscriptions: Vec<Subscription>,
 }
 
-impl SettingsPage {
-    pub fn new(model: Entity<Model>, window: &mut Window, cx: &mut Context<Self>) -> Self {
-        let subscriptions = vec![cx.observe_in(&model, window, |page, _, window, cx| {
-            page.sync_inputs(window, cx);
-            cx.notify();
-        })];
-        Self {
-            model,
-            focus: cx.focus_handle(),
-            scroll: ScrollHandle::new(),
-            inputs: HashMap::new(),
-            switches: HashMap::new(),
-            errors: HashMap::new(),
-            folder_error: None,
-            account_error: None,
-            daemon_error: None,
-            confirm_logout: false,
-            offer_force: false,
-            _subscriptions: subscriptions,
+pub fn page_focus() -> FocusHandle {
+    FocusHandle::named("settings-page")
+}
+
+/// A setting's control, its switch or its field: one per setting.
+fn control_id(key: &str) -> String {
+    format!("setting-{key}")
+}
+
+fn new_field() -> TextField {
+    // Not the default: an empty field is an empty value, which for
+    // compat.default_tool means no tool.
+    TextField::new("empty", widgets::TEXT)
+}
+
+/// Fields that do not have focus show the daemon's value.
+pub fn before_view(g: &mut Gui, cx: &mut Cx<Gui>) {
+    let Some(m) = g.model() else {
+        return;
+    };
+    let settings: Vec<(String, String)> = m
+        .store
+        .settings
+        .values()
+        .filter(|s| s.kind() != SettingKind::Bool)
+        .map(|s| (s.key.clone(), s.value.clone()))
+        .collect();
+    for (key, value) in settings {
+        let focused = cx.is_focused(FocusHandle::named(control_id(&key)));
+        let field = g.settings.inputs.entry(key).or_insert_with(|| {
+            let mut f = new_field();
+            f.set_text(&value);
+            f
+        });
+        if !focused && field.text() != value {
+            field.set_text(&value);
         }
     }
+}
 
-    /// Fields that do not have focus show the daemon's value.
-    fn sync_inputs(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let settings = self.model.read(cx).store.settings.clone();
-        for (key, input) in &self.inputs {
-            let Some(s) = settings.get(key) else {
-                continue;
-            };
-            let focused = input.focus_handle(cx).is_focused(window);
-            if !focused && input.read(cx).text() != s.value {
-                input.update(cx, |i, cx| i.set_text(&s.value, cx));
-            }
-        }
-    }
-
-    fn input(
-        &mut self,
-        s: &v1::Setting,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) -> Entity<TextInput> {
-        if let Some(i) = self.inputs.get(&s.key) {
-            return i.clone();
-        }
-        // Not the default: an empty field is an empty value, which for
-        // compat.default_tool means no tool.
-        let input = TextInput::build("empty", window, cx);
-        input.update(cx, |i, cx| i.set_text(&s.value, cx));
-        let key = s.key.clone();
-        cx.subscribe_in(&input, window, move |page, input, e, _, cx| {
-            if matches!(e, TextInputEvent::Submitted | TextInputEvent::Blurred) {
-                let text = input.read(cx).text().to_owned();
-                let current = page
-                    .model
-                    .read(cx)
-                    .store
-                    .setting(&key)
-                    .map(|s| s.value.clone());
-                if current.as_deref() != Some(text.as_str()) {
-                    page.set(key.clone(), Some(text), cx);
+/// `SetSetting`, or with `None` a reset; the error shows by the setting.
+fn set(g: &mut Gui, key: String, value: Option<String>) {
+    g.settings.errors.remove(&key);
+    let reset = value.is_none();
+    let k = key.clone();
+    g.call(
+        move |c| c.set_setting(&k, value.as_deref()),
+        move |g, r, _| match r {
+            Ok(s) => {
+                // The field has focus after a reset, so it does not
+                // follow the store: it would send the old value back when
+                // it loses focus.
+                if reset && let Some(f) = g.settings.inputs.get_mut(&s.key) {
+                    f.set_text(&s.value);
+                }
+                if let Some(m) = g.model_mut() {
+                    m.store.set_setting(s);
                 }
             }
-        })
-        .detach();
-        self.inputs.insert(s.key.clone(), input.clone());
-        input
-    }
-
-    /// `SetSetting`, or with `None` a reset; the error shows by the
-    /// setting.
-    fn set(&mut self, key: String, value: Option<String>, cx: &mut Context<Self>) {
-        self.errors.remove(&key);
-        let reset = value.is_none();
-        let k = key.clone();
-        let call = self
-            .model
-            .read(cx)
-            .daemon
-            .call(move |c| c.set_setting(&k, value.as_deref()));
-        cx.spawn(async move |this, cx| {
-            let r = call.await;
-            let _ = this.update(cx, |page, cx| {
-                match r {
-                    Ok(s) => {
-                        // The field has focus after a reset, so it does
-                        // not follow the store: it would send the old
-                        // value back when it loses focus.
-                        if reset && let Some(i) = page.inputs.get(&s.key) {
-                            i.update(cx, |i, cx| i.set_text(&s.value, cx));
-                        }
-                        page.model.update(cx, |m, cx| {
-                            m.store.set_setting(s);
-                            cx.notify();
-                        })
-                    }
-                    Err(e) => {
-                        page.errors.insert(key, e.message.into());
-                    }
-                }
-                cx.notify();
-            });
-        })
-        .detach();
-    }
-
-    /// Reset goes away once it works: focus goes to the setting's own
-    /// control, or for a tool override, whose row goes too, to the
-    /// default tool.
-    fn focus_for_reset(&self, key: &str, window: &mut Window, cx: &mut Context<Self>) {
-        let key = if key.starts_with(TOOL_PREFIX) {
-            DEFAULT_TOOL
-        } else {
-            key
-        };
-        if let Some(i) = self.inputs.get(key) {
-            window.focus(&i.focus_handle(cx), cx);
-        } else if let Some(f) = self.switches.get(key) {
-            window.focus(f, cx);
-        }
-    }
-
-    fn setting(
-        &mut self,
-        s: &v1::Setting,
-        label: Option<String>,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) -> AnyElement {
-        let p = palette(cx);
-        let key = s.key.clone();
-        let source = match s.source() {
-            SettingSource::Default => "default".to_owned(),
-            SettingSource::File => "from ossteamd.toml".to_owned(),
-            SettingSource::Override => "override".to_owned(),
-            SettingSource::Unspecified => "unknown".to_owned(),
-        };
-        let control = match s.kind() {
-            SettingKind::Bool => {
-                let on = s.value == "true";
-                let k = key.clone();
-                let focus = self
-                    .switches
-                    .entry(key.clone())
-                    .or_insert_with(|| cx.focus_handle().tab_index(0).tab_stop(true))
-                    .clone();
-                switch(
-                    SharedString::from(format!("setting-{key}")),
-                    label.clone().unwrap_or_else(|| key.clone()),
-                    on,
-                )
-                .focus(focus)
-                .on_toggle(cx.listener(move |page, _, _, cx| {
-                    page.set(k.clone(), Some((!on).to_string()), cx)
-                }))
-                .into_any_element()
+            Err(e) => {
+                g.settings.errors.insert(key, e.message);
             }
-            _ => div()
-                .flex()
-                .flex_col()
-                .gap_1()
-                .child(
-                    div()
-                        .text_sm()
-                        .child(label.clone().unwrap_or_else(|| key.clone())),
-                )
-                .child(div().w_64().child(self.input(s, window, cx)))
-                .into_any_element(),
-        };
-        let reset = (s.source() == SettingSource::Override).then(|| {
+        },
+    );
+}
+
+/// Enter in a field, or focus leaving it: sends a changed value.
+fn commit(g: &mut Gui, key: &str) {
+    let Some(text) = g.settings.inputs.get(key).map(|f| f.text().to_owned()) else {
+        return;
+    };
+    let current = g
+        .model()
+        .and_then(|m| m.store.setting(key))
+        .map(|s| s.value.as_str());
+    if current != Some(text.as_str()) {
+        set(g, key.to_owned(), Some(text));
+    }
+}
+
+/// Reset goes away once it works: focus goes to the setting's own
+/// control, or for a tool override, whose row goes too, to the default
+/// tool.
+fn focus_for_reset(key: &str, cx: &mut Cx<Gui>) {
+    let key = if key.starts_with(TOOL_PREFIX) {
+        DEFAULT_TOOL
+    } else {
+        key
+    };
+    cx.focus(FocusHandle::named(control_id(key)));
+}
+
+fn setting(g: &Gui, s: &v1::Setting, label: Option<String>, p: Palette, cx: &ViewCx) -> El {
+    let key = s.key.clone();
+    let id = control_id(&key);
+    let source = match s.source() {
+        SettingSource::Default => "default",
+        SettingSource::File => "from ossteamd.toml",
+        SettingSource::Override => "override",
+        SettingSource::Unspecified => "unknown",
+    };
+    let name = label.clone().unwrap_or_else(|| key.clone());
+    let control: El = match s.kind() {
+        SettingKind::Bool => {
+            let on = s.value == "true";
             let k = key.clone();
-            button(SharedString::from(format!("reset-{key}")), "Reset")
-                .ghost()
-                .on_click(cx.listener(move |page, _, window, cx| {
-                    page.focus_for_reset(&k, window, cx);
-                    page.set(k.clone(), None, cx)
-                }))
-        });
-        div()
-            .flex()
-            .flex_col()
-            .gap_1()
-            .child(
-                div()
-                    .flex()
-                    .items_end()
-                    .gap_3()
-                    .child(control)
-                    .child(div().text_xs().text_color(p.muted).child(source))
-                    .when_some(reset, |d, r| d.child(r)),
-            )
-            .when(label.is_some() || !s.description.is_empty(), |d| {
-                let mut text = s.description.clone();
-                if label.is_some() {
-                    text = if text.is_empty() {
-                        key.clone()
-                    } else {
-                        format!("{key}: {text}")
-                    };
-                }
-                d.child(div().text_xs().text_color(p.muted).child(text))
-            })
-            .when_some(self.errors.get(&key).cloned(), |d, e| {
-                d.child(error_text(e, cx))
-            })
-            .into_any_element()
-    }
-
-    fn add_folder(&mut self, cx: &mut Context<Self>) {
-        self.folder_error = None;
-        let picked = cx.prompt_for_paths(PathPromptOptions {
-            files: false,
-            directories: true,
-            multiple: false,
-            prompt: Some("Add library folder".into()),
-        });
-        let daemon = self.model.read(cx).daemon.clone();
-        cx.spawn(async move |this, cx| {
-            let path = match picked.await {
-                Ok(Ok(Some(paths))) => paths.into_iter().next(),
-                Ok(Ok(None)) | Err(_) => None,
-                Ok(Err(e)) => {
-                    let _ = this.update(cx, |page, cx| {
-                        page.folder_error =
-                            Some(format!("cannot open the folder picker: {e}").into());
-                        cx.notify();
-                    });
-                    None
-                }
-            };
-            let Some(path) = path else {
-                return;
-            };
-            let path = path.to_string_lossy().into_owned();
-            let r = daemon.call(move |c| c.add_library_folder(&path)).await;
-            let _ = this.update(cx, |page, cx| {
-                if let Err(e) = r {
-                    page.folder_error = Some(e.message.into());
-                }
-                page.model.update(cx, |m, cx| m.read(Read::Folders, cx));
-                cx.notify();
-            });
-        })
-        .detach();
-    }
-
-    fn remove_folder(&mut self, path: String, cx: &mut Context<Self>) {
-        self.folder_error = None;
-        let call = self
-            .model
-            .read(cx)
-            .daemon
-            .call(move |c| c.remove_library_folder(&path));
-        cx.spawn(async move |this, cx| {
-            let r = call.await;
-            let _ = this.update(cx, |page, cx| {
-                if let Err(e) = r {
-                    page.folder_error = Some(e.message.into());
-                }
-                page.model.update(cx, |m, cx| m.read(Read::Folders, cx));
-                cx.notify();
-            });
-        })
-        .detach();
-    }
-
-    fn folders(&self, cx: &mut Context<Self>) -> AnyElement {
-        let folders = self.model.read(cx).store.folders.clone();
-        let mut list = div().flex().flex_col().gap_2();
-        for (i, f) in folders.iter().enumerate() {
-            let space = if f.available {
-                format!("{} free", format::size(f.free_bytes))
-            } else {
-                "not available".to_owned()
-            };
-            let n = f.app_ids.len();
-            let mut detail = format!("{space}, {n} app{}", if n == 1 { "" } else { "s" });
-            if f.is_default {
-                detail = format!("default, {detail}");
-            }
-            let path = f.path.clone();
-            list = list.child(
-                div()
-                    .flex()
-                    .items_center()
-                    .gap_3()
-                    .child(
-                        div()
-                            .flex_1()
-                            .flex()
-                            .flex_col()
-                            .child(div().text_sm().child(f.path.clone()))
-                            .child(muted(detail, cx)),
-                    )
-                    .child(button(("remove-folder", i), "Remove").danger().on_click(
-                        cx.listener(move |page, _, _, cx| page.remove_folder(path.clone(), cx)),
-                    )),
-            );
+            switch(p, id, name, on)
+                .on_toggle(move |g, _| set(g, k.clone(), Some((!on).to_string())))
+                .into()
         }
-        panel(cx)
-            .child(list)
-            .child(
-                div().flex().child(
-                    button("add-folder", "Add folder…")
-                        .secondary()
-                        .on_click(cx.listener(|page, _, _, cx| page.add_folder(cx))),
-                ),
-            )
-            .when_some(self.folder_error.clone(), |d, e| d.child(error_text(e, cx)))
-            .into_any_element()
-    }
-
-    fn account(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
-        let store = &self.model.read(cx).store;
-        let account = store.account()?.clone();
-        let state = store.status.persona_state();
-        let mut states = div().flex().flex_col().gap_1();
-        for s in [
-            PersonaState::Online,
-            PersonaState::Invisible,
-            PersonaState::Offline,
-        ] {
-            states = states.child(
-                choice(
-                    ("persona", s as usize),
-                    format::persona_state(s),
-                    state == s,
+        _ => {
+            let (k1, k2, k3) = (key.clone(), key.clone(), key.clone());
+            panel()
+                .gap(4.0)
+                .child(text(name).font_size(widgets::TEXT))
+                .child(
+                    text_field(p, cx, FocusHandle::named(id), move |g: &mut Gui| {
+                        g.settings
+                            .inputs
+                            .entry(k1.clone())
+                            .or_insert_with(new_field)
+                    })
+                    .width(256.0)
+                    .on_submit(move |g, _| commit(g, &k2))
+                    .on_focus_out(move |g, _| commit(g, &k3)),
                 )
-                .on_choose(cx.listener(move |page, _, _, cx| {
-                    page.account_error = None;
-                    page.model.update(cx, |m, cx| {
-                        m.run(cx, move |c| c.set_persona_state(s), |_, (), _| {})
-                    });
-                    cx.notify();
-                })),
-            );
         }
-        let logout = if self.confirm_logout {
-            div()
-                .flex()
-                .items_center()
-                .gap_2()
-                .child(muted("Log out and forget the stored login?", cx))
-                .child(
-                    button("confirm-logout", "Log out")
-                        .danger()
-                        .on_click(cx.listener(|page, _, _, cx| page.logout(cx))),
-                )
-                .child(
-                    button("cancel-logout", "Cancel")
-                        .secondary()
-                        .on_click(cx.listener(|page, _, _, cx| {
-                            page.confirm_logout = false;
-                            cx.notify();
-                        })),
-                )
+    };
+    let reset = (s.source() == SettingSource::Override).then(|| {
+        let k = key.clone();
+        button(p, format!("reset-{key}"), "Reset")
+            .ghost()
+            .on_click(move |g, cx| {
+                focus_for_reset(&k, cx);
+                set(g, k.clone(), None);
+            })
+    });
+    let mut description = s.description.clone();
+    if label.is_some() {
+        description = if description.is_empty() {
+            key.clone()
         } else {
-            div()
-                .flex()
-                .child(button("logout", "Log out…").danger().on_click(cx.listener(
-                    |page, _, _, cx| {
-                        page.confirm_logout = true;
-                        cx.notify();
-                    },
-                )))
+            format!("{key}: {description}")
         };
-        Some(
-            panel(cx)
-                .child(row(
-                    "Account",
-                    format!("{} ({})", account.persona_name, account.account_name),
-                    cx,
-                ))
-                .child(section("Persona state", cx).child(states))
-                .child(logout)
-                .when_some(self.account_error.clone(), |d, e| {
-                    d.child(error_text(e, cx))
-                })
-                .into_any_element(),
+    }
+    panel()
+        .gap(4.0)
+        .child(
+            panel()
+                .row()
+                .align(Align::End)
+                .gap(12.0)
+                .child(control)
+                .child(text(source).font_size(SMALL).text_color(p.muted))
+                // A button aligns itself to the start; its box takes the row's
+                // alignment instead.
+                .when_some(reset, |d, r| d.child(panel().child(r))),
         )
-    }
-
-    fn logout(&mut self, cx: &mut Context<Self>) {
-        self.confirm_logout = false;
-        self.account_error = None;
-        let call = self.model.read(cx).daemon.call(|c| c.logout());
-        cx.spawn(async move |this, cx| {
-            let r = call.await;
-            let _ = this.update(cx, |page, cx| {
-                if let Err(e) = r {
-                    page.account_error = Some(e.message.into());
-                }
-                cx.notify();
-            });
+        .when(!description.is_empty(), |d| {
+            d.child(text(description).font_size(SMALL).text_color(p.muted))
         })
-        .detach();
-    }
-
-    fn shutdown(&mut self, force: bool, cx: &mut Context<Self>) {
-        self.daemon_error = None;
-        self.offer_force = false;
-        let call = self.model.read(cx).daemon.call(move |c| c.shutdown(force));
-        cx.spawn(async move |this, cx| {
-            let r = call.await;
-            let _ = this.update(cx, |page, cx| {
-                match r {
-                    Err(e) if e.is(ErrorCode::Conflict) => {
-                        page.offer_force = true;
-                        page.daemon_error = Some(e.message.into());
-                    }
-                    // The connection closing first is the shutdown working.
-                    Err(e) if e.code.is_some() => page.daemon_error = Some(e.message.into()),
-                    _ => {}
-                }
-                cx.notify();
-            });
+        .when_some(g.settings.errors.get(&key).cloned(), |d, e| {
+            d.child(error_text(p, e))
         })
-        .detach();
-    }
+}
 
-    fn daemon(
-        &mut self,
-        others: Vec<v1::Setting>,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) -> AnyElement {
-        let m = self.model.read(cx);
-        let status = &m.store.status;
-        let protocol = m.store.version.protocol.unwrap_or_default();
-        let uptime = Duration::from_secs(status.uptime_secs) + m.status_read.elapsed();
-        let info = [
-            ("Version", status.daemon_version.clone()),
-            ("Process", status.pid.to_string()),
-            ("Running for", format::duration(uptime)),
-            ("Protocol", format!("{}.{}", protocol.major, protocol.minor)),
-            (
-                "Platform",
-                format!("{} {}", m.store.version.os, m.store.version.arch),
-            ),
-        ];
-        let mut out = panel(cx);
-        for (k, v) in info {
-            out = out.child(row(k, v, cx));
+/// Asks for a folder and adds it. The picker blocks: on a thread of its
+/// own, except on macOS, where AppKit's panels run on the main thread
+/// and keep the window's events flowing.
+fn add_folder(g: &mut Gui) {
+    if g.settings.picking {
+        return;
+    }
+    g.settings.folder_error = None;
+    if cfg!(target_os = "macos") {
+        let r = pick_folder(PICKER_TITLE);
+        picked(g, r);
+    } else {
+        g.settings.picking = true;
+        g.background(
+            "ossteam-gui-folder-picker",
+            || pick_folder(PICKER_TITLE),
+            |g, r, _| {
+                g.settings.picking = false;
+                picked(g, r);
+            },
+        );
+    }
+}
+
+fn picked(g: &mut Gui, r: Result<Option<PathBuf>, folder_picker::Error>) {
+    let path = match r {
+        Ok(Some(path)) => path.to_string_lossy().into_owned(),
+        Ok(None) => return,
+        Err(e) => {
+            g.settings.folder_error = Some(format!("cannot open the folder picker: {e}"));
+            return;
         }
-        for s in &others {
-            out = out.child(self.setting(s, None, window, cx));
-        }
-        let stop = if self.offer_force {
-            div()
-                .flex()
-                .gap_2()
-                .child(
-                    button("force-stop", "Stop the games and ossteamd")
-                        .danger()
-                        .on_click(cx.listener(|page, _, _, cx| page.shutdown(true, cx))),
-                )
-                .child(
-                    button("cancel-stop", "Cancel")
-                        .secondary()
-                        .on_click(cx.listener(|page, _, _, cx| {
-                            page.offer_force = false;
-                            page.daemon_error = None;
-                            cx.notify();
-                        })),
-                )
+    };
+    g.call(
+        move |c| c.add_library_folder(&path),
+        |g, r, _| folders_changed(g, r.err().map(|e| e.message)),
+    );
+}
+
+fn remove_folder(g: &mut Gui, path: String) {
+    g.settings.folder_error = None;
+    g.call(
+        move |c| c.remove_library_folder(&path),
+        |g, r, _| folders_changed(g, r.err().map(|e| e.message)),
+    );
+}
+
+fn folders_changed(g: &mut Gui, error: Option<String>) {
+    g.settings.folder_error = error;
+    if let Some(m) = g.model_mut() {
+        m.read(Read::Folders);
+    }
+}
+
+fn folders(g: &Gui, m: &Model, p: Palette) -> El {
+    let mut list = panel().gap(8.0);
+    for (i, f) in m.store.folders.iter().enumerate() {
+        let space = if f.available {
+            format!("{} free", format::size(f.free_bytes))
         } else {
-            div().flex().child(
-                button("stop-daemon", "Stop ossteamd")
-                    .danger()
-                    .on_click(cx.listener(|page, _, _, cx| page.shutdown(false, cx))),
-            )
+            "not available".to_owned()
         };
-        out.child(stop)
-            .when_some(self.daemon_error.clone(), |d, e| d.child(error_text(e, cx)))
-            .into_any_element()
+        let n = f.app_ids.len();
+        let mut detail = format!("{space}, {n} app{}", if n == 1 { "" } else { "s" });
+        if f.is_default {
+            detail = format!("default, {detail}");
+        }
+        let path = f.path.clone();
+        list = list.child(
+            panel()
+                .row()
+                .align(Align::Center)
+                .gap(12.0)
+                .child(
+                    panel()
+                        .grow()
+                        .child(text(f.path.clone()).font_size(widgets::TEXT))
+                        .child(muted(p, detail)),
+                )
+                .child(
+                    button(p, widgets::id("remove-folder", i), "Remove")
+                        .danger()
+                        .on_click(move |g, _| remove_folder(g, path.clone())),
+                ),
+        );
     }
+    group(p)
+        .child(list)
+        .child(
+            button(p, "add-folder", "Add folder…")
+                .secondary()
+                .disabled(g.settings.picking)
+                .on_click(|g, _| add_folder(g)),
+        )
+        .when_some(g.settings.folder_error.clone(), |d, e| {
+            d.child(error_text(p, e))
+        })
+}
+
+fn logout(g: &mut Gui) {
+    g.settings.confirm_logout = false;
+    g.settings.account_error = None;
+    g.call(
+        |c| c.logout(),
+        |g, r, _| {
+            if let Err(e) = r {
+                g.settings.account_error = Some(e.message);
+            }
+        },
+    );
+}
+
+fn account(g: &Gui, m: &Model, p: Palette) -> Option<El> {
+    let store = &m.store;
+    let account = store.account()?;
+    let state = store.status.persona_state();
+    let mut states = panel().gap(4.0);
+    for s in [
+        PersonaState::Online,
+        PersonaState::Invisible,
+        PersonaState::Offline,
+    ] {
+        states = states.child(
+            choice(
+                p,
+                widgets::id("persona", s as i32),
+                format::persona_state(s),
+                state == s,
+            )
+            .on_choose(move |g, _| {
+                g.settings.account_error = None;
+                if let Some(m) = g.model_mut() {
+                    m.run(move |c| c.set_persona_state(s), |_, ()| {});
+                }
+            }),
+        );
+    }
+    // Cancel takes the focus handle of Log out…, which it replaces: a
+    // second Enter cancels, and Log out… gets the focus back.
+    let logout_row = if g.settings.confirm_logout {
+        panel()
+            .row()
+            .align(Align::Center)
+            .gap(8.0)
+            .child(muted(p, "Log out and forget the stored login?"))
+            .child(
+                button(p, "confirm-logout", "Log out")
+                    .danger()
+                    .on_click(|g, _| logout(g)),
+            )
+            .child(
+                button(p, "cancel-logout", "Cancel")
+                    .secondary()
+                    .focus(FocusHandle::named("logout"))
+                    .on_click(|g, _| g.settings.confirm_logout = false),
+            )
+    } else {
+        button(p, "logout", "Log out…")
+            .danger()
+            .on_click(|g, _| g.settings.confirm_logout = true)
+            .into()
+    };
+    Some(
+        group(p)
+            .child(row(
+                p,
+                "Account",
+                format!("{} ({})", account.persona_name, account.account_name),
+            ))
+            .child(section(p, "Persona state", states))
+            .child(logout_row)
+            .when_some(g.settings.account_error.clone(), |d, e| {
+                d.child(error_text(p, e))
+            }),
+    )
+}
+
+fn shutdown(g: &mut Gui, force: bool) {
+    g.settings.daemon_error = None;
+    g.settings.offer_force = false;
+    g.call(
+        move |c| c.shutdown(force),
+        |g, r, _| match r {
+            Err(e) if e.is(ErrorCode::Conflict) => {
+                g.settings.offer_force = true;
+                g.settings.daemon_error = Some(e.message);
+            }
+            // The connection closing first is the shutdown working.
+            Err(e) if e.code.is_some() => g.settings.daemon_error = Some(e.message),
+            _ => {}
+        },
+    );
+}
+
+fn daemon(g: &Gui, m: &Model, others: &[&v1::Setting], p: Palette, cx: &ViewCx) -> El {
+    let status = &m.store.status;
+    let protocol = m.store.version.protocol.unwrap_or_default();
+    let uptime = Duration::from_secs(status.uptime_secs) + m.status_read.elapsed();
+    let info = [
+        ("Version", status.daemon_version.clone()),
+        ("Process", status.pid.to_string()),
+        ("Running for", format::duration(uptime)),
+        ("Protocol", format!("{}.{}", protocol.major, protocol.minor)),
+        (
+            "Platform",
+            format!("{} {}", m.store.version.os, m.store.version.arch),
+        ),
+    ];
+    let mut out = group(p);
+    for (k, v) in info {
+        out = out.child(row(p, k, v));
+    }
+    for s in others {
+        out = out.child(setting(g, s, None, p, cx));
+    }
+    // As with Log out…: Cancel takes the focus of Stop ossteamd.
+    let stop: El = if g.settings.offer_force {
+        panel()
+            .row()
+            .gap(8.0)
+            .child(
+                button(p, "force-stop", "Stop the games and ossteamd")
+                    .danger()
+                    .on_click(|g, _| shutdown(g, true)),
+            )
+            .child(
+                button(p, "cancel-stop", "Cancel")
+                    .secondary()
+                    .focus(FocusHandle::named("stop-daemon"))
+                    .on_click(|g, _| {
+                        g.settings.offer_force = false;
+                        g.settings.daemon_error = None;
+                    }),
+            )
+    } else {
+        button(p, "stop-daemon", "Stop ossteamd")
+            .danger()
+            .on_click(|g, _| shutdown(g, false))
+            .into()
+    };
+    out.child(stop)
+        .when_some(g.settings.daemon_error.clone(), |d, e| {
+            d.child(error_text(p, e))
+        })
 }
 
 /// A label for the settings this page names.
@@ -536,76 +475,55 @@ fn label(key: &str) -> Option<&'static str> {
     })
 }
 
-impl Focusable for SettingsPage {
-    fn focus_handle(&self, _: &App) -> FocusHandle {
-        self.focus.clone()
+pub fn view(g: &Gui, m: &Model, p: Palette, cx: &ViewCx) -> El {
+    let settings = &m.store.settings;
+    let linux = cfg!(target_os = "linux");
+    let labelled = |key: &str| label(key).map(str::to_owned);
+
+    let mut downloads = group(p);
+    for key in DOWNLOAD_KEYS {
+        if let Some(s) = settings.get(key) {
+            downloads = downloads.child(setting(g, s, labelled(key), p, cx));
+        }
     }
-}
 
-impl Render for SettingsPage {
-    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        reveal::scroll_to_focus(&self.focus, &self.scroll, window, cx);
-        let settings: Vec<v1::Setting> = self
-            .model
-            .read(cx)
-            .store
-            .settings
-            .values()
-            .cloned()
-            .collect();
-        let linux = cfg!(target_os = "linux");
-        let mut downloads = panel(cx);
-        for key in DOWNLOAD_KEYS {
-            if let Some(s) = settings.iter().find(|s| s.key == key) {
-                downloads =
-                    downloads.child(self.setting(s, label(key).map(str::to_owned), window, cx));
-            }
-        }
-
-        let mut compat = panel(cx);
-        if let Some(s) = settings.iter().find(|s| s.key == DEFAULT_TOOL) {
-            compat =
-                compat.child(self.setting(s, label(DEFAULT_TOOL).map(str::to_owned), window, cx));
-        }
-        let overrides: Vec<&v1::Setting> = settings
-            .iter()
-            .filter(|s| s.key.starts_with(TOOL_PREFIX) && s.source() == SettingSource::Override)
-            .collect();
-        for s in &overrides {
-            let app = s.key[TOOL_PREFIX.len()..].parse::<u32>().ok();
-            let name = app
-                .and_then(|a| self.model.read(cx).store.app_name(a).map(str::to_owned))
-                .unwrap_or_else(|| s.key[TOOL_PREFIX.len()..].to_owned());
-            compat = compat.child(self.setting(s, Some(name), window, cx));
-        }
-
-        let named =
-            |k: &str| DOWNLOAD_KEYS.contains(&k) || k == DEFAULT_TOOL || k.starts_with(TOOL_PREFIX);
-        let others: Vec<v1::Setting> = settings
-            .iter()
-            .filter(|s| !named(&s.key) || (!linux && s.key.starts_with("compat.")))
-            .cloned()
-            .collect();
-
-        let folders = self.folders(cx);
-        let account = self.account(cx);
-        let daemon = self.daemon(others, window, cx);
-        page_scroll::by_keyboard(div().id("settings-page"), &self.scroll, None)
-            .track_focus(&self.focus)
-            .size_full()
-            .overflow_y_scroll()
-            .track_scroll(&self.scroll)
-            .p_6()
-            .flex()
-            .flex_col()
-            .gap_4()
-            .child(div().text_xl().child("Settings"))
-            .child(section("Library folders", cx).child(folders))
-            .child(section("Downloads", cx).child(downloads))
-            .when(linux, |d| {
-                d.child(section("Compatibility", cx).child(compat))
-            })
-            .when_some(account, |d, a| d.child(section("Account", cx).child(a)))
-            .child(section("Daemon", cx).child(daemon))
+    let mut compat = group(p);
+    if let Some(s) = settings.get(DEFAULT_TOOL) {
+        compat = compat.child(setting(g, s, labelled(DEFAULT_TOOL), p, cx));
     }
+    for s in settings
+        .values()
+        .filter(|s| s.key.starts_with(TOOL_PREFIX) && s.source() == SettingSource::Override)
+    {
+        let app = &s.key[TOOL_PREFIX.len()..];
+        let name = app
+            .parse::<u32>()
+            .ok()
+            .and_then(|a| m.store.app_name(a))
+            .unwrap_or(app)
+            .to_owned();
+        compat = compat.child(setting(g, s, Some(name), p, cx));
+    }
+
+    let named =
+        |k: &str| DOWNLOAD_KEYS.contains(&k) || k == DEFAULT_TOOL || k.starts_with(TOOL_PREFIX);
+    let others: Vec<&v1::Setting> = settings
+        .values()
+        .filter(|s| !named(&s.key) || (!linux && s.key.starts_with("compat.")))
+        .collect();
+
+    let body = panel()
+        .gap(16.0)
+        .pad(24.0)
+        .child(title("Settings"))
+        .child(section(p, "Library folders", folders(g, m, p)))
+        .child(section(p, "Downloads", downloads))
+        .when(linux, |d| d.child(section(p, "Compatibility", compat)))
+        .when_some(account(g, m, p), |d, a| d.child(section(p, "Account", a)))
+        .child(section(p, "Daemon", daemon(g, m, &others, p, cx)));
+    scrolling_page(&g.settings.scroll)
+        .id("settings-page")
+        .focus(page_focus())
+        .fill()
+        .child(body)
 }

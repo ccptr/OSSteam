@@ -9,21 +9,13 @@ publish.workspace = true
 [dependencies]
 ossteam-ipc.workspace = true
 ossteam-types.workspace = true
-async-channel = "2.5.0"
+ossteam-ui.workspace = true
 crossbeam-channel.workspace = true
-gpui.workspace = true
-gpui_platform.workspace = true
-# Already built for gpui; these are the formats Steam serves images in.
+# The formats Steam serves images in.
 image = { version = "0.25.10", default-features = false, features = ["jpeg", "png", "webp"] }
 qrcode.workspace = true
-unicode-segmentation.workspace = true
-zeroize.workspace = true
-
-# The desktop portal's colour scheme before the first frame (theme.rs).
-# gpui builds both with these features already.
-[target.'cfg(any(target_os = "linux", target_os = "freebsd"))'.dependencies]
-ashpd = { version = "0.13.13", default-features = false, features = ["async-io", "settings"] }
-async-io = "2.6.0"
+# The toolkit logs which renderer it uses and why (ADR 0004).
+tracing-subscriber.workspace = true
 
 [lints]
 workspace = true

@@ -3,94 +3,84 @@
 
 use std::time::Instant;
 
-use gpui::{
-    AnyElement, App, Context, Entity, FocusHandle, Focusable, ScrollHandle, SharedString,
-    Subscription, Window, div, prelude::*,
-};
 use ossteam_ipc::v1::{self, JobState};
+use ossteam_ui::element::{FocusHandle, ScrollHandle, panel, text};
+use ossteam_ui::style::{Align, Styled};
+use ossteam_ui::window::ViewCx;
 
 use crate::format;
+use crate::gui::Gui;
 use crate::model::Model;
-use crate::pages::{error_text, muted, panel, section};
 use crate::queue::{self, Move};
 use crate::rate;
-use crate::theme::palette;
-use crate::widgets::{button, page_scroll, progress_bar, reveal};
+use crate::theme::Palette;
+use crate::widgets::{
+    self, El, SMALL, button, error_text, group, muted, progress_bar, scrolling_page, section, title,
+};
 
+#[derive(Default)]
 pub struct DownloadsPage {
-    model: Entity<Model>,
-    focus: FocusHandle,
     scroll: ScrollHandle,
-    update_all_error: Option<SharedString>,
-    _subscriptions: Vec<Subscription>,
+    update_all_error: Option<String>,
 }
 
-impl DownloadsPage {
-    pub fn new(model: Entity<Model>, cx: &mut Context<Self>) -> Self {
-        let subscriptions = vec![cx.observe(&model, |_, _, cx| cx.notify())];
-        Self {
-            model,
-            focus: cx.focus_handle(),
-            scroll: ScrollHandle::new(),
-            update_all_error: None,
-            _subscriptions: subscriptions,
-        }
-    }
+pub fn page_focus() -> FocusHandle {
+    FocusHandle::named("downloads-page")
+}
 
-    fn update_all(&mut self, cx: &mut Context<Self>) {
-        self.update_all_error = None;
-        let call = self.model.read(cx).daemon.call(|c| c.update(&[], true));
-        cx.spawn(async move |this, cx| {
-            let r = call.await;
-            let _ = this.update(cx, |page, cx| {
-                match r {
-                    Ok(jobs) => page.model.update(cx, |m, cx| {
-                        for j in jobs {
-                            m.store.add_job(j);
-                        }
-                        cx.notify();
-                    }),
-                    Err(e) => page.update_all_error = Some(e.message.into()),
+fn update_all(g: &mut Gui) {
+    g.downloads.update_all_error = None;
+    g.call(
+        |c| c.update(&[], true),
+        |g, r, _| match r {
+            Ok(jobs) => {
+                if let Some(m) = g.model_mut() {
+                    for j in jobs {
+                        m.store.add_job(j);
+                    }
                 }
-                cx.notify();
-            });
-        })
-        .detach();
-    }
+            }
+            Err(e) => g.downloads.update_all_error = Some(e.message),
+        },
+    );
 }
 
 /// Reorders the queue: the priority calls run in order on one thread, and
 /// the daemon's `JobStateChanged` events redraw the queue.
-fn reorder(model: &Entity<Model>, index: usize, m: Move, cx: &mut App) {
-    model.update(cx, |model, cx| {
-        let q = queue::queue(model.store.jobs.values());
-        let Some(job_id) = q.get(index).map(|j| j.job_id) else {
-            return;
-        };
-        let Some(wanted) = queue::moved(&q, index, m) else {
-            return;
-        };
-        let calls = queue::priorities(&q, &wanted);
-        model.job_call(job_id, cx, move |c| {
-            for (id, priority) in calls {
-                c.set_job_priority(id, priority)?;
-            }
-            Ok(())
-        });
+fn reorder(g: &mut Gui, index: usize, mv: Move) {
+    let Some(m) = g.model_mut() else {
+        return;
+    };
+    let q = queue::queue(m.store.jobs.values());
+    let Some(job_id) = q.get(index).map(|j| j.job_id) else {
+        return;
+    };
+    let Some(wanted) = queue::moved(&q, index, mv) else {
+        return;
+    };
+    let calls = queue::priorities(&q, &wanted);
+    m.job_call(job_id, move |c| {
+        for (id, priority) in calls {
+            c.set_job_priority(id, priority)?;
+        }
+        Ok(())
     });
+}
+
+fn job_call(
+    g: &mut Gui,
+    id: u64,
+    f: impl FnOnce(&ossteam_ipc::Client) -> Result<(), ossteam_ipc::ClientError> + Send + 'static,
+) {
+    if let Some(m) = g.model_mut() {
+        m.job_call(id, f);
+    }
 }
 
 /// A job's line: its app, kind and phase, progress, rate and time left,
 /// its error, and Pause, Resume and Cancel. `position` is its index and
 /// the queue's length, for the move buttons of the Downloads page.
-pub fn job_row(
-    model: &Entity<Model>,
-    job: &v1::Job,
-    position: Option<(usize, usize)>,
-    cx: &App,
-) -> AnyElement {
-    let p = palette(cx);
-    let m = model.read(cx);
+pub fn job_row(m: &Model, job: &v1::Job, position: Option<(usize, usize)>, p: Palette) -> El {
     let id = job.job_id;
     let state = job.state();
     let name = m
@@ -127,159 +117,122 @@ pub fn job_row(
 
     // Pause and Resume share an id, and so a focus handle: the one that
     // replaces the other keeps the focus.
-    let mut buttons = div().flex().gap_1();
+    let mut buttons = panel().row().gap(4.0);
     if matches!(state, JobState::Queued | JobState::Running) {
-        let model = model.clone();
         buttons = buttons.child(
-            button(("pause-resume", id as usize), "Pause")
+            button(p, widgets::id("pause-resume", id), "Pause")
                 .secondary()
-                .on_click(move |_, _, cx| {
-                    model.update(cx, |m, cx| {
-                        m.job_call(id, cx, move |c| c.pause_job(id).map(drop))
-                    });
-                }),
+                .on_click(move |g, _| job_call(g, id, move |c| c.pause_job(id).map(drop))),
         );
     }
     if matches!(state, JobState::Paused | JobState::Failed) {
-        let model = model.clone();
         buttons = buttons.child(
-            button(("pause-resume", id as usize), "Resume")
+            button(p, widgets::id("pause-resume", id), "Resume")
                 .secondary()
-                .on_click(move |_, _, cx| {
-                    model.update(cx, |m, cx| {
-                        m.job_call(id, cx, move |c| c.resume_job(id).map(drop))
-                    });
-                }),
+                .on_click(move |g, _| job_call(g, id, move |c| c.resume_job(id).map(drop))),
         );
     }
     if queue::is_unfinished(job) {
-        let model = model.clone();
-        buttons = buttons.child(button(("cancel", id as usize), "Cancel").danger().on_click(
-            move |_, _, cx| {
-                model.update(cx, |m, cx| {
-                    m.job_call(id, cx, move |c| c.cancel_job(id).map(drop))
-                });
-            },
-        ));
+        buttons = buttons.child(
+            button(p, widgets::id("cancel", id), "Cancel")
+                .danger()
+                .on_click(move |g, _| job_call(g, id, move |c| c.cancel_job(id).map(drop))),
+        );
     }
     if let Some((index, len)) = position {
-        for (label, mv, enabled) in [
-            ("Move up", Move::Up, index > 0),
-            ("Move down", Move::Down, index + 1 < len),
-            ("Move to top", Move::ToTop, index > 0),
+        for (label, key, mv, enabled) in [
+            ("Move up", "move-up", Move::Up, index > 0),
+            ("Move down", "move-down", Move::Down, index + 1 < len),
+            ("Move to top", "move-top", Move::ToTop, index > 0),
         ] {
-            let model = model.clone();
             buttons = buttons.child(
-                button(SharedString::from(format!("{label}-{id}")), label)
+                button(p, widgets::id(key, id), label)
                     .ghost()
                     .disabled(!enabled)
-                    .on_click(move |_, _, cx| reorder(&model, index, mv, cx)),
+                    .on_click(move |g, _| reorder(g, index, mv)),
             );
         }
     }
 
-    div()
-        .flex()
-        .flex_col()
-        .gap_1()
-        .py_2()
+    let mut words = panel().row().gap(12.0).child(muted(p, detail));
+    if !speed.is_empty() {
+        words = words.child(muted(p, speed));
+    }
+    panel()
+        .gap(4.0)
+        .pad_xy(0.0, 8.0)
         .child(
-            div()
-                .flex()
-                .items_center()
-                .gap_2()
-                .child(div().text_sm().child(name))
+            panel()
+                .row()
+                .align(Align::Center)
+                .gap(8.0)
+                .child(text(name).font_size(widgets::TEXT))
                 .child(
-                    div()
-                        .text_xs()
-                        .text_color(p.muted)
-                        .child(format::kind(job.kind()).to_owned()),
+                    text(format::kind(job.kind()))
+                        .font_size(SMALL)
+                        .text_color(p.muted),
                 )
-                .child(div().flex_1())
+                .child(panel().grow())
                 .child(buttons),
         )
         .when(state == JobState::Running || started, |d| {
-            d.child(progress_bar(format::fraction(&progress), cx))
+            d.child(progress_bar(p, format::fraction(&progress)))
         })
-        .child(
-            div()
-                .flex()
-                .gap_3()
-                .child(muted(detail, cx))
-                .when(!speed.is_empty(), |d| d.child(muted(speed, cx))),
+        .child(words)
+        .when_some(error, |d, e| d.child(error_text(p, e)))
+        .when_some(call_error, |d, e| d.child(error_text(p, e)))
+}
+
+pub fn view(g: &Gui, m: &Model, p: Palette, _cx: &ViewCx) -> El {
+    let logged_in = m.store.account().is_some();
+    let queue = queue::queue(m.store.jobs.values());
+    let history = queue::history(m.store.jobs.values());
+    let len = queue.len();
+
+    let queue_list: El = if queue.is_empty() {
+        muted(p, "Nothing is queued.")
+    } else {
+        panel().children(
+            queue
+                .iter()
+                .enumerate()
+                .map(|(i, j)| job_row(m, j, Some((i, len)), p)),
         )
-        .when_some(error, |d, e| d.child(error_text(e, cx)))
-        .when_some(call_error, |d, e| d.child(error_text(e, cx)))
-        .into_any_element()
-}
+    };
+    let history_list: El = if history.is_empty() {
+        muted(p, "No finished jobs since ossteamd started.")
+    } else {
+        panel().children(history.iter().map(|j| job_row(m, j, None, p)))
+    };
 
-impl Focusable for DownloadsPage {
-    fn focus_handle(&self, _: &App) -> FocusHandle {
-        self.focus.clone()
-    }
-}
-
-impl Render for DownloadsPage {
-    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        reveal::scroll_to_focus(&self.focus, &self.scroll, window, cx);
-        let m = self.model.read(cx);
-        let logged_in = m.store.account().is_some();
-        let jobs = m.store.jobs.clone();
-        let queue = queue::queue(jobs.values());
-        let history = queue::history(jobs.values());
-        let len = queue.len();
-
-        let mut queue_list = div().flex().flex_col();
-        for (i, j) in queue.iter().enumerate() {
-            queue_list = queue_list.child(job_row(&self.model, j, Some((i, len)), cx));
-        }
-        let mut history_list = div().flex().flex_col();
-        for j in &history {
-            history_list = history_list.child(job_row(&self.model, j, None, cx));
-        }
-
-        page_scroll::by_keyboard(div().id("downloads-page"), &self.scroll, None)
-            .track_focus(&self.focus)
-            .size_full()
-            .overflow_y_scroll()
-            .track_scroll(&self.scroll)
-            .p_6()
-            .flex()
-            .flex_col()
-            .gap_4()
-            .child(
-                div()
-                    .flex()
-                    .items_center()
-                    .gap_3()
-                    .child(div().text_xl().child("Downloads"))
-                    .child(div().flex_1())
-                    .child(
-                        button("update-all", "Update all")
-                            .secondary()
-                            .disabled(!logged_in)
-                            .on_click(cx.listener(|page, _, _, cx| page.update_all(cx))),
-                    ),
-            )
-            .when_some(self.update_all_error.clone(), |d, e| {
-                d.child(error_text(e, cx))
-            })
-            .when(!logged_in, |d| {
-                d.child(muted("Jobs belong to an account; sign in to see them.", cx))
-            })
-            .child(
-                section("Queue", cx).child(panel(cx).child(if queue.is_empty() {
-                    muted("Nothing is queued.", cx).into_any_element()
-                } else {
-                    queue_list.into_any_element()
-                })),
-            )
-            .child(
-                section("History", cx).child(panel(cx).child(if history.is_empty() {
-                    muted("No finished jobs since ossteamd started.", cx).into_any_element()
-                } else {
-                    history_list.into_any_element()
-                })),
-            )
-    }
+    let body = panel()
+        .gap(16.0)
+        .pad(24.0)
+        .child(
+            panel()
+                .row()
+                .align(Align::Center)
+                .gap(12.0)
+                .child(title("Downloads"))
+                .child(panel().grow())
+                .child(
+                    button(p, "update-all", "Update all")
+                        .secondary()
+                        .disabled(!logged_in)
+                        .on_click(|g, _| update_all(g)),
+                ),
+        )
+        .when_some(g.downloads.update_all_error.clone(), |d, e| {
+            d.child(error_text(p, e))
+        })
+        .when(!logged_in, |d| {
+            d.child(muted(p, "Jobs belong to an account; sign in to see them."))
+        })
+        .child(section(p, "Queue", group(p).child(queue_list)))
+        .child(section(p, "History", group(p).child(history_list)));
+    scrolling_page(&g.downloads.scroll)
+        .id("downloads-page")
+        .focus(page_focus())
+        .fill()
+        .child(body)
 }

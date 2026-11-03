@@ -53,6 +53,7 @@ ossteam-content = { path = "crates/ossteam-content" }
 ossteam-launch = { path = "crates/ossteam-launch" }
 ossteam-gameipc = { path = "crates/ossteam-gameipc" }
 ossteam-ipc = { path = "crates/ossteam-ipc" }
+ossteam-ui = { path = "crates/ossteam-ui" }
 ossteam-gui = { path = "crates/ossteam-gui" }
 
 aes = "0.8.4"
@@ -100,30 +101,11 @@ zstd = { version = "0.14.3", default-features = false }
 zune-core = "0.5.3"
 zune-jpeg = "0.5.15"
 
-# gpui is pinned to one zed revision; bump deliberately (SPEC §23). The
-# toolchain in rust-toolchain.toml follows that revision's requirement.
-gpui = { git = "https://github.com/zed-industries/zed", rev = "670a779a5ed9e7161c97aa4f998d395c207d5631" }
-gpui_platform = { git = "https://github.com/zed-industries/zed", rev = "670a779a5ed9e7161c97aa4f998d395c207d5631", features = ["font-kit", "wayland", "x11"] }
-
 [workspace.lints.rust]
 unsafe_op_in_unsafe_fn = "deny"
 
 [workspace.lints.clippy]
 dbg_macro = "deny"
-
-# gpui's own workspace patches these crates. Patches do not propagate through
-# git dependencies, so the ones gpui needs are repeated here at the same revs.
-[patch.crates-io]
-async-process = { git = "https://github.com/zed-industries/async-process.git", rev = "0b6d6713570af61806e1e5cb40e0f757cb93fd9d" }
-async-task = { git = "https://github.com/zed-industries/async-task.git", rev = "015845a19fc31752c02367567d3b8900a406f9da" }
-calloop = { git = "https://github.com/zed-industries/calloop", rev = "3759371fee14c40066d64777e2a36b6ffcc22590" }
-khronos-egl = { git = "https://github.com/zed-industries/khronos-egl", rev = "42214b36347b108fd9630ca6254b96dde59e04fe" }
-
-# gpui's `test-support` (the GUI's integration test) takes proptest from git at
-# a rev that calls itself 1.10.0; the crates.io release is used instead so no
-# git source beyond gpui's own is pulled in.
-[patch."https://github.com/proptest-rs/proptest"]
-proptest = "1.10.0"
 
 [profile.dev.package."*"]
 opt-level = 1

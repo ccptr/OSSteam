@@ -50,7 +50,6 @@ allow-wildcard-paths = true
 [advisories]
 yanked = "warn"
 # Unmaintained notices fail the check only for our direct dependencies.
-# Those deeper in gpui's tree are gpui's to replace when we bump the pin.
 unmaintained = "workspace"
 ignore = [
     # The Marvin timing attack on RSA decryption. ossteam-auth only
@@ -62,8 +61,3 @@ ignore = [
 [sources]
 unknown-registry = "deny"
 unknown-git = "deny"
-# gpui is a git dependency (pinned in Cargo.toml) and pulls its own forks.
-allow-git = ["https://github.com/gfx-rs/wgpu"]
-
-[sources.allow-org]
-github = ["zed-industries"]

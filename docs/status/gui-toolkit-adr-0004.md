@@ -1,6 +1,6 @@
 ---
 name: gui-toolkit-adr-0004
-description: ADR 0004 (own GUI toolkit ossteam-ui on winit + ash) and its SPEC changes accepted 2026-11-03; spike done but for the maintainer's checks; the toolkit (step 3) has its elements, layout, focus, keys, lists, images and runtime on the branch; next the port
+description: ADR 0004 (own GUI toolkit ossteam-ui on winit + ash) and its SPEC changes accepted 2026-11-03; spike done but for the maintainer's checks; toolkit (step 3) and the port (step 4) done on the branch ossteam-ui-port, gpui gone from the workspace; not merged or pushed
 metadata:
   type: project
 ---
@@ -113,4 +113,39 @@ the font thread) before the friends list is ported; the maintainer to
 decide.
 
 The text field gained a secret mode for the login page's password
-(bullets; Copy and Cut do nothing). Next: the port (step 4).
+(bullets; Copy and Cut do nothing).
+
+The port (step 4) was done on 2026-11-03 on the branch
+`ossteam-ui-port`, which is not merged or pushed. Every page is written
+anew against `ossteam-ui` (`gui.rs`, `widgets.rs`, `pages/`); the
+model, store, daemon connection and formatting are the same code, now
+plain structs whose results come back as messages. gpui, its patches
+and its git sources are gone from `Cargo.toml`, `deny.toml` and the
+lock file, and the GUI needs no Linux development packages to build.
+The toolkit gained on the way: Tab from a focused element that is not a
+tab stop goes on from it (it went back to the first stop),
+`Cx::focus_visible`, `Cx::refresh_interval`, and `CursorIcon` from
+`style`.
+
+Checked on the headless sway against the gui_states bench, by keyboard
+only: library grid and list, the App page (hero and logo, details,
+compatibility, install, launch and uninstall choosers, Play and Stop,
+last run), Downloads, Settings, the account menu and bob's email-code
+sign-in. No idle wakeups in 10 s. The 10k-app scroll meets §20 with
+both renderers (worst frame 2.1 ms Vulkan, 3.3 ms software; to the end
+of the present 2.7 and 10.2 ms); the first frame comes after 27 ms
+(Vulkan) and 13 ms (software). The bench now also prints the time to
+the end of the present; its budget is still on the work to the end of
+the page's paint, as `gui.md` §7 says. The daemon's GUI integration
+test passes; the toolkit's and GUI's tests pass under Wine, given a
+prefix with fonts, and the Windows build draws its no-daemon page
+there.
+
+Still the maintainer's: merging and pushing, the rows of m1e.md passed
+on gpui run again on `ossteam-ui` (live, on the test account), a pick
+through the real portal dialog, IME on X11, a light desktop, real
+Windows and macOS. SPEC.md still speaks of gpui where it says "until
+ADR 0004's port lands": the notes under CONC-3 and GUI-1 (which also
+names `src/widgets/`, now `src/widgets.rs`) and §23's toolchain row,
+whose 1.98.1 pin was for gpui. Those lines are the maintainer's to
+change once the port is merged. Open as before: the font fallback.

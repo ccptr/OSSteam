@@ -2,7 +2,8 @@
 
 An open-source Steam client written in Rust. A per-user daemon, `ossteamd`,
 owns the Steam session, the library and game processes. Two thin clients
-drive it: `ossteam` (CLI, clap) and `ossteam-gui` (GUI, gpui).
+drive it: `ossteam` (CLI, clap) and `ossteam-gui` (GUI, on our own toolkit
+`ossteam-ui`).
 
 The design, its rules and the milestones are in [SPEC.md](SPEC.md).
 Subsystem specs are under [docs/spec/](docs/spec/).
@@ -41,12 +42,12 @@ macOS there is no 32-bit build; the library is universal instead, which
 needs both `aarch64-apple-darwin` and `x86_64-apple-darwin` and Xcode's
 `lipo`.
 
-On Linux, gpui needs development packages for Wayland, X11 (xcb and
-xkbcommon), fontconfig, ALSA and Vulkan. CI installs these on Ubuntu:
+On Linux the build needs development packages for D-Bus (the daemon's
+keyring) and zstd. The GUI loads Wayland, X11, xkbcommon and Vulkan at
+run time, so it needs no development packages; on Ubuntu:
 
 ```sh
-sudo apt-get install libasound2-dev libfontconfig-dev libvulkan1 libwayland-dev \
-  libx11-xcb-dev libxkbcommon-x11-dev libzstd-dev
+sudo apt-get install libdbus-1-dev libzstd-dev pkg-config
 ```
 
 ## Checks
@@ -65,7 +66,7 @@ cargo deny check             # dependency licenses and sources (SPEC LIC-3)
 ossteam's source code is licensed under the GNU General Public License,
 version 2 or (at your option) any later version. See [COPYING](COPYING).
 
-Built binaries link gpui and other crates licensed under Apache-2.0, which
+Built binaries link crates licensed under Apache-2.0, which
 is compatible with GPLv3 but not with GPLv2. **Binaries are therefore
 conveyed under the terms of GPL-3.0-or-later**, while the source stays
 GPL-2.0-or-later (SPEC LIC-4).

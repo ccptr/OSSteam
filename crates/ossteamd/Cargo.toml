@@ -71,10 +71,9 @@ workspace = true
 # The fake CM in src/testing (FAITH-4).
 [dev-dependencies]
 ossteam-content = { workspace = true, features = ["testing"] }
-# The GUI's connection and store, run against the test daemon on gpui's
-# test platform (gui.md §7).
+# The GUI's connection, model and store, run against the test daemon
+# without a window (gui.md §7).
 ossteam-gui.workspace = true
-gpui = { workspace = true, features = ["test-support"] }
 base64.workspace = true
 png = "0.18.1"
 prost.workspace = true

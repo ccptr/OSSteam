@@ -49,6 +49,12 @@ pub trait App: Sized + 'static {
     /// Builds the window's contents from the state.
     fn view(&self, cx: &ViewCx) -> Element<Self>;
 
+    /// Called before each build of the view, after whatever changed the
+    /// state: the place to keep timers in step with it.
+    fn before_view(&mut self, cx: &mut Cx<Self>) {
+        let _ = cx;
+    }
+
     /// A message from another thread.
     fn message(&mut self, message: Self::Message, cx: &mut Cx<Self>) {
         let _ = (message, cx);
@@ -717,8 +723,15 @@ impl<A: App> Window<A> {
             if !self.shared.dirty {
                 break;
             }
-            self.shared.dirty = false;
             self.shared.repaint = true;
+            let before = self.shared.focus;
+            let mut cx = Cx {
+                shared: &mut self.shared,
+                tree: &self.tree,
+            };
+            self.state.before_view(&mut cx);
+            self.focus_changed(before);
+            self.shared.dirty = false;
             self.build();
             let focus = self.shared.focus;
             if focus.is_some_and(|h| self.tree.node_with_focus(h).is_none()) {

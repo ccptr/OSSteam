@@ -341,6 +341,67 @@ fn messages_and_timers_run_handlers_and_dropping_a_timer_cancels_it() {
     assert_eq!(w.next_deadline(), None);
 }
 
+#[test]
+fn before_view_keeps_timers_in_step_with_the_state() {
+    /// Holds a deadline its messages move; `before_view` keeps a timer
+    /// for it, as the GUI does for its model.
+    struct Due {
+        due: Option<Instant>,
+        timer: Option<(Instant, Timer)>,
+        fired: u32,
+        prepared: u32,
+    }
+    impl App for Due {
+        type Message = Option<Instant>;
+        fn view(&self, _: &ViewCx) -> Element<Self> {
+            panel()
+        }
+        fn message(&mut self, due: Option<Instant>, _: &mut Cx<Self>) {
+            self.due = due;
+        }
+        fn before_view(&mut self, cx: &mut Cx<Self>) {
+            self.prepared += 1;
+            if self.timer.as_ref().map(|(t, _)| *t) == self.due {
+                return;
+            }
+            self.timer = self.due.map(|t| {
+                let delay = t.saturating_duration_since(cx.now());
+                let timer = cx.after(delay, |s: &mut Self, _| {
+                    s.fired += 1;
+                    s.due = None;
+                });
+                (t, timer)
+            });
+        }
+    }
+    let mut w = window(
+        Due {
+            due: None,
+            timer: None,
+            fired: 0,
+            prepared: 0,
+        },
+        100,
+        100,
+        1.0,
+    );
+    assert_eq!(w.state.prepared, 1, "once before the first build");
+    let t0 = Instant::now();
+    w.advance(t0);
+    w.message(Some(t0 + Duration::from_millis(50)));
+    assert_eq!(w.next_deadline(), None, "not before the next build");
+    w.frame();
+    assert_eq!(w.next_deadline(), Some(t0 + Duration::from_millis(50)));
+    // Moved: the old timer goes with its handle.
+    w.message(Some(t0 + Duration::from_millis(80)));
+    w.frame();
+    assert_eq!(w.next_deadline(), Some(t0 + Duration::from_millis(80)));
+    w.advance(t0 + Duration::from_millis(100));
+    w.frame();
+    assert_eq!(w.state.fired, 1);
+    assert_eq!(w.next_deadline(), None);
+}
+
 struct Rows {
     scroll: ScrollHandle,
     built: RefCell<Vec<usize>>,

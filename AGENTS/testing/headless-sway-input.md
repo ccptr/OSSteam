@@ -49,4 +49,6 @@ tool makes a virtual one, which changes how input tests behave
   `wtype`'s Return and Escape. To test the call itself, start
   `python3 -I crates/ossteam-ui/examples/fake_portal.py PATH cancel &`
   on the private bus before the app: it owns the portal's name and
-  answers each request in turn.
+  answers each request in turn. It serves Settings too: `scheme=N` sets
+  `color-scheme` (default 1, dark), `change=N@MS` changes it with its
+  signal MS ms after it starts, and `settings-v1` drops `ReadOne`.

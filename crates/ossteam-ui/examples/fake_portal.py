@@ -1,10 +1,18 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: GPL-2.0-or-later
-"""A stand-in desktop portal FileChooser for a private session bus, for
-testing the folder picker without a dialog (AGENTS/testing/headless-sway-input.md).
+"""A stand-in desktop portal for a private session bus, for testing the
+folder picker without a dialog and the appearance without changing the
+desktop (AGENTS/testing/headless-sway-input.md).
 
-Each OpenFile call takes the next answer from argv: a path (picked, sent
-as a file:// URI) or "cancel". Answers come 300 ms after the call.
+FileChooser: each OpenFile call takes the next answer from argv: a path
+(picked, sent as a file:// URI) or "cancel". Answers come 300 ms after
+the call.
+
+Settings: `org.freedesktop.appearance color-scheme` is 1 (prefer dark)
+unless an argument `scheme=N` says otherwise; each `change=N@MS` argument
+sets it to N, with its SettingChanged signal, MS milliseconds after the
+portal starts. Version 1 of Settings, with Read but no ReadOne, if an
+argument is `settings-v1`.
 """
 import sys
 import urllib.parse
@@ -25,6 +33,24 @@ XML = """
     </method>
     <property name="version" type="u" access="read"/>
   </interface>
+  <interface name="org.freedesktop.portal.Settings">
+    <method name="Read">
+      <arg type="s" name="namespace" direction="in"/>
+      <arg type="s" name="key" direction="in"/>
+      <arg type="v" name="value" direction="out"/>
+    </method>
+    <method name="ReadOne">
+      <arg type="s" name="namespace" direction="in"/>
+      <arg type="s" name="key" direction="in"/>
+      <arg type="v" name="value" direction="out"/>
+    </method>
+    <signal name="SettingChanged">
+      <arg type="s" name="namespace"/>
+      <arg type="s" name="key"/>
+      <arg type="v" name="value"/>
+    </signal>
+    <property name="version" type="u" access="read"/>
+  </interface>
 </node>
 """
 REQUEST_XML = """
@@ -35,7 +61,20 @@ REQUEST_XML = """
 </node>
 """
 
-answers = list(sys.argv[1:])
+answers = []
+scheme = 1
+changes = []
+settings_v1 = False
+for arg in sys.argv[1:]:
+    if arg.startswith("scheme="):
+        scheme = int(arg[len("scheme="):])
+    elif arg.startswith("change="):
+        value, at = arg[len("change="):].split("@")
+        changes.append((int(value), int(at)))
+    elif arg == "settings-v1":
+        settings_v1 = True
+    else:
+        answers.append(arg)
 loop = GLib.MainLoop()
 
 
@@ -43,7 +82,47 @@ def log(*a):
     print("fake_portal:", *a, file=sys.stderr, flush=True)
 
 
+def on_settings(sender, method, params, invocation):
+    namespace, key = params[0], params[1]
+    if method == "ReadOne" and settings_v1:
+        invocation.return_dbus_error(
+            "org.freedesktop.DBus.Error.UnknownMethod", "no ReadOne in version 1"
+        )
+        return
+    if (namespace, key) != ("org.freedesktop.appearance", "color-scheme"):
+        invocation.return_dbus_error(
+            "org.freedesktop.portal.Error.NotFound", "no such setting"
+        )
+        return
+    log(method, namespace, key, "from", sender, "->", scheme)
+    value = GLib.Variant("u", scheme)
+    if method == "Read":
+        # Version 1 put the value in a second variant.
+        value = GLib.Variant("v", value)
+    invocation.return_value(GLib.Variant("(v)", (value,)))
+
+
+def change_scheme(conn, value):
+    global scheme
+    scheme = value
+    log("SettingChanged color-scheme ->", value)
+    conn.emit_signal(
+        None,
+        "/org/freedesktop/portal/desktop",
+        "org.freedesktop.portal.Settings",
+        "SettingChanged",
+        GLib.Variant(
+            "(ssv)",
+            ("org.freedesktop.appearance", "color-scheme", GLib.Variant("u", value)),
+        ),
+    )
+    return False
+
+
 def on_call(conn, sender, path, iface, method, params, invocation):
+    if iface == "org.freedesktop.portal.Settings":
+        on_settings(sender, method, params, invocation)
+        return
     title, options = params[1], params[2]
     token = options.get("handle_token", "t")
     handle = "/org/freedesktop/portal/desktop/request/%s/%s" % (
@@ -80,14 +159,18 @@ def on_call(conn, sender, path, iface, method, params, invocation):
 
 
 def on_get(conn, sender, path, iface, prop):
+    if iface == "org.freedesktop.portal.Settings":
+        return GLib.Variant("u", 1 if settings_v1 else 2)
     return GLib.Variant("u", 4)
 
 
 def on_bus(conn, name):
-    info = Gio.DBusNodeInfo.new_for_xml(XML).interfaces[0]
-    conn.register_object(
-        "/org/freedesktop/portal/desktop", info, on_call, on_get, None
-    )
+    for info in Gio.DBusNodeInfo.new_for_xml(XML).interfaces:
+        conn.register_object(
+            "/org/freedesktop/portal/desktop", info, on_call, on_get, None
+        )
+    for value, at in changes:
+        GLib.timeout_add(at, change_scheme, conn, value)
 
 
 Gio.bus_own_name(

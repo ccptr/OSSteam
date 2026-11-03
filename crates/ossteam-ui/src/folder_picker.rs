@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 //! The folder picker (ADR 0004): the desktop portal's file chooser
-//! through ashpd on Linux, on our own bus connection (`portal.rs`), and
-//! `rfd`'s dialogs on Windows and macOS.
+//! through our own D-Bus client on Linux (`portal.rs`), and `rfd`'s
+//! dialogs on Windows and macOS.
 //!
 //! [`pick_folder`] blocks until the user picks or cancels. Where it may
 //! run:
@@ -37,38 +37,21 @@ pub fn pick_folder(title: &str) -> Result<Option<PathBuf>, Error> {
 mod imp {
     use std::path::PathBuf;
 
-    use ashpd::desktop::ResponseError;
-    use ashpd::desktop::file_chooser::SelectedFiles;
-
     use super::Error;
 
     pub fn pick_folder(title: &str) -> Result<Option<PathBuf>, Error> {
-        let picked = async_io::block_on(async {
-            let bus = crate::portal::session_bus().await?;
-            SelectedFiles::open_file()
-                .title(title)
-                .directory(true)
-                .multiple(false)
-                .connection(Some(bus))
-                .send()
-                .await?
-                .response()
-        });
-        let files = match picked {
-            Ok(files) => files,
-            Err(ashpd::Error::Response(ResponseError::Cancelled)) => return Ok(None),
+        let picked = crate::dbus::Connection::session()
+            .and_then(|mut bus| crate::portal::pick_folder(&mut bus, title));
+        let uri = match picked {
+            Ok(Some(uri)) => uri,
+            Ok(None) => return Ok(None),
             Err(e) => return Err(Error(format!("the desktop portal's file chooser: {e}"))),
         };
-        let Some(uri) = files.uris().first() else {
-            return Ok(None);
-        };
-        crate::portal::file_uri_path(uri.as_str())
-            .map(Some)
-            .ok_or_else(|| {
-                Error(format!(
-                    "the file chooser answered {uri}, not a local folder"
-                ))
-            })
+        crate::portal::file_uri_path(&uri).map(Some).ok_or_else(|| {
+            Error(format!(
+                "the file chooser answered {uri}, not a local folder"
+            ))
+        })
     }
 }
 

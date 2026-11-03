@@ -253,6 +253,9 @@ Items:
    zbus connect, while ashpd's file chooser requests take a connection,
    so on Linux the toolkit calls the portal through ashpd with this
    connection (`portal.rs`); the maintainer agreed and the ADR says so.
+   (Later, on 2026-11-03, `ashpd` and zbus were replaced by our own
+   blocking D-Bus client, which has no thread pool: ADR 0004's
+   Amendments.)
 5. **Resizing with the software renderer: open.** After a resize the
    window gets new shared-memory buffers from softbuffer, and the first
    write to each costs page faults: copying a full 1600×1000 frame into

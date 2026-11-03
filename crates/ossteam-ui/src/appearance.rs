@@ -59,20 +59,13 @@ pub fn watch(changed: impl Fn(Appearance) + Send + 'static) {
         let spawned = std::thread::Builder::new()
             .name("appearance".into())
             .spawn(move || {
-                use ashpd::desktop::settings::Settings;
-                use futures_lite::StreamExt;
-                let watched = async_io::block_on(async {
-                    let bus = crate::portal::session_bus().await?;
-                    let settings = Settings::with_connection(bus).await?;
-                    let mut changes = settings.receive_color_scheme_changed().await?;
-                    while let Some(scheme) = changes.next().await {
+                let end = match crate::dbus::Connection::session() {
+                    Ok(mut bus) => crate::portal::watch_color_scheme(&mut bus, |scheme| {
                         changed(from_scheme(scheme));
-                    }
-                    Ok::<_, ashpd::Error>(())
-                });
-                if let Err(e) = watched {
-                    tracing::info!("not watching the appearance: {e}");
-                }
+                    }),
+                    Err(e) => e,
+                };
+                tracing::info!("not watching the appearance: {end}");
             });
         if let Err(e) = spawned {
             tracing::warn!("starting the appearance thread: {e}");
@@ -82,23 +75,19 @@ pub fn watch(changed: impl Fn(Appearance) + Send + 'static) {
     let _ = changed;
 }
 
+/// The portal's `color-scheme`: 1 is prefer dark; no preference (0) and
+/// prefer light (2) are light, as is anything newer.
 #[cfg(any(target_os = "linux", target_os = "freebsd"))]
-fn from_scheme(scheme: ashpd::desktop::settings::ColorScheme) -> Appearance {
-    use ashpd::desktop::settings::ColorScheme;
+fn from_scheme(scheme: u32) -> Appearance {
     match scheme {
-        ColorScheme::PreferDark => Appearance::Dark,
-        ColorScheme::PreferLight | ColorScheme::NoPreference => Appearance::Light,
+        1 => Appearance::Dark,
+        _ => Appearance::Light,
     }
 }
 
 /// `org.freedesktop.appearance color-scheme`; no preference is light.
 #[cfg(any(target_os = "linux", target_os = "freebsd"))]
 fn portal_appearance() -> Option<Appearance> {
-    use ashpd::desktop::settings::Settings;
-    let scheme = async_io::block_on(async {
-        let bus = crate::portal::session_bus().await?;
-        Settings::with_connection(bus).await?.color_scheme().await
-    })
-    .ok()?;
-    Some(from_scheme(scheme))
+    let mut bus = crate::dbus::Connection::session().ok()?;
+    crate::portal::color_scheme(&mut bus).ok().map(from_scheme)
 }

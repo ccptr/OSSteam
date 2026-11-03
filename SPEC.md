@@ -309,9 +309,10 @@ Adding an async runtime (tokio, async-std, smol) to the daemon requires an ADR
   the slice does not spend the §20 wakeup budget (ADR 0001).
 - **[CONC-3]** Async is accepted only in a dependency with no reasonable
   sync alternative, wrapped behind a synchronous facade so the async code
-  stays in one place (the desktop portal in the GUI, ADR 0004), and
-  nowhere else without an ADR. The GUI itself is synchronous: its event
-  loop waits for input, for messages from its IPC threads, and for timers.
+  stays in one place, and nowhere else without an ADR. No part of
+  ossteam uses it today. The GUI is synchronous: its event loop waits for
+  input, for messages from its IPC threads, and for timers, and it calls
+  the desktop portal through its own blocking D-Bus client (ADR 0004).
 - **[CONC-4]** Before async is considered anywhere else, the ADR must show a
   measured problem with the threaded design, such as thousands of concurrent
   waits or a missed latency budget from §20.

@@ -1,6 +1,6 @@
 ---
 name: gui-toolkit-adr-0004
-description: ADR 0004 (own GUI toolkit ossteam-ui on winit + ash) and its SPEC changes accepted 2026-11-03; spike done but for the maintainer's checks; toolkit (step 3) and the port (step 4) done on the branch ossteam-ui-port, the previous framework gone from the workspace; live checks on the test account passed 2026-11-03; not merged or pushed
+description: ADR 0004 (own GUI toolkit ossteam-ui on winit + ash) and its SPEC changes accepted 2026-11-03; spike done but for the maintainer's checks; toolkit (step 3) and the port (step 4) done on the branch ossteam-ui-port, the previous framework gone from the workspace; live checks on the test account passed 2026-11-03; the portal moved to our own D-Bus client (an ADR amendment) the same day; not merged or pushed
 metadata:
   type: project
 ---
@@ -183,6 +183,35 @@ IME on X11 works: on the headless sway's Xwayland, ibus's XIM front
 end composed "ue9" in the library search (drawn underlined at the
 cursor) and committed "é" (ibus's Ctrl-Shift-U entry, since no
 composing engine is installed here).
+
+Later on 2026-11-03 the maintainer asked why the dependency tree is so
+large (505 packages in the lock file, 328 crates on Linux, the GUI's
+204) and chose to replace `ashpd` with our own minimal D-Bus client. ADR
+0004 is amended (its Amendments section) and SPEC CONC-3 no longer names
+the portal as the GUI's async exception: nothing in ossteam is async
+now. The client is `ossteam-ui`'s `src/dbus/` with the portal's calls
+in `src/portal.rs`; `ashpd`, `async-io` and `futures-lite` are gone,
+and with them zbus. The GUI's dependencies on Linux went from 204 crates
+to 153, the workspace's from 328 to 284, and the lock file from 505 to
+469. Checked: unit tests against GLib's encoding of the same messages
+(both byte orders) and against a bus on a socket pair, also on 32-bit
+Linux; on the headless sway, with `fake_portal.py` (now with Settings)
+on a private dbus-daemon, the gallery came up dark and followed two
+change signals, with `ReadOne` and with version 1's `Read`, and its
+threads did not wake in 6 s idle; the spike picked a folder named with
+a space and "ä", and a cancel, with both renderers; xdg-desktop-portal
+with its GTK back end opened the dialog with our title, and killing it
+came back as response 2 (an error, as with `ashpd`); on the
+maintainer's session bus (dbus-broker) the gallery read `prefer-dark`
+from the real portal. FreeBSD, which the client compiles for, is not
+checked (no target here).
+
+Other findings from the same look at the tree, not acted on: `skrifa`,
+`read-fonts` and `font-types` are in twice because `swash` resolved to
+`skrifa` 0.44 while `cosmic-text` asks for 0.40 (a lock-file update
+merges them); `smithay-clipboard` 0.7.3 needs `smithay-client-toolkit`
+0.20 while winit 0.30 has 0.19 (0.7.2 would share it); `rsa` 0.9 keeps
+the older RustCrypto crates beside `sha1` 0.11's until `rsa` 0.10.
 
 Still the maintainer's: merging and pushing, real Windows
 and macOS. The rows of m1e.md not run live (Steam Guard codes, a second

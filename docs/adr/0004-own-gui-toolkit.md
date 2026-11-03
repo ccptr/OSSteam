@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| Status | Accepted (2026-11-03) |
+| Status | Accepted (2026-11-03); amended 2026-11-03 (see Amendments) |
 | Date | 2026-11-02 |
 | Requirements | GUI-1 to GUI-5, CONC-3, SYNC-1, SYNC-2, WS-1, LIC-4, §20 |
 | Code | `crates/ossteam-ui` (to be written), `crates/ossteam-gui` |
@@ -58,9 +58,9 @@ it does not wrap another GUI framework.
 | Layout | `taffy` (flexbox), behind our own element builder (`element.rs`, `style.rs`), not a copy of the previous framework's | builder ours |
 | Text | `cosmic-text` for shaping, font fallback, line breaking and hit-testing; `swash` rasterises glyphs into an `etagere`-packed atlas | atlas, text field and finding the fonts ours: the UI family's files first, the rest on the font thread for fallback (spike item 1) |
 | Clipboard | `smithay-clipboard` on Wayland, on winit's connection; `arboard` elsewhere | dependency |
-| Folder picker | on Linux the portal's file chooser through `ashpd`, on our own bus connection; `rfd`'s blocking API on Windows and macOS | Linux call ours, the rest a dependency |
+| Folder picker | on Linux the portal's file chooser (`portal.rs`) through our own D-Bus client (`dbus/`); `rfd`'s blocking API on Windows and macOS | Linux call and D-Bus client ours, the rest a dependency |
 | Opening URLs (GUI-3) | `open` | dependency |
-| Appearance | winit's theme where it reports one; on Linux the portal query in `theme.rs`, plus its change signal | ours |
+| Appearance | winit's theme where it reports one; on Linux the portal's setting and its change signal, through the same D-Bus client (`appearance.rs`, `portal.rs`) | ours |
 | Elements, focus, key bindings, scrolling, virtual lists, images, tests | — | ours |
 
 ### How it works
@@ -141,16 +141,18 @@ it does not wrap another GUI framework.
   known before it is shown where the platform allows; the spike
   measures what each platform allows.
 
-### Async that remains
+### No async
 
-Vulkan is synchronous, so the renderer has none. `ashpd`'s portal calls
-are futures; each is run to completion on the thread that asked, with
-`async_io::block_on` as `theme.rs` does today, the second case of
-CONC-3. Every portal call, the folder picker's included, uses a bus
-connection whose socket the toolkit connects itself: when zbus connects
-it, the `blocking` crate's thread pool starts and one of its threads
-wakes every 500 ms for the life of the process (against GUI-5). `rfd`,
-used off Linux, has no async in its blocking API.
+Vulkan is synchronous, so the renderer has none. On Linux the desktop
+portal goes through our own D-Bus client (`dbus/`): a blocking local
+socket, the `EXTERNAL` login, method calls, match rules and signals, and
+in `portal.rs` the portal's requests, whose answer comes as a signal on
+an object we name before the call. Each portal call blocks the thread
+that makes it (the startup appearance query, the appearance watcher, the
+folder picker's thread), and a thread waiting for the bus sleeps in
+`read` until a message comes, so it does not wake an idle process
+(GUI-5). `rfd`, used off Linux, has no async in its blocking API. The
+GUI therefore has no async at all, and CONC-3 names no exception for it.
 
 ### Steps
 
@@ -233,3 +235,26 @@ used off Linux, has no async in its blocking API.
 - `README.md` (build packages, licence note) and the agent notes that
   describe the previous framework's behaviour (`AGENTS/gui/`) change with
   the port, not before.
+
+## Amendments
+
+- **2026-11-03, the desktop portal through our own D-Bus client** (the
+  maintainer's decision). The ADR first took the portal from `ashpd`,
+  which brought zbus and its async-io runtime: 38 crates nothing else in
+  the GUI needs, for three calls (the colour scheme, its change signal,
+  the file chooser), and with them the GUI's only async, run with
+  `block_on` as CONC-3 then allowed. zbus also connected the bus on the
+  `blocking` crate's thread pool, whose last thread woke every 500 ms
+  (spike item 4), so the toolkit had to connect the socket itself.
+  Alternatives weighed: zbus without `ashpd` (6 crates fewer, the async
+  kept) and the `dbus` crate over libdbus (the most removed, but a C
+  library linked into the GUI and its headers needed to build it). Our
+  own client and the portal calls on it are about 1,200 lines, with 600
+  of tests; they add no crates (only `rustix`'s `process` feature, for
+  the user id the login sends) and no C library, and are synchronous. It took the GUI's dependencies on Linux
+  from 204 crates to 153, and the lock file from 505 packages to 469.
+  The cost is a protocol implementation of our own: only what the portal
+  needs (no file descriptors, no objects of our own beyond answering
+  `Ping`, local sockets only), tested against GLib's encoding of the
+  same messages, dbus-daemon and dbus-broker, `fake_portal.py` and
+  xdg-desktop-portal with its GTK back end.

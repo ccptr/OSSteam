@@ -61,6 +61,6 @@ These come from the maintainer. Don't trade them away for convenience.
 - [GUI focus](AGENTS/gui/focus.md) — named focus handles, shared ids, the page focus, reveal and page scrolling
 - [ossteam-ui runtime](AGENTS/gui/ossteam-ui-runtime.md) — pre_present_notify only before a present, clipboard dropped before winit's connection, scrolled layers are damage, font fallback maps every face it tries, the gallery example
 - [GUI lost keyboard focus](AGENTS/gui/lost-keyboard-focus.md) — seen once; check compositor focus first
-- [Portal wakeups](AGENTS/gui/portal-wakeups.md) — connect the session bus yourself, or zbus's thread pool wakes every 500 ms
+- [Portal over D-Bus](AGENTS/gui/portal-dbus.md) — our own blocking D-Bus client; match before the call; Settings v1; don't bring zbus back
 - [Steamworks ABI test](AGENTS/steamworks/abi-test.md) — what tests/abi.rs covers and the layout gotchas it found
 - [macOS discovery](AGENTS/steamworks/macos-discovery.md) — the ipctool Mach service and what is unverified

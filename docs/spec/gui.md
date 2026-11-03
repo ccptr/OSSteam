@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| Status | Draft for M1e. ossteam's own design; nothing here is observed from the official client. §2.1, §3, §4.2, §6 and §7 describe the GUI on `ossteam-ui` (ADR 0004, proposed); until its port lands the code is on gpui, as this page at 1726cde describes |
+| Status | Draft for M1e. ossteam's own design; nothing here is observed from the official client. §2.1, §3, §4.2, §6 and §7 describe the GUI on `ossteam-ui` (ADR 0004, accepted 2026-11-03); until its port lands the code is on gpui, as this page at 1726cde describes |
 | Requirements | SPEC §16 (GUI-1 to GUI-5), LEAF-1 to LEAF-3, CONC-3, D-2, §20 |
 | Code | `crates/ossteam-gui` |
 

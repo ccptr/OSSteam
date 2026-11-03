@@ -14,6 +14,6 @@ swash for text. The GUI's own widgets
 stay in `crates/ossteam-gui/src/widgets/`. Do not add a third-party GUI
 framework or widget kit (`gpui-component`, egui, iced and the like).
 
-ADR 0004 is proposed and its port has not started: `ossteam-gui` is
+ADR 0004 is accepted, but its port has not landed: `ossteam-gui` is
 still on gpui. Fix bugs there as before, but don't build new gpui-only
 machinery the port would have to redo.

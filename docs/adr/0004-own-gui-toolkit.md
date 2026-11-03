@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| Status | Proposed |
+| Status | Accepted (2026-11-03) |
 | Date | 2026-11-02 |
 | Requirements | GUI-1 to GUI-5, CONC-3, SYNC-1, SYNC-2, WS-1, LIC-4, §20 |
 | Code | `crates/ossteam-ui` (to be written), `crates/ossteam-gui` |
@@ -146,7 +146,8 @@ used off Linux, has no async in its blocking API.
 
 ### Steps
 
-1. **Review** of this ADR and the SPEC changes made with it.
+1. **Review** of this ADR and the SPEC changes made with it. (The
+   maintainer accepted both on 2026-11-03.)
 2. **Spike**: `crates/ossteam-ui/examples/spike.rs` reports what the
    gpui spike did (m0.md: first frame, scale and appearance at the first
    frame, clipboard), each for both renderers with the resident memory

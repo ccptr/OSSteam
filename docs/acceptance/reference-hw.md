@@ -4,9 +4,11 @@ SPEC §20 measures every budget "on reference hardware defined in
 `docs/acceptance/reference-hw.md`, with hardware GPU rendering". This page
 defines that hardware and how a measurement on it is taken.
 
-**Status: draft for review.** The machines below are proposals; none is
-chosen until the questions in §5 are answered, so no §20 row in the
-acceptance pages can be ticked yet.
+**Status: partly answered (2026-11-03).** The Steam Deck is the Linux
+reference, but it is not set up yet; until then the development machine
+(§4) stands in for it. No Windows or macOS reference machine is
+available yet. Q5 of §5 is open, so no §20 row in the acceptance pages
+can be ticked yet.
 
 ## 1. What a reference machine is for
 
@@ -80,7 +82,11 @@ the reference machine as follows, once it is chosen:
 
 ## 4. Machines on record
 
-None yet.
+**Linux x86_64, interim, from 2026-11-03:** the development machine
+below, until the Steam Deck is set up (§5 Q1). Its runs are recorded as
+interim results: they show regressions, but its CPU, GPU and display are
+far above the Deck's, so a budget met on it is run again on the Deck
+before it counts.
 
 The development machine, for comparison only. Its numbers in the
 acceptance pages are labelled as such and are not results: its GPU and
@@ -94,7 +100,7 @@ through a VPN.
 | GPU | AMD Radeon RX 7900 XT class (Navi 31), Vulkan |
 | Display | 2560 × 1440 at 165 Hz, scale factor 1.25 (1 in the 2026-10-18 runs) |
 | Storage | NVMe SSDs (WD_BLACK SN770, Samsung 990 EVO Plus) |
-| Network | gigabit Ethernet, all traffic through Mullvad VPN |
+| Network | gigabit Ethernet to an internet line of up to 970 Mbit/s (about 800 in practice, 2026-11-03), all traffic through Mullvad VPN |
 | OS | Arch Linux, kernel 7.2.9, Hyprland |
 
 ## 5. Questions for review
@@ -103,14 +109,27 @@ through a VPN.
    available? If not, which Linux machine, and should it be the Windows
    machine booted into Linux, so the two OSes are compared on the same
    hardware?
+
+   *Answer (2026-11-03):* the Steam Deck is acceptable, and the
+   maintainer has one, but it needs setting up for this. Until then the
+   development machine is the interim reference (§4).
 2. Which Windows machine is available? If none of the class in §2, is a
    faster one acceptable as an interim reference, recorded as such?
+
+   *Answer (2026-11-03):* Windows on the development machine, a dual
+   boot, closer to release.
 3. Is a MacBook Air (M1, 8 GB) available, or which Mac instead? macOS
    runs also need one for the M1e acceptance rows, so it is likely the
    same machine.
+
+   *Answer (2026-11-03):* no Mac is available yet.
 4. Download throughput: is there a wired gigabit line available without
    the VPN (`novpn`, or another network)? Through the VPN the line, not
    the client, sets the rate.
+
+   *Answer (2026-11-03):* wired Ethernet to a line of up to 970 Mbit/s,
+   about 800 in practice. Open: that is below the 1 Gbit/s §3 asks for,
+   and whether a run may bypass the VPN.
 5. Should a missed budget on a reference machine block M1 even when it
    is met everywhere else, as SPEC §21 M1e's exit says ("All §20 budgets
    are met"), or only be recorded until release?

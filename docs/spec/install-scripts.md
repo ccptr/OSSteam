@@ -170,6 +170,11 @@ service: every elevated step shows a UAC prompt (§4), so the user agrees
 to each one. A script without a `kvsignatures` block gets no
 `HKEY_LOCAL_MACHINE` writes, as in the official client.
 
+The maintainer accepted this for now on 2026-11-03, and will look into
+how the signature works later. Until then the question stays open: if
+the algorithm and key can be learned faithfully, ossteam checks the
+signature as well.
+
 ## 3. When scripts run
 
 | Event | What happens |

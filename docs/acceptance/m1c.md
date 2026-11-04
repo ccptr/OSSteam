@@ -59,7 +59,7 @@ date and the build.
 
 | Check | Linux x86_64 | Windows x86_64 |
 |---|---|---|
-| `info` lists the launch options; `launch --option` picks one; an option that does not qualify fails with exit code 1 | ⏳ | ⏳ |
+| `info` lists the launch options; `launch --option` picks one; an option that does not qualify fails with exit code 1 | ⏳ in part, 2026-11-04: 18010's macOS option 1 refused ("cannot be launched here") and an unknown option 9 refused, both exit 1; picking a qualifying option not yet run | ⏳ |
 | A native title without Steamworks runs; `running` lists it; `launch --wait` reports its exit code | ⏳ | ⏳ |
 | `stop` closes the game; a game that ignores the request is killed after the timeout | ⏳ | ⏳ |
 | A game that starts a child and exits (a launcher) stays running until the last process is gone | ⏳ | ⏳ |
@@ -76,7 +76,7 @@ date and the build.
 | With the official client's discovery entries in place, `launch` fails with exit code 8 and they are unchanged | ⏳ | ⏳ |
 | Logout and daemon exit remove ossteam's discovery entries; a crashed daemon's are removed at the next start | ⏳ | ⏳ |
 | A game started while the connection is down runs logged off, and its play session is reported after the reconnect | ⏳ | ⏳ |
-| `launch` refuses an app with an update pending unless `--allow-stale`, and an app with a job working on it | ⏳ | ⏳ |
+| `launch` refuses an app with an update pending unless `--allow-stale`, and an app with a job working on it | ⏳ in part, 2026-11-04: Portal: First Slice (410) with a pending update (a Proton choice, `content.auto_update` never) and 18030 with a verify running were both refused with exit 8; `--allow-stale` not yet run | ⏳ |
 | §20: shim callback-pump overhead ≤ 5 µs per `RunCallbacks` with nothing pending | ⏳ | ⏳ |
 
 The §20 check runs `cargo test --release -p ossteam-steamclient --test

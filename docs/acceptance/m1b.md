@@ -45,7 +45,7 @@ and the build.
 | `jobs pause`, `resume`, `cancel`, `priority` | ✅ 2026-11-04: pause held 219 at 155.7 MiB, resume went on; priority 5 on a queued job kept it queued behind the running one (`ipc.md` §5.6); cancel of 22150's first install at 3 % emptied staging and left it not installed, with the 349 files already in place left in `apps/` | ⏳ |
 | `content.bandwidth_limit` holds the rate within 10 % | ✅ 2026-11-04, 18030: 2,031 KiB/s at a limit of 2,048 (40 s) and 3,954 at 4,096 (20 s), once each read was charged what it returned; before that, 490 to 690 KiB/s at 2,048 | ⏳ |
 | `content.concurrent_jobs` 2 runs two installs at once | ✅ 2026-11-04: set while 219 ran, 18010 started at once | ⏳ |
-| A beta branch without a password installs | ⏳ | ⏳ |
+| A beta branch without a password installs | ✅ 2026-11-04, Spacewar (480) `previous` (build 316058): depot 481 at that branch's manifest; the shared depot 229006 skipped, since app 228980 has no `previous` branch (`content.md` §6 rule 7, unverified against the official client); reinstalled from `public` after | ⏳ |
 | Install scripts run (CONT-8) | n/a | ⏳ |
 | §20: download saturates 1 Gbit/s on reference hardware with default settings | ⏳ | ⏳ |
 

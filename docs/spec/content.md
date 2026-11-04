@@ -429,7 +429,11 @@ ones, depot by depot:
 - Files and directories that the new manifest no longer lists are
   deleted after every new file is in place, except user configuration
   files (either flag). A directory is deleted only once it is empty, so
-  files the user put there keep it.
+  files the user put there keep it. Manifests need not list the
+  directories that hold their files (Counter-Strike 2's list none), so
+  each deleted path's parents up to the install directory are deleted
+  the same way, once empty, unless a new manifest lists them.
+  *Unverified* against the official client.
 - A depot that is no longer chosen (§6) has its files deleted the same
   way; a newly chosen depot is installed in full.
 

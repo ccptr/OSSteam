@@ -482,6 +482,45 @@ fn removed_depots_are_deleted() {
     assert_eq!(out.files_deleted, 4);
 }
 
+#[test]
+fn directories_the_manifest_does_not_list_go_once_empty() {
+    // As Counter-Strike 2's depots: files only, no directory entries.
+    let cdn = Arc::new(FakeCdn::new());
+    let file = |name| Entry::File {
+        name,
+        data: b"x",
+        flags: 0,
+    };
+    let v1 = Depot::build(
+        DEPOT,
+        ManifestId(1),
+        key(),
+        &[
+            file("keep\\a"),
+            file("gone\\deep\\b"),
+            file("gone\\c"),
+            file("mixed\\d"),
+        ],
+    );
+    let v2 = Depot::build(DEPOT, ManifestId(2), key(), &[file("keep\\a")]);
+    cdn.publish(&v1, 77);
+    cdn.publish(&v2, 77);
+    let l = lib("unlisted-dirs");
+    let m1 = fetch_manifest(&cdn, &v1);
+    let m2 = fetch_manifest(&cdn, &v2);
+    run(&job(&l, Mode::Install, m1.clone(), None), &cdn, None).unwrap();
+    std::fs::write(l.install.join("mixed/mine"), b"the user's").unwrap();
+    let out = run(&job(&l, Mode::Install, m2, Some(m1)), &cdn, None).unwrap();
+    assert_eq!(out.files_deleted, 3);
+    assert!(!l.install.join("gone").exists());
+    assert!(
+        l.install.join("mixed/mine").exists(),
+        "the user's file keeps it"
+    );
+    assert!(!l.install.join("mixed/d").exists());
+    assert_eq!(read(&l.install.join("keep/a")), b"x");
+}
+
 #[cfg(unix)]
 #[test]
 fn links_are_made_and_never_followed() {

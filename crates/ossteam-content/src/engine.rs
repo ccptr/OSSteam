@@ -697,6 +697,16 @@ pub fn prepare<'j>(
                 if listed.contains(&path) || is_user_config(f) || !ancestors_safe(root, &parts) {
                     continue;
                 }
+                // Manifests need not list the directories that hold their
+                // files (Counter-Strike 2's do not), so the parents up to
+                // the install directory are deleted too once empty, unless
+                // a new manifest lists them.
+                for n in 1..parts.len() {
+                    let parent = join(root, &parts[..n]);
+                    if !listed.contains(&parent) {
+                        p.delete_dirs.push(parent);
+                    }
+                }
                 if f.is_dir() {
                     p.delete_dirs.push(path);
                 } else {
@@ -705,8 +715,12 @@ pub fn prepare<'j>(
             }
         }
         // Deepest first, so a directory is emptied before it is removed.
-        p.delete_dirs
-            .sort_by_key(|d| std::cmp::Reverse(d.components().count()));
+        p.delete_dirs.sort_by(|a, b| {
+            b.components()
+                .count()
+                .cmp(&a.components().count())
+                .then(a.cmp(b))
+        });
         p.delete_dirs.dedup();
     }
 

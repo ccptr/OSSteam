@@ -222,7 +222,21 @@ fn launches_are_refused_as_launch_md_says() {
         let valve = root.path().join("Steam").join("linux64");
         std::fs::create_dir_all(&valve).unwrap();
         std::fs::create_dir_all(&steam).unwrap();
+        // GetStatus says why (steamworks-abi.md §1.1.6), before and after
+        // the official client's entries appear.
+        let isolation = |c: &Client| {
+            c.get_status()
+                .expect("status")
+                .game_isolation
+                .expect("game_isolation on Linux")
+        };
+        let before = isolation(&c);
+        assert!(!before.available);
+        assert!(before.reason.contains("turned off"), "{}", before.reason);
+        assert!(!before.launches_blocked);
+        assert!(!before.holds_official_entries);
         std::os::unix::fs::symlink(&valve, steam.join("sdk64")).unwrap();
+        assert!(isolation(&c).launches_blocked);
         assert_eq!(code(launch(&c, Some(0), &[])), ErrorCode::Conflict);
         assert_eq!(std::fs::read_link(steam.join("sdk64")).unwrap(), valve);
         assert!(!exists(&steam.join("sdk32")));
@@ -340,6 +354,14 @@ fn games_get_a_private_steam() {
     let d = TestDaemon::start_with_cdn(&root, &cm, POLL, cdn.clone());
     login(&d);
     let c = d.subscribed(&[Topic::Jobs, Topic::Games]);
+    let status = c.get_status().expect("status");
+    assert_eq!(
+        status.game_isolation,
+        Some(v1::GameIsolation {
+            available: true,
+            ..Default::default()
+        })
+    );
     let dir = install(&c);
     let steam_arg = steam.to_str().unwrap();
     launch(&c, None, &["steam", steam_arg, official.to_str().unwrap()]).expect("launched");

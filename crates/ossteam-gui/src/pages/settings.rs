@@ -16,7 +16,7 @@ use ossteam_ui::window::{Cx, ViewCx};
 use crate::format;
 use crate::gui::Gui;
 use crate::model::Model;
-use crate::store::Read;
+use crate::store::{self, Read};
 use crate::theme::Palette;
 use crate::widgets::{
     self, El, SMALL, button, choice, error_text, group, muted, row, scrolling_page, section,
@@ -462,6 +462,22 @@ fn daemon(g: &Gui, m: &Model, others: &[&v1::Setting], p: Palette, cx: &ViewCx) 
         })
 }
 
+/// Whether launched games get a private `~/.steam` (`gui.md` §4.5).
+fn discovery(g: &v1::GameIsolation, p: Palette) -> El {
+    let isolated = if g.available { "Yes" } else { "No" };
+    let held = if g.holds_official_entries {
+        "Held by ossteam"
+    } else {
+        "Not held by ossteam"
+    };
+    group(p)
+        .child(row(p, "Private ~/.steam", isolated))
+        .when_some(store::isolation_warning(g), |d, w| {
+            d.child(text(w).font_size(widgets::TEXT).text_color(p.warning))
+        })
+        .child(row(p, "Official entries", held))
+}
+
 /// A label for the settings this page names.
 fn label(key: &str) -> Option<&'static str> {
     Some(match key {
@@ -519,6 +535,9 @@ pub fn view(g: &Gui, m: &Model, p: Palette, cx: &ViewCx) -> El {
         .child(section(p, "Library folders", folders(g, m, p)))
         .child(section(p, "Downloads", downloads))
         .when(linux, |d| d.child(section(p, "Compatibility", compat)))
+        .when_some(m.store.status.game_isolation.as_ref(), |d, i| {
+            d.child(section(p, "Discovery", discovery(i, p)))
+        })
         .when_some(account(g, m, p), |d, a| d.child(section(p, "Account", a)))
         .child(section(p, "Daemon", daemon(g, m, &others, p, cx)));
     scrolling_page(&g.settings.scroll)

@@ -745,6 +745,7 @@ impl Core {
             logged_on: s.logged_on,
             session_reason: s.reason.clone(),
             persona_state: self.persona_state() as i32,
+            game_isolation: self.game_isolation(),
         }
     }
 

@@ -24,6 +24,31 @@ pub enum Read {
     Folders,
     /// `GetApp` and `GetLaunchOptions` for an open App page.
     App(u32),
+    /// `GetStatus`, for its `game_isolation` only (§3).
+    Isolation,
+}
+
+/// The ways out when launches fail for want of a private `~/.steam`
+/// (`steamworks-abi.md` §1.1.4).
+const WAYS_OUT: &str = "Allow unprivileged user namespaces (or install ossteamd's AppArmor \
+     profile), or quit the official Steam client and remove its ~/.steam/sdk32, sdk64 and \
+     steam.pid, which it recreates when it starts.";
+
+/// What the GUI says when launched games get no private `~/.steam`
+/// (`gui.md` §2.4): `None` while they get one.
+pub fn isolation_warning(g: &v1::GameIsolation) -> Option<String> {
+    if g.available {
+        return None;
+    }
+    let mut text = format!(
+        "Games are not isolated from the real ~/.steam: games get no private ~/.steam ({}).",
+        g.reason
+    );
+    if g.launches_blocked {
+        text.push_str(" While the official Steam client owns ~/.steam, games cannot be launched. ");
+        text.push_str(WAYS_OUT);
+    }
+    Some(text)
 }
 
 /// The `ListApps` parameters of the Library page.
@@ -131,7 +156,7 @@ pub struct Store {
 
 impl Store {
     pub fn new(i: Initial) -> Self {
-        Self {
+        let mut s = Self {
             status: i.status,
             version: i.version,
             accounts: i.accounts,
@@ -155,7 +180,12 @@ impl Store {
             login_required: false,
             notices: Vec::new(),
             next_notice: 0,
+        };
+        // Once per connection (§2.4).
+        if let Some(text) = s.status.game_isolation.as_ref().and_then(isolation_warning) {
+            s.push_notice(NoticeLevel::Warning, text);
         }
+        s
     }
 
     pub fn account(&self) -> Option<&v1::Account> {
@@ -270,7 +300,13 @@ impl Store {
             event::Kind::Notice(n) => {
                 let level = NoticeLevel::try_from(n.level).unwrap_or(NoticeLevel::Info);
                 self.push_notice(level, n.text);
-                Vec::new()
+                // The daemon warns when the private `~/.steam` changes
+                // (`steamworks-abi.md` §1.1.6).
+                if level == NoticeLevel::Warning && self.status.game_isolation.is_some() {
+                    vec![Read::Isolation]
+                } else {
+                    Vec::new()
+                }
             }
             // The connection thread ends the connection on this one.
             event::Kind::DaemonStopping(_) => Vec::new(),
@@ -333,6 +369,12 @@ impl Store {
     /// (§3); the reply only adds a job no event has announced yet.
     pub fn add_job(&mut self, job: v1::Job) {
         self.jobs.entry(job.job_id).or_insert(job);
+    }
+
+    /// Takes only `game_isolation` from a `GetStatus` reply: the session's
+    /// fields follow `SessionChanged`, which may be newer.
+    pub fn set_isolation(&mut self, g: Option<v1::GameIsolation>) {
+        self.status.game_isolation = g;
     }
 
     pub fn set_folders(&mut self, folders: Vec<v1::LibraryFolder>) {
@@ -459,11 +501,16 @@ mod tests {
     }
 
     fn store() -> Store {
+        store_with(None)
+    }
+
+    fn store_with(game_isolation: Option<v1::GameIsolation>) -> Store {
         Store::new(Initial {
             status: v1::GetStatusResponse {
                 connection: ConnectionState::Connected as i32,
                 account: Some(account(1)),
                 logged_on: true,
+                game_isolation,
                 ..Default::default()
             },
             version: Default::default(),
@@ -491,6 +538,40 @@ mod tests {
             logged_on,
             ..Default::default()
         })
+    }
+
+    #[test]
+    fn no_private_steam_is_a_warning_on_connecting() {
+        let available = v1::GameIsolation {
+            available: true,
+            ..Default::default()
+        };
+        assert!(store_with(Some(available)).notices.is_empty());
+        assert!(store_with(None).notices.is_empty());
+
+        let blocked = v1::GameIsolation {
+            reason: "unshare failed".into(),
+            launches_blocked: true,
+            ..Default::default()
+        };
+        let mut s = store_with(Some(blocked));
+        assert_eq!(s.notices.len(), 1);
+        let n = &s.notices[0];
+        assert_eq!(n.level, NoticeLevel::Warning);
+        assert!(n.text.contains("(unshare failed)"), "{}", n.text);
+        assert!(n.text.contains("cannot be launched"), "{}", n.text);
+
+        // A warning from the daemon reads it again; an info does not.
+        let notice = |level: NoticeLevel| {
+            event::Kind::Notice(v1::Notice {
+                level: level as i32,
+                text: "x".into(),
+            })
+        };
+        assert_eq!(s.apply(notice(NoticeLevel::Warning)), [Read::Isolation]);
+        assert!(s.apply(notice(NoticeLevel::Info)).is_empty());
+        s.set_isolation(Some(v1::GameIsolation::default()));
+        assert!(!s.status.game_isolation.as_ref().unwrap().launches_blocked);
     }
 
     #[test]

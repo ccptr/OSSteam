@@ -29,6 +29,7 @@ pub fn launch(
         Some(o) => Some(o),
         None => choose(cli, &client, id)?,
     };
+    warn_isolation(&client)?;
     if wait {
         client.subscribe(&[Topic::Games, Topic::Daemon])?;
     }
@@ -55,6 +56,28 @@ pub fn launch(
         } else if !cli.quiet {
             print_exit(&exited, report.as_ref());
         }
+    }
+    Ok(())
+}
+
+/// The warnings `launch` prints on standard error, whatever the outcome
+/// and whatever `--json` and `--quiet` say (`steamworks-abi.md` §1.1.6).
+fn warn_isolation(client: &Client) -> Result<(), Failure> {
+    let Some(g) = client.get_status()?.game_isolation else {
+        return Ok(());
+    };
+    if g.available {
+        return Ok(());
+    }
+    eprintln!(
+        "warning: games get no private ~/.steam ({}); see `ossteam status`",
+        g.reason
+    );
+    if g.holds_official_entries {
+        eprintln!(
+            "warning: ossteam holds the official Steam client's ~/.steam entries; if that \
+             client starts, what this game starts next finds it and its account"
+        );
     }
     Ok(())
 }

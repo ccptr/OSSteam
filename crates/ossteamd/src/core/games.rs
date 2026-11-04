@@ -209,13 +209,10 @@ impl Core {
                 if !why.is_empty() {
                     reason = format!("{reason}, likely because {}", why.join(", and "));
                 }
+                self.games.isolation = Isolation::Unavailable(reason.clone());
                 // Launches fail because of it while an official client owns
                 // the real entries.
-                let fails = matches!(
-                    self.games.entries.check(),
-                    Err(discovery::Error::Conflict(_))
-                );
-                let consequence = if fails {
+                let consequence = if self.launches_blocked() {
                     "; while an official Steam client owns ~/.steam, games cannot be launched"
                 } else {
                     ""
@@ -227,6 +224,34 @@ impl Core {
                 Isolation::Unavailable(reason)
             }
         };
+    }
+
+    /// `GetStatus.game_isolation` (`steamworks-abi.md` §1.1.6): unset off
+    /// Linux.
+    pub(super) fn game_isolation(&self) -> Option<v1::GameIsolation> {
+        match &self.games.isolation {
+            Isolation::NotApplicable => None,
+            Isolation::Available => Some(v1::GameIsolation {
+                available: true,
+                ..Default::default()
+            }),
+            Isolation::Unavailable(reason) => Some(v1::GameIsolation {
+                available: false,
+                reason: reason.clone(),
+                launches_blocked: self.launches_blocked(),
+                holds_official_entries: false,
+            }),
+        }
+    }
+
+    /// Whether launches fail for want of a private `~/.steam`: the real
+    /// entries belong to an official client (§1.1.4).
+    fn launches_blocked(&self) -> bool {
+        !self.games.isolation.available()
+            && matches!(
+                self.games.entries.check(),
+                Err(discovery::Error::Conflict(_))
+            )
     }
 
     /// A launch's private `~/.steam` failed although the check at start

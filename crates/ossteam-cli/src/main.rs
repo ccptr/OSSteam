@@ -593,6 +593,12 @@ fn print_status(cli: &Cli, s: &v1::GetStatusResponse) {
                 "persona_state": s.account.as_ref().map(|_| session::persona_name(s.persona_state)),
                 "active_jobs": s.active_jobs,
                 "running_games": s.running_games,
+                "game_isolation": s.game_isolation.as_ref().map(|g| json!({
+                    "available": g.available,
+                    "reason": (!g.available).then_some(&g.reason),
+                    "launches_blocked": g.launches_blocked,
+                    "holds_official_entries": g.holds_official_entries,
+                })),
             })
         );
         return;
@@ -637,6 +643,40 @@ fn print_status(cli: &Cli, s: &v1::GetStatusResponse) {
     }
     let _ = writeln!(out, "jobs        {}", s.active_jobs);
     let _ = writeln!(out, "games       {}", s.running_games);
+    if let Some(g) = &s.game_isolation {
+        for line in isolation_lines(g) {
+            let _ = writeln!(out, "games       {line}");
+        }
+    }
+}
+
+/// What `status` says about the private `~/.steam` (`steamworks-abi.md`
+/// §1.1.6): nothing while games get one.
+fn isolation_lines(g: &v1::GameIsolation) -> Vec<String> {
+    let mut lines = Vec::new();
+    if !g.available {
+        lines.push(format!(
+            "not isolated from the real ~/.steam: games get no private ~/.steam ({})",
+            g.reason
+        ));
+    }
+    if g.launches_blocked {
+        lines.push(
+            "cannot be launched while an official Steam client owns ~/.steam; allow \
+             unprivileged user namespaces (or install ossteamd's AppArmor profile), or quit \
+             the official client and remove its ~/.steam/sdk32, sdk64 and steam.pid, which \
+             it recreates when it starts"
+                .into(),
+        );
+    }
+    if g.holds_official_entries {
+        lines.push(
+            "ossteam holds the official Steam client's ~/.steam entries \
+             (discovery.take_over_official)"
+                .into(),
+        );
+    }
+    lines
 }
 
 fn format_uptime(secs: u64) -> String {
@@ -656,6 +696,26 @@ mod tests {
     #[test]
     fn cli_definition_is_valid() {
         Cli::command().debug_assert();
+    }
+
+    #[test]
+    fn isolation_lines_say_why_and_what_follows() {
+        let ok = v1::GameIsolation {
+            available: true,
+            ..Default::default()
+        };
+        assert!(isolation_lines(&ok).is_empty());
+        let mut off = v1::GameIsolation {
+            reason: "unshare failed".into(),
+            ..Default::default()
+        };
+        let lines = isolation_lines(&off);
+        assert_eq!(lines.len(), 1);
+        assert!(lines[0].contains("(unshare failed)"));
+        off.launches_blocked = true;
+        let lines = isolation_lines(&off);
+        assert_eq!(lines.len(), 2);
+        assert!(lines[1].contains("cannot be launched"));
     }
 
     #[test]

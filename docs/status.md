@@ -35,7 +35,7 @@ When one is confirmed, write it into the spec and delete the note.
 - [M1a: Session and library](status/m1a-session-library.md) — idle wakeups fixed; live runs left
 - [M1b: Content](status/m1b-content.md) — committed; real Windows and live runs left
 - [M1c: Play (native)](status/m1c-play.md) — shim, stats, storage, tickets committed; script steps and live runs left
-- [Discovery entries](status/discovery-entries-official-steam.md) — official Steam owns `~/.steam/sdk64`; a private `~/.steam` per launch (DISC-4 to DISC-6) accepted 2026-11-03; DISC-4 built and run live 2026-11-03 (scout, legacy scout, Proton, CS2 in sniper); the Game Coordinator is in no spec; DISC-5 and most of DISC-6 to build
+- [Discovery entries](status/discovery-entries-official-steam.md) — official Steam owns `~/.steam/sdk64`; a private `~/.steam` per launch (DISC-4 to DISC-6) accepted 2026-11-03; DISC-4 built and run live 2026-11-03 (scout, legacy scout, Proton, CS2 in sniper); the Game Coordinator is in no spec; DISC-6 built 2026-11-04; DISC-5 to build
 - [M1d: Compat tools](status/m1d-compat-tools.md) — committed; prefix scripts and real Proton runs left
 - [M1e: GUI and macOS](status/m1e-gui-macos.md) — committed; logged-in checks, macOS runs and §20 rows left
 - [M2: Steam DRM](status/m2-drm.md) — drm.md drafted, not reviewed

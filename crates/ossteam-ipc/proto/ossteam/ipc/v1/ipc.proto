@@ -188,6 +188,24 @@ message GetStatusResponse {
   string session_reason = 10;
   // The active account's chosen persona state; unspecified without one.
   PersonaState persona_state = 11;
+  // Linux: whether launched games get a private ~/.steam
+  // (steamworks-abi.md §1.1.6). Unset off Linux.
+  GameIsolation game_isolation = 12;
+}
+
+message GameIsolation {
+  // Whether a private ~/.steam can be made for launched games (§1.1.2).
+  bool available = 1;
+  // Why not, when it cannot: the failed step, its error, and what the
+  // daemon could read about why.
+  string reason = 2;
+  // Whether launches fail because of it: not available, the real
+  // entries belong to an official client, and the daemon does not hold
+  // them under discovery.take_over_official (§1.1.5).
+  bool launches_blocked = 3;
+  // Whether the daemon holds an official client's real entries under
+  // discovery.take_over_official (§1.1.5).
+  bool holds_official_entries = 4;
 }
 
 message GetVersionRequest {}

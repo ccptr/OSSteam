@@ -1,6 +1,6 @@
 ---
 name: discovery-entries-official-steam
-description: An official Steam install owns ~/.steam/sdk64 on the dev machine, so launches failed with exit 8; a private ~/.steam per launch (DISC-4 to DISC-6) accepted 2026-11-03; DISC-4 built and run live 2026-11-03 (Portal: First Slice in the Steam Linux Runtime and on the host, Spacewar under Proton; Counter-Strike 2 in sniper, offline: no Game Coordinator); DISC-5 and most of DISC-6 to build
+description: An official Steam install owns ~/.steam/sdk64 on the dev machine, so launches failed with exit 8; a private ~/.steam per launch (DISC-4 to DISC-6) accepted 2026-11-03; DISC-4 built and run live 2026-11-03 (Portal: First Slice in the Steam Linux Runtime and on the host, Spacewar under Proton; Counter-Strike 2 in sniper, offline: no Game Coordinator); DISC-6 built 2026-11-04 but for the take-over's parts; DISC-5 to build
 metadata:
   type: project
 ---
@@ -59,11 +59,21 @@ the system allows it (`isolation::linux` tests and
 `m1c::games_get_a_private_steam`). The test daemon can turn it off
 (`Root::refuse_private_steam`).
 
+**Built on 2026-11-04 (DISC-6, but for the take-over's parts):**
+`GetStatus.game_isolation` (field 12), the `games` lines of
+`ossteam status` and its `--json`, the `launch` warning on standard
+error, the GUI's notice on connecting and the Settings page's Discovery
+section (the GUI reads `game_isolation` again after a warning `Notice`,
+gui.md §3). Checked against the bench with
+`OSSTEAM_BENCH_NO_PRIVATE_STEAM` (CLI and GUI). `holds_official_entries`
+is always false until DISC-5.
+
 **How to apply:** still to build:
 
-- DISC-6: `GetStatus.game_isolation`, the `ossteam status` and `launch`
-  lines, the GUI notice and Settings.
-- DISC-5: the take-over. The `CONFLICT` message leaves out
+- DISC-5: the take-over, with DISC-6's parts for it (the start and
+  setting warnings, the second `launch` line, the Settings switch with
+  its confirmation, the `config set` text, and the ways out naming the
+  setting in the CLI's and GUI's texts). The `CONFLICT` message leaves out
   `discovery.take_over_official` as a way out until the setting exists.
   The take-over's record is `<config>/official-entries.toml`
   (maintainer, 2026-11-03: in the configuration directory, not in

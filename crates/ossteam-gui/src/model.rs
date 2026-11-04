@@ -224,6 +224,11 @@ impl Model {
                 |c| c.list_library_folders(),
                 |m, r| m.store.set_folders(r),
             ),
+            Read::Isolation => self.finish(
+                read,
+                |c| c.get_status(),
+                |m, r| m.store.set_isolation(r.game_isolation),
+            ),
             Read::App(id) => self.finish(
                 read,
                 move |c| Ok((c.get_app(id), c.get_launch_options(id))),

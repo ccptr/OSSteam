@@ -226,6 +226,19 @@ fn gui_bench_states() {
     let big = data(4, BIG_SIZE);
     let game = game(&root);
     let cm = steam(&cdn, &big, &game);
+    // Games get no private ~/.steam, and an official client owns the real
+    // one, so the GUI warns (`steamworks-abi.md` §1.1.6).
+    let no_private_steam =
+        cfg!(target_os = "linux") && std::env::var_os("OSSTEAM_BENCH_NO_PRIVATE_STEAM").is_some();
+    if no_private_steam {
+        root.refuse_private_steam();
+        let steam = root.path().join("home/.steam");
+        let official = root.path().join("home/.local/share/Steam/linux64");
+        std::fs::create_dir_all(&official).expect("official client");
+        std::fs::create_dir_all(&steam).expect("~/.steam");
+        #[cfg(unix)]
+        std::os::unix::fs::symlink(&official, steam.join("sdk64")).expect("official sdk64");
+    }
     let d = TestDaemon::start_with_cdn(&root, &cm, POLL, cdn.clone());
     login(&d);
     let c = d.subscribed(&[Topic::Jobs]);
@@ -274,6 +287,9 @@ fn gui_bench_states() {
     println!("  bob (an email code, BOB12), dave (a confirmation, approved after 10 s),");
     println!("  erin (an authenticator code, ERIN5); a QR code signs in carol after 10 s.");
     println!("Launched with -report, a game sends a shim report and exits.");
+    if !no_private_steam && cfg!(target_os = "linux") {
+        println!("Set OSSTEAM_BENCH_NO_PRIVATE_STEAM for games without a private ~/.steam.");
+    }
     println!(
         "touch {} to publish an update to Sleeper.",
         trigger.display()

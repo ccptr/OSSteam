@@ -19,6 +19,9 @@ has no lib target):
   - The bench game takes `-report` to run the shim checks.
   - Bench apps have no install directory, so Install fails there.
   - Bench jobs finish fast, so pause one with `ossteam jobs pause N`.
+  - With `OSSTEAM_BENCH_NO_PRIVATE_STEAM` set (Linux), games get no
+    private `~/.steam` and an official client owns the bench's
+    `~/.steam`, so status, `launch` and the GUI warn (DISC-6).
 
 The bench daemon's RSS means nothing, because the fake CM runs in the
 same process.

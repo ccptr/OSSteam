@@ -10,7 +10,6 @@ rules and [agent-notes](../AGENTS/rules/agent-notes.md) for the note format.
 
 Almost all remaining work needs one of these.
 
-- [CI fix waits on a push](status/waiting-push-macos-peer-pid.md) — macOS CI is red on origin/main in the `Hello.pid` check; the `LOCAL_PEERPID` fix waits on a push
 - [install-scripts.md §2.6](status/install-scripts-2-6.md) — accepted for now 2026-11-03; how `kvsignatures` work stays half open, for the maintainer
 - [Own GUI toolkit](status/gui-toolkit-adr-0004.md) — ADR 0004 and its SPEC changes accepted 2026-11-03; spike done but for the maintainer's checks; toolkit (step 3) and the port (step 4) done, the previous framework removed, live checks passed 2026-11-03; the portal through our own D-Bus client (ADR amended); `main` since 2026-11-03 (the old `main` is the branch `gpui`), pushed; open: font fallback can map every font (a decision for the maintainer)
 - [reference-hw.md §5](status/reference-hw-questions.md) — answered 2026-11-03: budgets judged on the dev PC (interim) until the Steam Deck is set up; download runs bypass the VPN and count against a speed test of the line

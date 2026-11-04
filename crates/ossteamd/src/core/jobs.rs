@@ -12,7 +12,7 @@ use ossteam_ipc::RemoteError;
 use ossteam_ipc::v1::{self, ErrorCode, Topic, event, response};
 use ossteam_pics::cache::Kind as CacheKind;
 use ossteam_pics::{AppInfo, LibraryApp};
-use ossteam_types::{AppId, DepotId, ManifestId, SteamId};
+use ossteam_types::{AppId, SteamId};
 use ossteam_vdf::{Object, Value};
 
 use super::shim::dlc_installed;
@@ -834,6 +834,7 @@ impl Core {
             info,
             others,
             owned,
+            optional_dlc: self.config.optional_dlc(app).into_iter().collect(),
             low_violence,
             language: self.config.language().to_owned(),
             host,
@@ -945,9 +946,9 @@ impl Core {
         }
     }
 
-    /// The manifests the installed branch names now for the installed
-    /// depots; `None` when they cannot be worked out.
-    fn current_manifests(&self, a: &InstalledApp) -> Option<Vec<(DepotId, ManifestId)>> {
+    /// The depots an update of `a` would install now (`content.md` §6);
+    /// `None` when they cannot be worked out.
+    fn current_depots(&self, a: &InstalledApp) -> Option<Vec<depots::Chosen>> {
         let info = self.app_info(a.app_id)?;
         let others: HashMap<AppId, Object> = a
             .depots
@@ -965,6 +966,8 @@ impl Core {
         let snapshot = self.library.as_ref()?;
         let owned: HashSet<AppId> = snapshot.library.iter().map(|x| x.id).collect();
         let owns = |x: AppId| owned.contains(&x);
+        let turned_on = self.config.optional_dlc(a.app_id);
+        let optional_on = |x: AppId| turned_on.contains(&x);
         let lookup = |x: AppId| others.get(&x);
         let want = Wanted {
             branch: &a.branch,
@@ -972,9 +975,9 @@ impl Core {
             low_violence: snapshot.low_violence.contains(&a.app_id),
             host: self.install_host(a.app_id, &info),
             owns: &owns,
+            optional_on: &optional_on,
         };
-        let chosen = depots::choose(&info, &lookup, &want).ok()?;
-        Some(chosen.into_iter().map(|c| (c.depot, c.manifest)).collect())
+        depots::choose(&info, &lookup, &want).ok()
     }
 
     /// Whether `a`'s tool now runs programs of another platform than the
@@ -1004,13 +1007,13 @@ impl Core {
         for a in apps {
             // No depots now, as for a platform the app has none for, is
             // nothing an update could install.
-            let Some(current) = self.current_manifests(&a).filter(|c| !c.is_empty()) else {
+            let Some(current) = self.current_depots(&a).filter(|c| !c.is_empty()) else {
                 continue;
             };
             let changed = a.depots.iter().any(|d| {
                 !current
                     .iter()
-                    .any(|(depot, manifest)| *depot == d.depot && *manifest == d.manifest)
+                    .any(|c| c.depot == d.depot && c.manifest == d.manifest)
             }) || self.platform_changed(&a);
             if changed == a.update_available {
                 continue;
@@ -1034,6 +1037,50 @@ impl Core {
                 }),
             );
         }
+    }
+
+    /// `content.optional_dlc.<app>` changed (`content.md` §10). A depot
+    /// turned off is no longer chosen, which update detection sees. One
+    /// turned on is chosen but not installed, which detection does not
+    /// count (a refused key looks the same), so the app is marked here.
+    pub(super) fn optional_dlc_changed(&mut self, app: AppId) {
+        self.check_updates();
+        let Ok(steam_id) = self.active_account() else {
+            return;
+        };
+        if !self.library.as_ref().is_some_and(|s| s.complete) {
+            return;
+        }
+        let Some(a) = self.content.installed.get(&app).cloned() else {
+            return;
+        };
+        let Some(current) = self.current_depots(&a) else {
+            return;
+        };
+        let missing = current
+            .iter()
+            .any(|c| c.optional.is_some() && !a.depots.iter().any(|d| d.depot == c.depot));
+        if !missing || a.update_available {
+            return;
+        }
+        self.mark_update(app, true);
+        tracing::info!(app = %app, "optional DLC turned on; update state changed");
+        if self.config.auto_update() && self.unfinished_job(app).is_none() {
+            let _ = self.create_job(
+                steam_id,
+                app,
+                Kind::Update,
+                a.folder_id.clone(),
+                a.branch.clone(),
+            );
+        }
+        self.broadcast(
+            Topic::Library,
+            event::Kind::AppChanged(v1::AppChanged {
+                app_ids: vec![app.0],
+                complete: true,
+            }),
+        );
     }
 
     /// Stores the journals that jobs sent while the core was stopping.

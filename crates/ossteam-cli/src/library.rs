@@ -186,9 +186,26 @@ fn info_text(r: &v1::GetAppResponse) -> String {
     }
     if !a.dlc.is_empty() {
         let _ = writeln!(out, "DLC");
+        let optional = |dlc: u32| r.depots.iter().any(|x| x.optional_dlc == dlc);
+        let mut optional_off = false;
         for d in &a.dlc {
-            let installed = if d.installed { " (installed)" } else { "" };
-            let _ = writeln!(out, "  {:<10}{}{installed}", d.app_id, label(d, true));
+            let state = match (optional(d.app_id), d.installed) {
+                (true, true) => " (optional; installed)",
+                (true, false) => {
+                    optional_off = true;
+                    " (optional)"
+                }
+                (false, true) => " (installed)",
+                (false, false) => "",
+            };
+            let _ = writeln!(out, "  {:<10}{}{state}", d.app_id, label(d, true));
+        }
+        if optional_off {
+            let _ = writeln!(
+                out,
+                "  optional DLC is installed once the setting content.optional_dlc.{} names it",
+                a.app_id
+            );
         }
     }
     if !r.depots.is_empty() {
@@ -208,14 +225,18 @@ fn info_text(r: &v1::GetAppResponse) -> String {
             if d.dlc_app_id != 0 {
                 tags.push(format!("DLC {}", d.dlc_app_id));
             }
+            if d.optional_dlc != 0 && d.optional_dlc != d.dlc_app_id {
+                tags.push(format!("optional DLC {}", d.optional_dlc));
+            } else if d.optional_dlc != 0 {
+                tags.push("optional".into());
+            }
             if d.from_app_id != 0 {
                 tags.push(format!("from app {}", d.from_app_id));
             }
             if d.max_size != 0 {
                 tags.push(format!("up to {}", size(d.max_size)));
             }
-            if r
-                .installed
+            if r.installed
                 .as_ref()
                 .is_some_and(|i| i.depots.iter().any(|x| x.depot_id == d.depot_id))
             {
@@ -407,6 +428,7 @@ fn info_json(r: &v1::GetAppResponse) -> Value {
             "osarch": d.osarch,
             "language": d.language,
             "dlc_app_id": (d.dlc_app_id != 0).then_some(d.dlc_app_id),
+            "optional_dlc": (d.optional_dlc != 0).then_some(d.optional_dlc),
             "from_app_id": (d.from_app_id != 0).then_some(d.from_app_id),
             "shared_install": d.shared_install,
             "max_size": (d.max_size != 0).then_some(d.max_size),
@@ -564,7 +586,51 @@ mod tests {
             ..Default::default()
         };
         let text = info_text(&r);
-        assert!(text.contains("depots\n  481\n  482         (windows; installed)\n"), "{text}");
+        assert!(
+            text.contains("depots\n  481\n  482         (windows; installed)\n"),
+            "{text}"
+        );
+    }
+
+    #[test]
+    fn info_marks_optional_dlc() {
+        let mut game = app(730, "Counter-Strike 2", "Game");
+        game.dlc = vec![
+            v1::AppSummary {
+                parent: 730,
+                ..app(2279721, "Workshop Tools", "DLC")
+            },
+            v1::AppSummary {
+                parent: 730,
+                installed: true,
+                ..app(2279720, "Limited Test", "DLC")
+            },
+        ];
+        let r = v1::GetAppResponse {
+            app: Some(game),
+            depots: vec![v1::Depot {
+                depot_id: 2347779,
+                dlc_app_id: 2279721,
+                optional_dlc: 2279721,
+                ..Default::default()
+            }],
+            ..Default::default()
+        };
+        let text = info_text(&r);
+        assert!(
+            text.contains(
+                "DLC\n\
+                 \x20 2279721   Workshop Tools [DLC] (optional)\n\
+                 \x20 2279720   Limited Test [DLC] (installed)\n\
+                 \x20 optional DLC is installed once the setting content.optional_dlc.730 names it\n"
+            ),
+            "{text}"
+        );
+        assert!(
+            text.contains("  2347779     (DLC 2279721; optional)\n"),
+            "{text}"
+        );
+        assert_eq!(info_json(&r)["depots"][0]["optional_dlc"], 2279721);
     }
 
     #[test]

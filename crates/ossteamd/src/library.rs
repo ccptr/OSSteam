@@ -148,6 +148,7 @@ pub fn get_app(
             from_app_id: d.from_app.map_or(0, |a| a.0),
             shared_install: d.shared_install,
             max_size: d.max_size.unwrap_or(0),
+            optional_dlc: d.optional_dlc.map_or(0, |a| a.0),
         })
         .collect();
     r.branches = a

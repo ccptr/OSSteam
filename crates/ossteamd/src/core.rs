@@ -702,6 +702,11 @@ impl Core {
             // An installed app's platform may change (`compat-tools.md` §8).
             self.check_updates();
         }
+        if after != before
+            && let Some(app) = config::optional_dlc_app(&after.key)
+        {
+            self.optional_dlc_changed(app);
+        }
         if def.key == config::DISCOVERY_TAKE_OVER_OFFICIAL {
             self.take_over_setting_changed(took_over);
         }

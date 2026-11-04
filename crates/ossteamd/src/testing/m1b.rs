@@ -395,6 +395,73 @@ fn a_refused_dlc_key_installs_the_rest() {
 }
 
 #[test]
+fn optional_dlc_installs_once_turned_on_and_goes_when_turned_off() {
+    let cdn = Arc::new(FakeCdn::new());
+    let cm = steam(&cdn);
+    let extra = data(2, 100);
+    cm.publish(&depot(BASE, 1001, &[("game", &data(1, 100))]), 11);
+    cm.publish(&depot(DLC, 2001, &[("dlc", &extra)]), 21);
+    // As Counter-Strike 2's Workshop Tools depot (content.md §6 rule 5).
+    cm.app_section(
+        ALPHA,
+        "depots",
+        section(&format!(
+            r#""{BASE}" {{ "manifests" {{ "public" {{ "gid" "1001" "size" "1" }} }} }}
+               "{DLC}" {{ "dlcappid" "{ALPHA_DLC}" "config" {{ "optionaldlc" "{ALPHA_DLC}" }}
+                         "manifests" {{ "public" {{ "gid" "2001" "size" "1" }} }} }}"#
+        )),
+    );
+    let root = Root::new();
+    let d = TestDaemon::start_with_cdn(&root, &cm, POLL, cdn.clone());
+    login(&d);
+    let c = d.subscribed(&[Topic::Jobs]);
+    done(&c, c.install(ALPHA, "", "").expect("install queued"));
+    let i = installed(&c, ALPHA).expect("installed");
+    let dir = PathBuf::from(&i.path);
+    let ids: Vec<u32> = i.depots.iter().map(|d| d.depot_id).collect();
+    assert_eq!(ids, [BASE]);
+    assert!(!dir.join("dlc").exists());
+    let app = c.get_app(ALPHA).expect("get app");
+    let dlc_depot = app
+        .depots
+        .iter()
+        .find(|x| x.depot_id == DLC)
+        .expect("the DLC depot");
+    assert_eq!(dlc_depot.optional_dlc, ALPHA_DLC);
+
+    let update = |c: &Client| {
+        wait_event(c, "an update job", |k| match k {
+            event::Kind::JobStateChanged(v1::JobStateChanged { job: Some(j) })
+                if j.kind() == v1::JobKind::Update && finished(j.state()) =>
+            {
+                Some(j.clone())
+            }
+            _ => None,
+        })
+    };
+    let key = format!("content.optional_dlc.{ALPHA}");
+    assert!(c.set_setting(&key, Some("x")).is_err());
+    c.set_setting(&key, Some(&ALPHA_DLC.to_string()))
+        .expect("turned on");
+    let j = update(&c);
+    assert_eq!(j.state(), JobState::Done, "{:?}", j.error);
+    let i = installed(&c, ALPHA).expect("installed");
+    let ids: Vec<u32> = i.depots.iter().map(|d| d.depot_id).collect();
+    assert_eq!(ids, [BASE, DLC]);
+    assert_eq!(read(&dir, "dlc"), extra);
+    assert!(!i.update_available);
+
+    c.set_setting(&key, None).expect("turned off");
+    let j = update(&c);
+    assert_eq!(j.state(), JobState::Done, "{:?}", j.error);
+    let i = installed(&c, ALPHA).expect("installed");
+    let ids: Vec<u32> = i.depots.iter().map(|d| d.depot_id).collect();
+    assert_eq!(ids, [BASE]);
+    assert!(!dir.join("dlc").exists());
+    assert!(dir.join("game").exists());
+}
+
+#[test]
 fn a_depot_shared_from_an_app_outside_the_library() {
     // Redist is in no package, as 228980 is in none of an account's: its
     // info is fetched only because Alpha's depots name it.

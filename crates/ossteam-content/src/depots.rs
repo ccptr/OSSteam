@@ -47,6 +47,9 @@ pub struct Wanted<'a> {
     pub host: Host,
     /// Whether the library holds an app, for DLC depots.
     pub owns: &'a dyn Fn(AppId) -> bool,
+    /// Whether the user turned an optional DLC on for this app
+    /// (`content.optional_dlc.<app id>`).
+    pub optional_on: &'a dyn Fn(AppId) -> bool,
 }
 
 /// One depot the install takes.
@@ -61,6 +64,9 @@ pub struct Chosen {
     /// directory.
     pub shared_install: bool,
     pub dlc: Option<AppId>,
+    /// The optional DLC (`config/optionaldlc`) that this depot belongs to,
+    /// which the user turned on.
+    pub optional: Option<AppId>,
     /// `maxsize`, for the estimate before manifests are fetched.
     pub max_size: Option<u64>,
 }
@@ -101,6 +107,16 @@ fn list_has(list: &str, want: &str) -> bool {
         .filter(|s| !s.is_empty())
         .peekable();
     items.peek().is_none() || items.any(|s| s.eq_ignore_ascii_case(want))
+}
+
+/// The optional DLC a depot entry belongs to: its `config/optionaldlc`
+/// (rule 5), `None` for a depot that is not optional.
+pub fn optional_dlc(entry: &Object) -> Option<AppId> {
+    entry
+        .get_path(&["config", "optionaldlc"])
+        .and_then(number)
+        .filter(|&n: &u32| n != 0)
+        .map(AppId)
 }
 
 /// Checks the branch (`content.md` §6, last paragraph). `depots` is the
@@ -196,6 +212,12 @@ pub fn choose<'o>(
         {
             continue;
         }
+        let optional = optional_dlc(entry);
+        if let Some(d) = optional
+            && !(want.optional_on)(d)
+        {
+            continue;
+        }
         // Rules 6 and 7.
         let from_app = entry
             .get("depotfromapp")
@@ -224,6 +246,7 @@ pub fn choose<'o>(
             from_app,
             shared_install: from_app.is_some() && flag(entry, &["sharedinstall"]),
             dlc,
+            optional,
             max_size: entry.get("maxsize").and_then(Value::as_u64),
         });
     }
@@ -249,6 +272,7 @@ mod tests {
     "486"  { "dlcappid" "990" "manifests" { "public" "161" } }
     "487"  { "dlcappid" "991" "manifests" { "public" "171" } }
     "488"  { "manifests" { "beta" "181" } }
+    "489"  { "dlcappid" "990" "config" { "optionaldlc" "990" } "manifests" { "public" "191" } }
     "228990" { "depotfromapp" "228980" "sharedinstall" "1" }
     "baselanguages" "english"
     "branches"
@@ -278,6 +302,7 @@ mod tests {
             low_violence,
             host: Host { os, arch: "64" },
             owns: &owns,
+            optional_on: &|_| false,
         };
         choose(&app, &other, &want).map(|v| v.into_iter().map(|c| c.depot.0).collect())
     }
@@ -312,6 +337,7 @@ mod tests {
                 arch: "64",
             },
             owns: &owns,
+            optional_on: &|_| false,
         };
         let got = choose(&app, &other, &want);
         // 228990 has no manifests of its own and its source app is unknown.
@@ -348,6 +374,7 @@ mod tests {
                 arch: "64",
             },
             owns: &owns,
+            optional_on: &|_| false,
         };
         let got = choose(&app, &other, &want).unwrap();
         let shared = got.iter().find(|c| c.depot == DepotId(228990)).unwrap();
@@ -374,6 +401,7 @@ mod tests {
                 arch: "64",
             },
             owns: &owns,
+            optional_on: &|_| false,
         };
         let enc = parse(
             r#""depots" { "5" { "encryptedmanifests" { "public" { "encrypted_gid_2" "AB" } } } }"#,
@@ -394,6 +422,42 @@ mod tests {
             choose(&twice, &other2, &want),
             Err(ChooseError::SharedTwice(DepotId(5)))
         );
+    }
+
+    #[test]
+    fn optional_dlc_only_when_turned_on() {
+        let app = parse(APP);
+        let redist = parse(REDIST);
+        let other = |a: AppId| (a == AppId(228980)).then_some(&redist);
+        let owns = |a: AppId| a == AppId(990);
+        let on = |a: AppId| a == AppId(990);
+        let want = Wanted {
+            branch: "public",
+            language: "english",
+            low_violence: false,
+            host: Host {
+                os: "linux",
+                arch: "64",
+            },
+            owns: &owns,
+            optional_on: &on,
+        };
+        let got = choose(&app, &other, &want).unwrap();
+        let ids: Vec<u32> = got.iter().map(|c| c.depot.0).collect();
+        assert_eq!(ids, [481, 486, 489, 228990]);
+        assert_eq!(got[2].optional, Some(AppId(990)));
+        assert_eq!(got[1].optional, None);
+        // Turned on but not owned: rule 5's ownership still applies.
+        let want = Wanted {
+            owns: &|_| false,
+            ..want
+        };
+        let ids: Vec<u32> = choose(&app, &other, &want)
+            .unwrap()
+            .iter()
+            .map(|c| c.depot.0)
+            .collect();
+        assert_eq!(ids, [481, 228990]);
     }
 
     #[test]

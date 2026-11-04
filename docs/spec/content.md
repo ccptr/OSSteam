@@ -272,7 +272,19 @@ hold:
    when the license that grants the app carries the low-violence flag
    (`pics.md` §1). *Unverified.*
 5. **DLC.** A depot with `dlcappid` is chosen only when the library holds
-   that app (`pics.md` §7).
+   that app (`pics.md` §7). A depot whose `config/optionaldlc` names an
+   app is **optional DLC**: it is chosen only when the user has turned
+   that DLC on, by naming it in `content.optional_dlc.<app id>` (§13).
+   Counter-Strike 2's Workshop Tools depot (2347779, `dlcappid` and
+   `optionaldlc` both 2279721) is one: the official client leaves it out
+   until the user ticks the DLC in the game's properties (Valve's
+   Workshop Tools instructions) and lists the DLC left out under
+   `UserConfig` and `MountedConfig` `DisabledDLC` in the app's
+   `appmanifest_<app>.acf`, a comma-separated list judging by the name
+   (one id seen). ossteam keeps the choice in its setting, not in a file
+   of the official layout. *Unverified:* whether `optionaldlc` ever
+   names another app than `dlcappid`, and whether the official client
+   turns an optional DLC on by itself, for example when it is bought.
 6. **Content on the branch.** `manifests/<b>` names a manifest. It is
    either a string with the manifest id or an object whose `gid` holds it.
    A depot without a manifest for `b` has no files on that branch and is
@@ -490,6 +502,18 @@ is left in place unless the uninstall asks for its removal
 | `content.download_threads` | 8 | chunk downloads at once per job (1 to 64) |
 | `content.auto_update` | `always` | `always` or `never` (§10) |
 | `content.language` | `english` | the language whose depots are installed (§6) |
+| `content.optional_dlc.<app id>` | empty | the optional DLC of one app to install (§6 rule 5), as app ids separated by commas; empty for none |
+
+`content.optional_dlc.<app id>` is a family of keys, like
+`compat.tool.<app id>` (`compat-tools.md` §8): `GetSettings` lists the
+ones that are set, and `SetSetting` accepts any decimal app id. Its
+value is stored sorted, without repeats; anything but app ids is refused
+with `INVALID_ARGUMENT`. It names DLC whether or not the account owns
+them: rule 5's ownership still applies, so an optional DLC the account
+does not own is not installed. `GetApp`'s `Depot.optional_dlc` says
+which depots are optional and for which DLC; `ossteam info` marks the
+DLC and depots as optional, and the GUI's App page gives each optional
+DLC a switch (`gui.md` §4.3).
 
 ## 14. Verification status
 
@@ -507,4 +531,5 @@ is left in place unless the uninstall asks for its removal
 | Zip entries carry a correct CRC-32 (§5.3) | unverified |
 | Chunk id is the SHA-1 of the decompressed data (§5) | unverified |
 | Depot selection rules (§6) | unverified |
+| Optional DLC left out until turned on, `DisabledDLC` (§6 rule 5) | seen once: CS2's Workshop Tools, official client, 2026-11-04 |
 | CDN auth tokens (§7) | unverified |

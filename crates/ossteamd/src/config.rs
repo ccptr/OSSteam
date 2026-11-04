@@ -24,6 +24,15 @@ pub const CONTENT_BANDWIDTH_LIMIT: &str = "content.bandwidth_limit";
 pub const CONTENT_CONCURRENT_JOBS: &str = "content.concurrent_jobs";
 pub const CONTENT_DOWNLOAD_THREADS: &str = "content.download_threads";
 pub const CONTENT_LANGUAGE: &str = "content.language";
+/// A family of keys, one per app (`content.md` §13).
+pub const CONTENT_OPTIONAL_DLC: &str = "content.optional_dlc.<app id>";
+const CONTENT_OPTIONAL_DLC_PREFIX: &str = "content.optional_dlc.";
+
+/// The families of keys: each one's prefix and its definition's key.
+const FAMILIES: &[(&str, &str)] = &[
+    (COMPAT_TOOL_PREFIX, COMPAT_TOOL),
+    (CONTENT_OPTIONAL_DLC_PREFIX, CONTENT_OPTIONAL_DLC),
+];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Kind {
@@ -37,6 +46,8 @@ pub enum Kind {
     Choice(&'static [&'static str]),
     /// Any text, trimmed; what it may name is checked where it is used.
     Text,
+    /// App ids separated by commas, stored sorted and without repeats.
+    AppIds,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -102,6 +113,23 @@ impl Kind {
                 .map(|w| Value::Word(w))
                 .ok_or_else(|| self.expected()),
             Self::Text => Ok(Value::Text(text.trim().to_owned())),
+            Self::AppIds => {
+                let mut ids = text
+                    .split(',')
+                    .map(str::trim)
+                    .filter(|t| !t.is_empty())
+                    .map(|t| {
+                        t.parse::<u32>()
+                            .ok()
+                            .filter(|&n| n != 0 && t.bytes().all(|b| b.is_ascii_digit()))
+                            .ok_or_else(|| self.expected())
+                    })
+                    .collect::<Result<Vec<u32>, String>>()?;
+                ids.sort_unstable();
+                ids.dedup();
+                let ids: Vec<String> = ids.iter().map(u32::to_string).collect();
+                Ok(Value::Text(ids.join(",")))
+            }
         }
     }
 
@@ -118,6 +146,7 @@ impl Kind {
             Self::Integer { min, max } => format!("must be a whole number from {min} to {max}"),
             Self::Choice(words) => format!("must be one of {}", words.join(", ")),
             Self::Text => "must be text".into(),
+            Self::AppIds => "must be app ids separated by commas".into(),
         }
     }
 
@@ -125,7 +154,7 @@ impl Kind {
         match (self, value) {
             (Self::Bool, toml::Value::Boolean(b)) => Ok(Value::Bool(*b)),
             (Self::Integer { .. }, toml::Value::Integer(n)) => self.int(*n),
-            (Self::Choice(_) | Self::Text, toml::Value::String(s)) => self.parse(s),
+            (Self::Choice(_) | Self::Text | Self::AppIds, toml::Value::String(s)) => self.parse(s),
             _ => Err(self.expected()),
         }
     }
@@ -134,7 +163,7 @@ impl Kind {
         match self {
             Self::Bool => v1::SettingKind::Bool,
             Self::Integer { .. } => v1::SettingKind::Integer,
-            Self::Choice(_) | Self::Text => v1::SettingKind::String,
+            Self::Choice(_) | Self::Text | Self::AppIds => v1::SettingKind::String,
         }
     }
 }
@@ -226,6 +255,13 @@ pub const DEFS: &[Def] = &[
         description: "The language whose depots are installed, as Steam names it.",
     },
     Def {
+        key: CONTENT_OPTIONAL_DLC,
+        kind: Kind::AppIds,
+        default: Value::Word(""),
+        description: "The optional DLC of one app to install, as app ids separated by commas; \
+                      empty for none. Steam leaves optional DLC out until it is turned on.",
+    },
+    Def {
         key: DISCOVERY_TAKE_OVER_OFFICIAL,
         kind: Kind::Bool,
         default: Value::Bool(false),
@@ -243,23 +279,40 @@ pub const DEFS: &[Def] = &[
 /// The setting `key` names: one of [`DEFS`], or a member of a family
 /// such as `compat.tool.570`.
 pub fn def(key: &str) -> Option<&'static Def> {
-    if family_app(key).is_some() {
-        return DEFS.iter().find(|d| d.key == COMPAT_TOOL);
-    }
-    DEFS.iter().find(|d| d.key == key && !d.is_family())
+    let wanted = match family_member(key) {
+        Some((family, _)) => family,
+        None => key,
+    };
+    DEFS.iter()
+        .find(|d| d.key == wanted && d.is_family() == (wanted != key))
 }
 
-/// The app of a `compat.tool.<app id>` key.
-fn family_app(key: &str) -> Option<AppId> {
-    let id = key.strip_prefix(COMPAT_TOOL_PREFIX)?;
-    (!id.is_empty() && id.bytes().all(|b| b.is_ascii_digit()))
-        .then(|| id.parse().ok().map(AppId))
-        .flatten()
+/// The family of a member's key (`compat.tool.570`), as its definition's
+/// key, and the member's app.
+fn family_member(key: &str) -> Option<(&'static str, AppId)> {
+    FAMILIES.iter().find_map(|(prefix, family)| {
+        let id = key.strip_prefix(prefix)?;
+        (!id.is_empty() && id.bytes().all(|b| b.is_ascii_digit()))
+            .then(|| id.parse().ok().map(|n| (*family, AppId(n))))
+            .flatten()
+    })
 }
 
 /// The key of `app`'s `compat.tool` setting.
 pub fn compat_tool_key(app: AppId) -> String {
     format!("{COMPAT_TOOL_PREFIX}{}", app.0)
+}
+
+/// The key of `app`'s `content.optional_dlc` setting.
+pub fn optional_dlc_key(app: AppId) -> String {
+    format!("{CONTENT_OPTIONAL_DLC_PREFIX}{}", app.0)
+}
+
+/// The app of a `content.optional_dlc.<app id>` key.
+pub fn optional_dlc_app(key: &str) -> Option<AppId> {
+    family_member(key)
+        .filter(|(f, _)| *f == CONTENT_OPTIONAL_DLC)
+        .map(|(_, a)| a)
 }
 
 impl Def {
@@ -278,8 +331,9 @@ impl Def {
 /// A key as stored: a family member's own key (`compat.tool.570`) or a
 /// plain one. `key` must be one [`def`] accepts.
 pub fn canonical(key: &str) -> String {
-    match family_app(key) {
-        Some(app) => compat_tool_key(app),
+    match family_member(key) {
+        Some((COMPAT_TOOL, app)) => compat_tool_key(app),
+        Some((_, app)) => optional_dlc_key(app),
         None => key.to_owned(),
     }
 }
@@ -409,6 +463,14 @@ impl Config {
         self.text(&compat_tool_key(app))
     }
 
+    /// The DLC turned on in `content.optional_dlc.<app>`.
+    pub fn optional_dlc(&self, app: AppId) -> Vec<AppId> {
+        self.text(&optional_dlc_key(app))
+            .split(',')
+            .filter_map(|t| t.parse().ok().map(AppId))
+            .collect()
+    }
+
     /// `content.auto_update` is `always`.
     pub fn auto_update(&self) -> bool {
         self.word(CONTENT_AUTO_UPDATE) == "always"
@@ -474,7 +536,7 @@ impl Config {
             .map(|d| d.key.to_owned())
             .collect();
         for k in self.file.keys().chain(self.overrides.keys()) {
-            if family_app(k).is_some() && !keys.contains(k) {
+            if family_member(k).is_some() && !keys.contains(k) {
                 keys.push(k.clone());
             }
         }
@@ -646,6 +708,36 @@ mod tests {
         ] {
             assert!(def(bad).is_none(), "{bad}");
         }
+    }
+
+    #[test]
+    fn optional_dlc_family() {
+        let (file, unknown) = Config::parse("[content.optional_dlc]\n730 = \"2279721\"\n").unwrap();
+        assert!(unknown.is_empty());
+        let mut c = Config {
+            file,
+            overrides: BTreeMap::new(),
+        };
+        assert_eq!(c.optional_dlc(AppId(730)), [AppId(2279721)]);
+        assert!(c.optional_dlc(AppId(570)).is_empty());
+        let d = def("content.optional_dlc.570").unwrap();
+        assert_eq!(d.key, CONTENT_OPTIONAL_DLC);
+        assert_eq!(d.parse(" 9, 3,,9 "), Ok(Value::Text("3,9".into())));
+        for bad in ["x", "0", "-1", "+3", "4294967296"] {
+            assert!(d.parse(bad).is_err(), "{bad}");
+        }
+        c.set_override("content.optional_dlc.0570", Some(Value::Text("1".into())));
+        assert_eq!(c.optional_dlc(AppId(570)), [AppId(1)]);
+        assert_eq!(
+            optional_dlc_app("content.optional_dlc.570"),
+            Some(AppId(570))
+        );
+        assert_eq!(optional_dlc_app("compat.tool.570"), None);
+        let keys: Vec<String> = c.all().into_iter().map(|s| s.key).collect();
+        assert!(keys.contains(&"content.optional_dlc.570".to_owned()));
+        assert!(keys.contains(&"content.optional_dlc.730".to_owned()));
+        assert!(def(CONTENT_OPTIONAL_DLC).is_none());
+        assert!(def("content.optional_dlc.").is_none());
     }
 
     #[test]

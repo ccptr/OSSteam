@@ -223,8 +223,13 @@ game from the store:
   launches and shows `Launch`'s error, which says why. An
   "Arguments" field adds `extra_args`, split like a shell would split
   them, without expansion.
-- **Details:** install path, folder, branch, build, size, depots, and the
-  DLC with their install state.
+- **Details:** install path, folder, branch, build, size and depots.
+- **DLC:** the account's DLC of the app with their install state. An
+  optional DLC (`Depot.optional_dlc`, `content.md` §6 rule 5) has a
+  switch showing whether `content.optional_dlc.<app id>` names it;
+  toggling it sets that setting with the DLC added or removed (reset
+  when none is left), and the daemon then marks or updates the app
+  (`content.md` §10). A refusal is shown under the list.
 - **Compatibility (Linux):** the tool from `GetApp.compat`, where it comes
   from, and its chain with each tool's install state. A chooser of
   `compat.choices` and "Default" sets `compat.tool.<app id>` with

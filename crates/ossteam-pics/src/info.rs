@@ -137,6 +137,9 @@ pub struct Depot {
     pub language: String,
     /// The DLC this depot belongs to, if any.
     pub dlc_app_id: Option<AppId>,
+    /// `config/optionaldlc`: the optional DLC this depot belongs to, which
+    /// is installed only once turned on (`content.md` §6 rule 5).
+    pub optional_dlc: Option<AppId>,
     /// The app whose depot this is, for depots shared from another app.
     pub from_app: Option<AppId>,
     pub shared_install: bool,
@@ -346,6 +349,11 @@ impl AppInfo<'_> {
                 osarch: str_at(o, &["config", "osarch"]).into(),
                 language: str_at(o, &["config", "language"]).into(),
                 dlc_app_id: o.get("dlcappid").and_then(number).map(AppId),
+                optional_dlc: o
+                    .get_path(&["config", "optionaldlc"])
+                    .and_then(number)
+                    .filter(|&n: &u32| n != 0)
+                    .map(AppId),
                 from_app: o.get("depotfromapp").and_then(number).map(AppId),
                 shared_install: o.get("sharedinstall").and_then(Value::as_bool) == Some(true),
                 max_size: o.get("maxsize").and_then(number),

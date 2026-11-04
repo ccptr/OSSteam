@@ -71,6 +71,8 @@ pub struct AppPage {
     remove_compat_data: bool,
     error: Option<String>,
     compat_error: Option<String>,
+    /// Turning an optional DLC on or off failed.
+    dlc_error: Option<String>,
     busy: bool,
     /// Ctrl-Enter came before the details: act once they arrive.
     pending_main_action: bool,
@@ -91,6 +93,7 @@ impl AppPage {
             remove_compat_data: false,
             error: None,
             compat_error: None,
+            dlc_error: None,
             busy: false,
             pending_main_action: false,
         }
@@ -730,31 +733,106 @@ fn details(info: &v1::GetAppResponse, p: Palette) -> El {
             "Steam did not give this account the token for the app's full info.",
         ));
     }
+    out
+}
+
+/// The DLC turned on in `content.optional_dlc.<app>` (content.md §6).
+fn optional_dlc_on(m: &Model, app: u32) -> Vec<u32> {
+    m.store
+        .setting(&format!("content.optional_dlc.{app}"))
+        .map(|s| s.value.split(',').filter_map(|t| t.parse().ok()).collect())
+        .unwrap_or_default()
+}
+
+/// The account's DLC of the app; optional DLC with a switch that turns it
+/// on or off (gui.md §4.3).
+fn dlc(info: &v1::GetAppResponse, m: &Model, app: &AppPage, p: Palette) -> Option<El> {
     let dlc = info
         .app
         .as_ref()
         .map(|a| a.dlc.as_slice())
         .unwrap_or_default();
-    if !dlc.is_empty() {
-        let list = panel().children(dlc.iter().map(|d| {
-            let name = if d.name.is_empty() {
-                format!("App {}", d.app_id)
-            } else {
-                d.name.clone()
-            };
-            named_state(
-                p,
-                name,
-                if d.installed {
-                    "installed"
-                } else {
-                    "not installed"
-                },
-            )
-        }));
-        out = out.child(section(p, "DLC", list));
+    if dlc.is_empty() {
+        return None;
     }
-    out
+    let on = optional_dlc_on(m, app.app_id);
+    let list = panel().gap(4.0).children(dlc.iter().map(|d| {
+        let name = if d.name.is_empty() {
+            format!("App {}", d.app_id)
+        } else {
+            d.name.clone()
+        };
+        let state = if d.installed {
+            "installed"
+        } else {
+            "not installed"
+        };
+        let optional = info.depots.iter().any(|x| x.optional_dlc == d.app_id);
+        if !optional {
+            return named_state(p, name, state);
+        }
+        let dlc_id = d.app_id;
+        let is_on = on.contains(&dlc_id);
+        panel()
+            .row()
+            .align(Align::Center)
+            .gap(8.0)
+            .child(
+                switch(p, widgets::id("optional-dlc", dlc_id), name, is_on)
+                    .on_toggle(move |g, _| set_optional_dlc(g, dlc_id, !is_on)),
+            )
+            .child(
+                text(format!("optional, {state}"))
+                    .font_size(SMALL)
+                    .text_color(p.muted),
+            )
+    }));
+    Some(
+        group(p)
+            .child(list)
+            .when_some(app.dlc_error.clone(), |d, e| d.child(error_text(p, e))),
+    )
+}
+
+fn set_optional_dlc(g: &mut Gui, dlc: u32, on: bool) {
+    let Some(m) = g.model() else {
+        return;
+    };
+    let Some(app) = &g.app else {
+        return;
+    };
+    let id = app.app_id;
+    let mut list = optional_dlc_on(m, id);
+    list.retain(|&d| d != dlc);
+    if on {
+        list.push(dlc);
+    }
+    let value = (!list.is_empty()).then(|| {
+        list.iter()
+            .map(u32::to_string)
+            .collect::<Vec<_>>()
+            .join(",")
+    });
+    if let Some(app) = &mut g.app {
+        app.dlc_error = None;
+    }
+    let key = format!("content.optional_dlc.{id}");
+    g.call(
+        move |c| c.set_setting(&key, value.as_deref()),
+        move |g, r: Result<v1::Setting, CallError>, _| match r {
+            Ok(s) => {
+                if let Some(m) = g.model_mut() {
+                    m.store.set_setting(s);
+                    m.read(Read::App(id));
+                }
+            }
+            Err(e) => {
+                if let Some(app) = page(g, id) {
+                    app.dlc_error = Some(e.message);
+                }
+            }
+        },
+    );
 }
 
 /// Linux: the compatibility tool (§4.3).
@@ -996,6 +1074,9 @@ pub fn view(g: &Gui, m: &Model, app: &AppPage, p: Palette, cx: &ViewCx) -> El {
         .child(main(m, app, info, p, cx));
     if let Some(info) = info {
         body = body.child(section(p, "Details", details(info, p)));
+        if let Some(d) = dlc(info, m, app, p) {
+            body = body.child(section(p, "DLC", d));
+        }
         if let Some(c) = &info.compat {
             body = body.child(section(p, "Compatibility", compat(c, app, p)));
         }

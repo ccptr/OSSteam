@@ -369,6 +369,10 @@ message Depot {
   bool shared_install = 8;
   // 0 when not given.
   uint64 max_size = 9;
+  // The optional DLC this depot belongs to (config/optionaldlc), installed
+  // only when content.optional_dlc.<app id> names it
+  // (docs/spec/content.md §6 rule 5); 0 for none.
+  uint32 optional_dlc = 10;
 }
 
 message Branch {

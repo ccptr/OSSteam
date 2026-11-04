@@ -48,6 +48,8 @@ pub struct Spec {
     pub others: HashMap<AppId, Object>,
     /// The apps the library holds, for DLC depots.
     pub owned: HashSet<AppId>,
+    /// The optional DLC turned on for the app (`content.optional_dlc`).
+    pub optional_dlc: HashSet<AppId>,
     pub low_violence: bool,
     pub language: String,
     /// The platform whose depots the install takes (`compat-tools.md` §4).
@@ -466,6 +468,7 @@ impl Runner<'_> {
         let spec = self.spec;
         self.preparing();
         let owns = |a: AppId| spec.owned.contains(&a);
+        let optional_on = |a: AppId| spec.optional_dlc.contains(&a);
         let others = |a: AppId| spec.others.get(&a);
         let want = Wanted {
             branch: &spec.branch,
@@ -473,6 +476,7 @@ impl Runner<'_> {
             low_violence: spec.low_violence,
             host: spec.host,
             owns: &owns,
+            optional_on: &optional_on,
         };
         let chosen = depots::choose(&spec.info, &others, &want)?;
         if chosen.is_empty() {

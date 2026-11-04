@@ -1,11 +1,11 @@
 ---
 name: m3-workshop
-description: M3 workshop - workshop.md drafted (91a4a54); item content and layout; gated on §11 and §10 (subscribing is visible)
+description: M3 workshop - workshop.md drafted (0aa5bfc); item content and layout; gated on §11 and §10 (subscribing is visible)
 metadata:
   type: project
 ---
 
-workshop.md is drafted (91a4a54). Gate: §11 and §10; subscribing shows on
+workshop.md is drafted (0aa5bfc). Gate: §11 and §10; subscribing shows on
 the profile, so ask first ([spec-review-gates](spec-review-gates.md)).
 
 - `depots/workshopdepot` is the app's own id (6 cached apps, including

@@ -14,7 +14,7 @@ serves it on a thread. The library is copied to
 `<data>/steam-sdk/osx/steamclient.dylib`; xtask runs lipo to make it
 universal.
 
-The CI run on efc15b5 showed that launchd accepts check-in of an
+The CI run on 0254d99 showed that launchd accepts check-in of an
 undeclared name (check-in succeeded and a look-up found it).
 
 Unverified: that destroying the receive right frees the name. The tests

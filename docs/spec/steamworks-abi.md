@@ -461,7 +461,7 @@ delivers and refuses one that does not fit with it
 
 launchd lets a process check in a name that no job declares, as
 Chromium relies on (seen on CI's macOS runners, aarch64 and x86_64,
-on efc15b5: the check-in succeeded and a look-up found the name). The entries are ossteam's
+on 0254d99: the check-in succeeded and a look-up found the name). The entries are ossteam's
 while the daemon holds that receive right. Removing them destroys it,
 which takes the name away (*unverified*), and a crash takes it away
 with the process, so DISC-2 has nothing to repair on macOS. The copy

@@ -1,11 +1,11 @@
 ---
 name: m3-offline
-description: M3 offline - offline.md drafted (1e770e4); a daemon started offline has an empty library today; gated on §10 and §9
+description: M3 offline - offline.md drafted (37f78f3); a daemon started offline has an empty library today; gated on §10 and §9
 metadata:
   type: project
 ---
 
-offline.md is drafted (1e770e4). Gate: §10 and §9
+offline.md is drafted (37f78f3). Gate: §10 and §9
 ([spec-review-gates](spec-review-gates.md)).
 
 - Gap today: licenses are held in memory only, so a daemon started

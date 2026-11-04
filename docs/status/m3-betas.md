@@ -1,11 +1,11 @@
 ---
 name: m3-betas
-description: M3 betas - betas.md drafted (360123c); beta password flow, key storage proposal; gated on §9 and §8
+description: M3 betas - betas.md drafted (5228106); beta password flow, key storage proposal; gated on §9 and §8
 metadata:
   type: project
 ---
 
-betas.md is drafted (360123c). Gate: §9 and §8, which needs a published
+betas.md is drafted (5228106). Gate: §9 and §8, which needs a published
 beta code ([spec-review-gates](spec-review-gates.md)).
 
 - Today's PICS has no `pwdrequired` or `encryptedmanifests` (0 of 201

@@ -1,11 +1,11 @@
 ---
 name: m3-friends
-description: M3 friends - friends.md drafted (a25ba36); gated on §11 answers and §10 observations needing a second account
+description: M3 friends - friends.md drafted (00f4d0d); gated on §11 answers and §10 observations needing a second account
 metadata:
   type: project
 ---
 
-friends.md is drafted (a25ba36). Gate: §11 and §10, which need the
+friends.md is drafted (00f4d0d). Gate: §11 and §10, which need the
 account logged in plus a second account
 ([spec-review-gates](spec-review-gates.md)).
 

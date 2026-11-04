@@ -1,12 +1,12 @@
 ---
 name: m2-vac
-description: M2 VAC - vac.md drafted (d66f0d2), not reviewed; how modules and calls flow, the host, and its 5 open questions
+description: M2 VAC - vac.md drafted (3101149), not reviewed; how modules and calls flow, the host, and its 5 open questions
 metadata:
   type: project
 ---
 
 SPEC §14: no VAC code lands before `docs/spec/vac.md` is reviewed
-([spec-review-gates](spec-review-gates.md)). vac.md is drafted (d66f0d2),
+([spec-review-gates](spec-review-gates.md)). vac.md is drafted (3101149),
 not reviewed.
 
 - Modules arrive as ClientServiceModule 830, calls as

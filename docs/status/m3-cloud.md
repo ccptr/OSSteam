@@ -1,11 +1,11 @@
 ---
 name: m3-cloud
-description: M3 cloud - cloud.md drafted (ade70b9); gated on §9 answers and §8 live observations
+description: M3 cloud - cloud.md drafted (fd7c74d); gated on §9 answers and §8 live observations
 metadata:
   type: project
 ---
 
-cloud.md is drafted (ade70b9). Gate: §9 answers and the §8 observations
+cloud.md is drafted (fd7c74d). Gate: §9 answers and the §8 observations
 ([spec-review-gates](spec-review-gates.md)).
 
 - Sources: SteamDatabase protobufs (Cloud.* service), Valve's Steam

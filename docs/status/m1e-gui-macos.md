@@ -8,7 +8,7 @@ metadata:
 Committed: spec `docs/spec/gui.md` and IPC schema 8 (6e8c005); GUI
 connection, store, pages and widgets (3ce5c9a); measurable §20 GUI
 budgets and runbook `docs/acceptance/m1e.md` (c21e8f8); macOS discovery
-(daca257, 9487c6a; see [macos-discovery](../../AGENTS/steamworks/macos-discovery.md)); App page
+(daca257, 7e96d11; see [macos-discovery](../../AGENTS/steamworks/macos-discovery.md)); App page
 artwork through the bounded cache (df34a07); gui.md §7 integration test
 `testing::gui` in ossteamd (145c5e2: ossteam-gui is now a lib plus a
 thin bin and a dev-dependency of ossteamd; the proptest git source is

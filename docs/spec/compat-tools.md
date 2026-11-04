@@ -186,7 +186,19 @@ SteamLinuxRuntime/toolmanifest.vdf:
   version 2, commandline "/scout-on-soldier-entry-point-v2 --",
   require_tool_appid 1391110, compatmanager_layer_name scout-in-container,
   filter_exclusive_priority 10
+
+LegacySteamRuntime/toolmanifest.vdf (2026-11-03):
+  version 2, commandline "/legacy-steam-runtime",
+  filter_exclusive_priority 10, unlisted 2
 ```
+
+`legacysteamruntime` (4690330) is the scout runtime of older clients
+without a container: `legacy-steam-runtime` is a shell script that pins
+the libraries of its `steam-runtime/` directory with `setup.sh`, puts
+them on `LD_LIBRARY_PATH` and `PATH`, and runs the game on the host. It
+writes its pins and a `.last_runtime_version` file into its own install
+directory, so that directory must stay writable. It needs nothing else
+from the client, and runs as any version 2 tool (§5).
 
 Proton's manifest is version 2 with `commandline` `/proton %verb%`
 (*unverified* for the current versions; to be read from an installed

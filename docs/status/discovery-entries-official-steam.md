@@ -1,6 +1,6 @@
 ---
 name: discovery-entries-official-steam
-description: An official Steam install owns ~/.steam/sdk64 on the dev machine, so launches failed with exit 8; a private ~/.steam per launch (DISC-4 to DISC-6) accepted 2026-11-03; DISC-4 built and run live 2026-11-03 (Portal: First Slice in the Steam Linux Runtime); DISC-5 and most of DISC-6 to build
+description: An official Steam install owns ~/.steam/sdk64 on the dev machine, so launches failed with exit 8; a private ~/.steam per launch (DISC-4 to DISC-6) accepted 2026-11-03; DISC-4 built and run live 2026-11-03 (Portal: First Slice in the Steam Linux Runtime and on the host, Spacewar under Proton; Counter-Strike 2 blocked by a stale lock); DISC-5 and most of DISC-6 to build
 metadata:
   type: project
 ---
@@ -83,6 +83,18 @@ stale 32-bit library on the dev PC (rebuild with
 `cargo xtask build-steamclient`). Spacewar (480) under Proton
 Experimental connected the same day, once Windows options' paths were
 looked up without regard to case (launch.md §2).
+
+Later the same day Portal: First Slice ran with no container, through
+`legacysteamruntime` (4690330, scout's libraries on `LD_LIBRARY_PATH`),
+in the namespace and connected. With no tool at all it does not start
+on the dev PC, which has no 32-bit SDL2. Counter-Strike 2 (730),
+reflink-copied from the official client's library and updated by
+ossteam (698 MiB downloaded, the rest kept in place), cannot run
+outside the Steam Linux Runtime 3.0 (its `cs2.sh` checks
+`/etc/os-release`). In sniper it started but waited before loading
+`steamclient.so`: another local user had left
+`/tmp/source_engine_<n>.lock`, which `fs.protected_regular` keeps it
+from opening. It waits on that file being removed (§1.1.8).
 
 Still open in §1.1.7: games installed under
 `~/.steam`, and the Steam Linux Runtime inside the namespace. The checks

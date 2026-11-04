@@ -1,6 +1,6 @@
 ---
 name: m1b-content
-description: M1b status - content engine, downloader, jobs and install scripts committed; real Windows and live runs left
+description: M1b status - content engine, downloader, jobs and install scripts committed; most Linux live rows run 2026-11-04; DLC, delta, beta and Windows left; cancelled first installs leave files
 metadata:
   type: project
 ---
@@ -20,4 +20,12 @@ Left:
   real Windows.
 - Launch-time script steps (registry writes, firewall, run process)
   belong to M1c ([install-scripts-2-6](install-scripts-2-6.md)).
-- No live runs or captures against Steam yet.
+- Live on Linux, 2026-11-04 (m1b.md): info, a SIGKILL mid-download,
+  verify, uninstall, a second folder, job controls, the bandwidth limit
+  and two jobs at once. Left live: an install with DLC depots compared
+  with the official client's files, a delta update of a new build, a
+  beta branch, and the Windows column. No captures yet.
+- Open for the maintainer: cancelling a first install leaves the files
+  already renamed into place in `apps/<installdir>` with no record
+  (`ipc.md` §5.6), and `uninstall` refuses an app that is not installed,
+  so nothing in ossteam removes them (seen with 22150: 349 files at 3 %).

@@ -43,7 +43,7 @@ the date and the build.
 | QR login, including a rotated challenge | ⏳ | ⏳ |
 | Wrong password and wrong code fail with exit code 4 | ⏳ | ⏳ |
 | `--no-remember` leaves no stored token | ⏳ | ⏳ |
-| Restart resumes from the stored token | ⏳ | ⏳ |
+| Restart resumes from the stored token | ✅ 2026-11-04, test account, after a stop and after a SIGKILL | ⏳ |
 | Revoked token: daemon stops retrying and asks for login | ⏳ | ⏳ |
 | Connection drop: `status` shows `connecting`, then reconnects | ⏳ | ⏳ |
 | Two remembered accounts; `account switch` | ⏳ | ⏳ |

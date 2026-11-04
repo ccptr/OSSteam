@@ -186,6 +186,42 @@ fn installs_a_depot() {
     }
 }
 
+/// Files copied into place beforehand are kept, not downloaded or
+/// written again (`content.md` §9); a copy that differs is rebuilt.
+#[test]
+fn a_new_install_keeps_files_already_in_place() {
+    let cdn = Arc::new(FakeCdn::new());
+    let (big, small, d) = v1();
+    cdn.publish(&d, 77);
+    let l = lib("in-place");
+    std::fs::create_dir_all(l.install.join("bin")).unwrap();
+    std::fs::create_dir_all(l.install.join("data")).unwrap();
+    std::fs::write(l.install.join("bin/game"), &big).unwrap();
+    let mut wrong = small.clone();
+    wrong[0] ^= 1;
+    std::fs::write(l.install.join("data/small.txt"), &wrong).unwrap();
+    let m = fetch_manifest(&cdn, &d);
+    let before = cdn.chunk_requests();
+    let out = run(&job(&l, Mode::Install, m, None), &cdn, None).unwrap();
+
+    assert_eq!(read(&l.install.join("bin/game")), big);
+    assert_eq!(read(&l.install.join("data/small.txt")), small);
+    // All but bin/game: small.txt, empty, settings.cfg and old.txt.
+    assert_eq!(out.files_written, 4);
+    // The big file's six chunks are neither fetched nor copied.
+    assert_eq!(out.chunks_copied, 0);
+    assert!(cdn.chunk_requests() - before <= 4);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mode = std::fs::metadata(l.install.join("bin/game"))
+            .unwrap()
+            .permissions()
+            .mode();
+        assert_eq!(mode & 0o111, 0o111, "a kept file gets its permissions");
+    }
+}
+
 #[test]
 fn updates_by_delta_and_deletes_what_is_gone() {
     let cdn = Arc::new(FakeCdn::new());

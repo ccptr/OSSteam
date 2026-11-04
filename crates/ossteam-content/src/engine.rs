@@ -379,6 +379,25 @@ fn remove_file(path: &Path) -> io::Result<bool> {
     }
 }
 
+/// Whether `dest` already holds `f`: a regular file of its size and
+/// SHA-1, inside the install directory.
+fn in_place(
+    root: &Path,
+    parts: &[&str],
+    dest: &Path,
+    f: &File,
+    hashed: &AtomicU64,
+    cancel: &CancelToken,
+) -> Result<bool, EngineError> {
+    if !is_regular_file(dest)
+        || !ancestors_safe(root, parts)
+        || !fs::metadata(dest).is_ok_and(|m| m.len() == f.size)
+    {
+        return Ok(false);
+    }
+    Ok(f.size == 0 || hash_file(dest, hashed, cancel)?.is_some_and(|h| h[..] == f.sha[..]))
+}
+
 fn is_user_config(f: &File) -> bool {
     f.flags & (flags::USER_CONFIG | flags::VERSIONED_USER_CONFIG) != 0
 }
@@ -571,13 +590,19 @@ pub fn prepare<'j>(
                 Mode::Install => {
                     if f.flags & flags::USER_CONFIG != 0 && exists {
                         false
-                    } else if let Some(old) = installed.get(&f.key())
-                        && old.size == f.size
-                        && old.sha == f.sha
-                    {
-                        if old.flags != f.flags && exists {
-                            p.reflag.push((dest.clone(), f.flags));
+                    } else if let Some(old) = installed.get(&f.key()) {
+                        if old.size == f.size && old.sha == f.sha {
+                            if old.flags != f.flags && exists {
+                                p.reflag.push((dest.clone(), f.flags));
+                            }
+                            false
+                        } else {
+                            true
                         }
+                    } else if exists && in_place(&d.install_dir, &parts, &dest, f, &hashed, cancel)?
+                    {
+                        // Already there, copied in beforehand (`content.md` §9).
+                        p.reflag.push((dest.clone(), f.flags));
                         false
                     } else {
                         true

@@ -401,6 +401,16 @@ read back from staging and checked (§5 checks 1 and 2) before it is
 trusted; a chunk that fails is fetched again. A staged file the journal
 does not know is deleted.
 
+**Files already in place.** A new install, or an update's file that the
+old manifest does not list, keeps a regular file already at its path
+when the file has the manifest's size and SHA-1 (`sha_content`); it only
+gets its permissions (§8). So files copied into the app's directory
+beforehand, for example from another installation, are not downloaded
+or written again. The official client does the like when it installs
+into a folder that already holds the files ("discovering existing
+files"; *unverified* how it checks them). A file that differs is
+rebuilt as usual, its chunks taken from the file where they match.
+
 ## 10. Updates (CONT-4)
 
 An update installs the branch's current manifests over the installed

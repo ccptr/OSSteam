@@ -72,7 +72,7 @@ const SCHEMA_V4: &str = "
         PRIMARY KEY (app_id, depot_id)
     );
     CREATE TABLE jobs (
-        job_id        INTEGER PRIMARY KEY,
+        job_id        INTEGER PRIMARY KEY AUTOINCREMENT,
         steam_id      INTEGER NOT NULL,
         app_id        INTEGER NOT NULL,
         kind          INTEGER NOT NULL,
@@ -968,6 +968,8 @@ mod tests {
         db.update_job(&job).unwrap();
         db.forget_finished_jobs().unwrap();
         assert!(db.jobs().unwrap().is_empty());
+        // A forgotten job's id is not given out again (`ipc.md` §5.6).
+        assert!(db.add_job(&job).unwrap() > job.job_id);
     }
 
     #[test]

@@ -340,6 +340,39 @@ fn a_new_build_is_installed_automatically() {
 }
 
 #[test]
+fn a_restart_finds_no_update_before_the_licenses() {
+    let cdn = Arc::new(FakeCdn::new());
+    let cm = steam(&cdn);
+    cm.publish(&depot(BASE, 1001, &[("game", &data(1, 100))]), 11);
+    cm.publish(&depot(DLC, 2001, &[("dlc", &data(2, 100))]), 21);
+    cm.app_section(ALPHA, "depots", depots(1001, 2001));
+    let root = Root::new();
+    let d = TestDaemon::start_with_cdn(&root, &cm, POLL, cdn.clone());
+    login(&d);
+    let c = d.subscribed(&[Topic::Jobs]);
+    let install = c.install(ALPHA, "", "").expect("install queued");
+    done(&c, install);
+    assert_eq!(installed(&c, ALPHA).expect("installed").depots.len(), 2);
+    drop(c);
+    d.stop();
+
+    // At the start the library comes from the cache before the license
+    // list says the DLC is owned; that is no update (content.md §10).
+    let d = TestDaemon::start_with_cdn(&root, &cm, POLL, cdn.clone());
+    let c = d.subscribed(&[Topic::Library]);
+    wait_until("the library", || {
+        let r = c.list_apps("", false).expect("list apps");
+        r.complete && !r.apps.is_empty()
+    });
+    let jobs = c.list_jobs().expect("jobs");
+    assert!(
+        !jobs.iter().any(|j| j.kind() == v1::JobKind::Update),
+        "{jobs:?}"
+    );
+    assert!(!installed(&c, ALPHA).expect("installed").update_available);
+}
+
+#[test]
 fn a_refused_dlc_key_installs_the_rest() {
     let cdn = Arc::new(FakeCdn::new());
     let cm = steam(&cdn);

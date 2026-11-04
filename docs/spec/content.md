@@ -441,7 +441,10 @@ resumed job completes.
 (`pics.md` §4), ossteam chooses the depots of each installed app again
 (§6) and compares them with the installed ones. If an installed depot now
 has another manifest on the installed branch, or is no longer chosen, the
-app has an update. A depot that is chosen but not installed does not mark
+app has an update. Detection waits until the library is complete
+(`ipc.md` §5.3): before the license list arrives, as at every start,
+when the library comes from the cache, the account owns no DLC and
+nothing could be compared. A depot that is chosen but not installed does not mark
 it: that is also what a depot whose key Steam refused (§2) looks like, and
 it would mark the app for ever. An update job installs such a depot all
 the same, since it chooses depots afresh. When no depot is chosen at all,

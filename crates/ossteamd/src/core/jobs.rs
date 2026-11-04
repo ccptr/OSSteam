@@ -994,6 +994,12 @@ impl Core {
         let Ok(steam_id) = self.active_account() else {
             return;
         };
+        // Until the license list has arrived and the library is fetched,
+        // what the account owns is not known: at the start the library
+        // comes from the cache with no licenses, which owns no DLC.
+        if !self.library.as_ref().is_some_and(|s| s.complete) {
+            return;
+        }
         let apps: Vec<InstalledApp> = self.content.installed.values().cloned().collect();
         for a in apps {
             // No depots now, as for a platform the app has none for, is

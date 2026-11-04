@@ -2,8 +2,8 @@
 
 | | |
 |---|---|
-| Status | M1c; macOS discovery (§1.3) M1e. §1 (discovery entries), §2 (the library), §3 (game IPC) and §4 (ShimReports) implemented; the interface pages in `steamworks/` grow with the shim |
-| Requirements | SPEC §12 (ABI-1 to ABI-5, GIPC-1 to GIPC-3, DISC-1 to DISC-3), PLAY-1, LAUNCH-4 |
+| Status | M1c; macOS discovery (§1.3) M1e. §1 (discovery entries), §2 (the library), §3 (game IPC) and §4 (ShimReports) implemented, except §1.1.2 to §1.1.6 (the private `~/.steam`, taking over the official entries, telling the user), drafted 2026-11-03 and not reviewed; the interface pages in `steamworks/` grow with the shim |
+| Requirements | SPEC §12 (ABI-1 to ABI-5, GIPC-1 to GIPC-3, DISC-1 to DISC-6), PLAY-1, LAUNCH-4 |
 | Code | discovery entries in `crates/ossteam-launch/src/discovery/`; the library in `crates/ossteam-steamclient`; the game IPC in `crates/ossteam-gameipc`; the daemon's side in `crates/ossteamd/src/launch.rs`, `crates/ossteamd/src/gameipc.rs` and `crates/ossteamd/src/core/{games,shim}.rs` |
 | Interfaces | one page each under `docs/spec/steamworks/`; the vtables in `docs/spec/steamworks/vtables.txt` (§2.4) |
 
@@ -13,14 +13,18 @@ a running client, loads that client's library (`steamclient.so`,
 to it through versioned interfaces. `ossteam-steamclient` is ossteam's
 client library.
 
-## 1. Discovery entries (DISC-1 to DISC-3)
+## 1. Discovery entries (DISC-1 to DISC-6)
 
 **Verification.** §1.1 comes from the official Linux client's files in
-the home directory and from the strings in a shipped `libsteam_api.so`
-(`%s/.steam/%s`, the message that `SteamAPI_IsSteamRunning()` found no
-running client, and the message that a local `steamclient.so` was tried
-first). How `steam_api` checks that the client is running is
-*unverified*. The Windows entries in §1.2 are *unverified*.
+the home directory, from its `steam.sh` (read for facts, §1.1.3), and
+from a shipped `libsteam_api.so`: the strings `%s/.steam/%s` and
+`HOME`, its import of `getenv` (and none of `getpwuid`), the message
+that `SteamAPI_IsSteamRunning()` found no running client, and the
+message that a local `steamclient.so` was tried first. Only one
+`libsteam_api.so` was read (a 32-bit build of an older SDK); that newer
+ones also build the path from `$HOME` is *unverified*. How `steam_api`
+checks that the client is running is *unverified*. The Windows entries
+in §1.2 are *unverified*.
 
 ### 1.1 Linux
 
@@ -35,9 +39,22 @@ The official client keeps these in `~/.steam`:
 | `registry.vdf`, `steam.pipe`, `steam.token` | the client's own state; not read by `steam_api` (*unverified*) |
 
 `steam_api` first tries a `steamclient.so` next to itself, then
-`~/.steam/sdk64/steamclient.so` (or `sdk32` for a 32-bit game). Before
-that it checks for a running client through `~/.steam/steam.pid`
+`$HOME/.steam/sdk64/steamclient.so` (or `sdk32` for a 32-bit game).
+Before that it checks for a running client through `~/.steam/steam.pid`
 (*unverified*: that it checks the pid names a live process).
+
+A game finds ossteam in one of two ways:
+
+- **A private `~/.steam`** (§1.1.2): every process the daemon starts
+  for a launch sees a `~/.steam` of ossteam's own, whatever the real
+  one holds. This is how launches find ossteam whenever the system
+  allows it, and it never touches the real `~/.steam`.
+- **The real entries** (§1.1.1): `sdk64`, `sdk32` and `steam.pid` in the
+  real `~/.steam`, made while they are free. They let a process ossteam
+  did not start, such as a game run from a terminal, find ossteam, and
+  they are how launches find it when no private `~/.steam` can be made.
+
+#### 1.1.1 The real entries (DISC-1)
 
 ossteam creates only `sdk64`, `sdk32` and `steam.pid`:
 
@@ -60,15 +77,293 @@ is the matching directory under `<data>/steam-sdk`. `steam.pid` is
 ossteam's when `sdk64` is. ossteam writes `steam.pid` last and removes
 it first.
 
-**Conflict (DISC-3).** If `sdk64`, `sdk32` or `steam.pid` exists and is
-not ossteam's, the daemon leaves all three alone. This is the case when
-an official client is installed, whether or not it is running, because
-its symlinks stay when it exits. A launch then fails with `CONFLICT`,
-and the message names the entry and says that an official Steam client
-owns it. ossteam never removes, renames or replaces it. Using ossteam to
-play on a machine with the official client installed means removing that
-client's `~/.steam/sdk32`, `sdk64` and `steam.pid` while it is not
-running. The official client recreates them when it starts.
+The entries are **free** when none of the three exists, or all that
+exist are ossteam's. The daemon makes them only then. When they belong
+to an official client, it leaves them alone (§1.1.4), unless the user
+has turned on `discovery.take_over_official` (§1.1.5).
+
+#### 1.1.2 A private `~/.steam` for each launch (DISC-4)
+
+`<data>/steam-sdk` holds, beside `sdk64/` and `sdk32/`, a `steam.pid`
+with the daemon's pid, written and removed with the real entries
+(§1.5). It is a complete `~/.steam` as `steam_api` needs one, and
+nothing else.
+
+Every process the daemon starts for a launch, the game and the
+compatibility tools and setup commands of its chain (`compat-tools.md`
+§4, §7), runs in a mount namespace of its own in which `<data>/steam-sdk`
+is mounted over `~/.steam`. The daemon's own process, and every process
+it did not start, keep the real `~/.steam`. A process inherits the
+namespace, so whatever the game starts sees the private `~/.steam`
+too, for as long as it runs.
+
+In the child, after `fork` and before `exec`, in this order:
+
+1. `unshare(CLONE_NEWUSER | CLONE_NEWNS)`.
+2. Write `deny` to `/proc/self/setgroups`, `<uid> <uid> 1` to
+   `/proc/self/uid_map` and `<gid> <gid> 1` to `/proc/self/gid_map`, so
+   that the process keeps its own user and group.
+3. Make every mount private (`mount(NULL, "/", NULL, MS_REC |
+   MS_PRIVATE, NULL)`), so that nothing done in the namespace reaches
+   the host.
+4. Bind `<data>/steam-sdk` onto `~/.steam` (`MS_BIND`), then remount
+   that bind read-only (`MS_REMOUNT | MS_BIND | MS_RDONLY`), keeping the
+   flags of the mount it comes from, which a user namespace may not
+   clear.
+
+These are system calls only, as the code between `fork` and `exec`
+must be. The process ID namespace is shared, so the daemon's pid in
+`steam.pid`, the `Hello.pid` check (§3.1) and the supervision of the
+game's processes (`launch.md` §4) are unchanged. The network namespace
+is shared, so the abstract socket (§3.1) is reached as before.
+
+`~/.steam` must exist as the mount point. The daemon creates it with
+mode 0755 when it does not exist, as for the real entries. When it is a
+symlink, the bind covers the directory it points to, in the game's
+namespace only. When it exists and is not a directory, no private
+`~/.steam` can be made.
+
+What the game sees in `~/.steam` is `sdk64/`, `sdk32/` and `steam.pid`,
+read-only. It does not see the official client's links (`root`,
+`steam`, `bin*`), its `registry.vdf` or its `steam.pipe`, so it cannot
+reach the official client through them. `~/.local/share/Steam` and the
+rest of the home directory stay as they are.
+
+In the namespace the user is the same, but setuid and setgid programs
+do not gain privileges, `setgroups` is refused, and files owned by
+users other than the process's own appear to belong to the overflow
+user (`nobody`).
+
+**Whether it can be made.** At start, the daemon forks a child that
+does steps 1 to 4 with a directory of ossteam's own as the mount point,
+and exits; the result is kept as the private `~/.steam`'s **state**:
+available, or not available with the step that failed and its error.
+Each launch does the steps again. When a launch's steps fail although
+the state was available, the launch fails (below), the state becomes
+not available with that failure, and the daemon sends a warning
+`Notice` (§1.1.6). It never quietly starts the game without its private
+`~/.steam`. The state is checked again at the next start of the daemon.
+
+When the state is not available, the daemon adds what it can read about
+why to the failure, each when it is so:
+
+- `/proc/sys/kernel/unprivileged_userns_clone` is 0 (Debian's switch);
+- `/proc/sys/user/max_user_namespaces` is 0;
+- `/proc/sys/kernel/apparmor_restrict_unprivileged_userns` is 1
+  (Ubuntu 23.10 and later), unless the daemon is confined by an
+  AppArmor profile that allows `userns`;
+- `/.flatpak-info` exists (the daemon runs inside Flatpak, whose
+  sandbox refuses new user namespaces).
+
+Packages for distributions that restrict unprivileged user namespaces
+with AppArmor ship a profile for `ossteamd` that allows `userns`.
+
+**Launches without it.** When no private `~/.steam` can be made, a
+launch finds ossteam only through the real entries. The launch check
+(`launch.md` §2) then needs the real entries to be ossteam's, and fails
+with `CONFLICT` when an official client owns them (§1.1.4). When a
+launch's own steps fail, the launch fails with `UNSUPPORTED`, with the
+step and its error in the message.
+
+#### 1.1.3 The official client
+
+These are facts from the official client's `steam.sh`, read for its
+behaviour; none of its code is used:
+
+- It counts the client as running when `~/.steam/steam.pid` names a
+  live process that has `~/.steam/steam.pipe` open (a link in
+  `/proc/<pid>/fd` to it). Any other pid, ossteam's daemon included,
+  is a stale file to it.
+- When the client is not running by that test, or one of its links in
+  `~/.steam` is missing or dangling, it recreates `sdk32`, `sdk64`,
+  `steam`, `root`, `bin32` and `bin64` with `ln -fsn`, replacing
+  whatever was there, ossteam's links included.
+- It does not write `steam.pid`; the client does, after the script has
+  made the links. *Unverified:* that the client replaces a `steam.pid`
+  that names a live process other than itself.
+- The links and `steam.pid` stay when the client exits.
+
+So an official client that starts while ossteam has the real entries
+takes them over without asking, and an official client that has exited
+still owns them. ossteam uses the same test to tell whether the
+official client runs: **the official client runs** when `steam.pid` is
+not ossteam's and names a live process with `~/.steam/steam.pipe` open.
+
+#### 1.1.4 Conflict (DISC-3)
+
+If `sdk64`, `sdk32` or `steam.pid` exists and is not ossteam's, the
+entries belong to an official client, whether or not it is running,
+because its links stay when it exits (§1.1.3). The daemon then leaves
+all three alone, and never removes, renames or replaces them, except
+under `discovery.take_over_official` (§1.1.5).
+
+With a private `~/.steam` available, that changes nothing for
+launches: they find ossteam in their own `~/.steam`, and the official
+client finds its own entries. Only processes ossteam did not start find
+the official client.
+
+Without one, a launch fails with `CONFLICT`. The message names the
+entry, says that an official Steam client owns it, gives the reason no
+private `~/.steam` could be made (§1.1.2), and names the ways out:
+allow unprivileged user namespaces (or install the AppArmor profile);
+quit the official client and remove its `~/.steam/sdk32`, `sdk64` and
+`steam.pid`, which it recreates when it starts; or turn on
+`discovery.take_over_official`.
+
+#### 1.1.5 Taking over the official entries (DISC-5)
+
+`discovery.take_over_official` (`ipc.md` §5.4), off by default, lets
+ossteam use the real `~/.steam` while the official client is not
+running, so that processes ossteam did not start find it then, and so
+that launches work without a private `~/.steam`. It is Linux only.
+
+**Taking over.** While the setting is on and an account is active, the
+daemon takes the entries over when all of these hold:
+
+- the entries belong to an official client (§1.1.4);
+- the official client does not run (§1.1.3);
+- no process of the user has a `steamclient.so` mapped from the
+  directory that the official `sdk64` or `sdk32` points to (a game the
+  official client started can outlive it, and what that game starts
+  next would otherwise find ossteam);
+- nothing in `~/.steam` has been created, renamed or removed by anyone
+  but ossteam in the last 30 s (the race, below).
+
+It then records the official entries in `<data>/steam-sdk/official.toml`
+(the targets of `sdk64` and `sdk32`, and the text of `steam.pid`, each
+when it exists), and replaces them with its own: each link by creating
+the new one under a temporary name and renaming it over the old one,
+`steam.pid` last. The conditions are checked again just before each
+rename, and the daemon stops at the first that no longer holds.
+
+**Handing back.** Where §1.5 removes the real entries (a logout, the
+daemon's exit, ossteam's own stale entries at start), and when the
+setting is turned off, the daemon puts back what `official.toml`
+records, by the same renames, `steam.pid` first, then deletes
+`official.toml`. An official client that never starts again therefore
+finds its entries as it left them.
+
+**Yielding.** The daemon watches `~/.steam` (inotify) while it holds
+the entries. When one of them changes and is no longer ossteam's, the
+official client is starting, or the user changed it. The daemon then
+writes nothing more to `~/.steam`, deletes `official.toml` (the
+official client has made its own entries), sends a warning `Notice`
+(§1.1.6), and takes over again only when the conditions above hold
+again. Without a private `~/.steam`, launches fail with `CONFLICT`
+meanwhile, as in §1.1.4.
+
+**Risks.** Turning the setting on accepts these, and §1.1.6 says so to
+the user:
+
+- **Games still running when the official client starts.** A game
+  ossteam started keeps working, since it has loaded ossteam's library
+  and holds its connection. But without a private `~/.steam`, what it
+  starts from then on (a launcher's real game, a game restarting itself)
+  finds the official client, and that client's account. With a private
+  `~/.steam` this cannot happen.
+- **The race with the official client's start.** `steam.sh` makes the
+  links some time before the client writes `steam.pid` and opens
+  `steam.pipe`. A take-over in that window replaces the links the
+  official client has just made, and the games it then starts find
+  ossteam and play under ossteam's account. The 30 s wait and the
+  checks before each rename narrow that window; nothing closes it,
+  because nothing tells ossteam that `steam.sh` has begun.
+
+The setting does not change Windows or macOS (§1.2, §1.3), where an
+official client's entries are never taken over.
+
+#### 1.1.6 Telling the user (DISC-6)
+
+The user is told when no private `~/.steam` can be made, and what the
+take-over setting risks, wherever they would look:
+
+- **Daemon.** At start, when the private `~/.steam` is not available,
+  a warning in the log with the failed step, its error and the reasons
+  of §1.1.2, and the same as one line on standard error:
+
+  ```
+  ossteamd: warning: games get no private ~/.steam (<reason>); while an official Steam client owns ~/.steam, games cannot be launched
+  ```
+
+  The part after the semicolon is there only while launches fail
+  because of it. When `discovery.take_over_official` is on, the daemon
+  also writes, at start and when the setting is turned on:
+
+  ```
+  ossteamd: warning: discovery.take_over_official is on: <the risks of §1.1.5, in one sentence each>
+  ```
+
+  Taking over, handing back and yielding are logged as warnings too.
+- **`GetStatus`** (`ipc.md` §5.1) carries `game_isolation`: whether a
+  private `~/.steam` is available, the reason when it is not, whether
+  launches fail because of it (not available, the entries belong to an
+  official client, and the daemon does not hold them under §1.1.5), and
+  whether the daemon holds the official entries under §1.1.5. It is
+  unset off Linux.
+- **CLI.** `ossteam status` prints a `games` line when the private
+  `~/.steam` is not available: that games are not isolated from the
+  real `~/.steam`, the reason, and, when launches fail because of it,
+  that they do and the ways out of §1.1.4. `--json` carries the same
+  fields. `ossteam launch` reads `game_isolation` too and, when the
+  private `~/.steam` is not available, prints one line on standard
+  error before it launches, whether or not the launch then succeeds:
+
+  ```
+  warning: games get no private ~/.steam (<reason>); see `ossteam status`
+  ```
+
+  When the daemon also holds the official entries (§1.1.5), `launch`
+  adds a second line: `warning: ossteam holds the official Steam
+  client's ~/.steam entries; if that client starts, what this game
+  starts next finds it and its account`. (With a private `~/.steam`,
+  that cannot happen, so the line is not printed.) These lines go to standard error so that `--json`
+  output stays clean, and `--quiet` does not hide them.
+- **GUI** (`gui.md` §2.4, §4.5). On connecting, when the private
+  `~/.steam` is not available, a warning notice says so, with the
+  reason; when launches fail because of it, the notice says that and
+  the ways out. The Settings page shows the same in its Daemon section
+  for as long as it is so.
+- **Notices at run time.** A warning `Notice` when a launch's steps
+  fail (§1.1.2), when the daemon yields the entries (§1.1.5: "The
+  official Steam client took ~/.steam back. What games ossteam started
+  without a private ~/.steam start from now on finds the official
+  client and its account."), and when the setting is turned on.
+- **The setting.** Its description in `GetSettings` states both risks of
+  §1.1.5. Turning it on in the GUI asks for confirmation with that text;
+  `ossteam config set discovery.take_over_official true` prints it on
+  standard error and then sets it.
+
+#### 1.1.7 Open questions
+
+- **Hiding `~/.local/share/Steam`.** The private `~/.steam` leaves the
+  official installation visible. Hiding it in the namespace too would
+  keep games under ossteam's account from reading the official client's
+  `userdata/`, but would break library folders the user keeps there and
+  games that read the official installation (Source mods that need
+  another game's content). Not done until the maintainer decides.
+- **Anti-cheat.** Anti-cheat accepts the Steam Linux Runtime's
+  containers, which are user namespaces too; a native game in a user
+  namespace of its own is less common. Whether any anti-cheat, VAC
+  included (`vac.md`), treats it differently is *unverified*.
+- **Inside the Steam Linux Runtime.** `pressure-vessel` builds its
+  container from the mounts it sees, so it should carry the private
+  `~/.steam` into the container, and its own `bwrap` should nest inside
+  the user namespace. Both are *unverified* (§1.1.8). A setuid `bwrap`
+  gains no privileges in a user namespace, so a system that allows user
+  namespaces only through a setuid `bwrap` makes no private `~/.steam`
+  (the check at start fails), and the real entries are used.
+
+#### 1.1.8 To check
+
+| Item | Status |
+|---|---|
+| `steam_api` builds the path from `$HOME` | one older 32-bit `libsteam_api.so` read; newer SDKs unverified |
+| A native game finds ossteam through the private `~/.steam` | to be run |
+| A game in the Steam Linux Runtime, and one under Proton, find ossteam through it | to be run |
+| Proton and the Steam Linux Runtime work with a read-only `~/.steam` | to be run |
+| The check at start reports Ubuntu's AppArmor restriction | to be run on Ubuntu 24.04 |
+| The official client starting while ossteam holds the entries (§1.1.5) | to be run |
+| The client replaces a `steam.pid` naming a live process | unverified |
 
 ### 1.2 Windows
 
@@ -210,6 +505,13 @@ down and the daemon reconnects, so the entries stay too: the game's
 not a missing one. On start, before anything else, the daemon removes
 entries that are ossteam's but hold a pid that is not its own, which a
 crash leaves behind (DISC-2).
+
+On Linux, "the entries" are the real ones while they are free (§1.1.1)
+and `<data>/steam-sdk/steam.pid`, which the private `~/.steam` needs
+(§1.1.2), whether or not the real ones are free. Real entries taken
+over from an official client (§1.1.5) are handed back, not just
+removed, wherever this section removes them; after a crash, the next
+start hands them back from `official.toml` before anything else.
 
 ## 2. The client library (ABI-1 to ABI-4)
 

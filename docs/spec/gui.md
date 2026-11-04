@@ -84,6 +84,13 @@ also shows the Login page. Errors are never retried silently.
 listed in the bottom right corner, newest last. Info notices disappear
 after 8 s; warnings and errors stay until dismissed.
 
+On Linux, when `GetStatus.game_isolation` says no private `~/.steam` can
+be made (`steamworks-abi.md` §1.1.6), the GUI shows a warning notice once
+per connection: that games are not isolated from the real `~/.steam`, and
+why. When `launches_blocked` is set, the notice also says that games
+cannot be launched while the official Steam client owns `~/.steam`, and
+names the ways out (§1.1.4).
+
 ## 3. The store
 
 The store is a plain struct holding the daemon's latest answers. It is
@@ -267,6 +274,11 @@ Sections:
   `content.download_threads`, `content.auto_update`, `content.language`.
 - **Compatibility (Linux):** `compat.default_tool`, and the
   `compat.tool.<app id>` overrides, each with its app's name and a reset.
+- **Discovery (Linux):** whether launched games get a private `~/.steam`,
+  and when not, the reason and what it means for launches, as the notice
+  above says it; whether the daemon holds the official client's entries;
+  and the `discovery.take_over_official` switch with its risks written
+  under it. Turning it on asks for confirmation with the risks' text.
 - **Account:** persona state (`SetPersonaState`), Log out (`Logout`,
   confirmed).
 - **Daemon:** version, pid, uptime and protocol; every setting not shown

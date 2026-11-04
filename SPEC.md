@@ -113,7 +113,11 @@ even if it works.
   `~/Library/...` on macOS (§17).
 - **[DIRS-2]** The only exceptions are the minimal ABI discovery entries that
   Valve's Steamworks API needs to find a running client (§12.5). The daemon
-  creates them while it runs and removes them when it exits.
+  creates them while it runs and removes them when it exits. On Linux, the
+  private `~/.steam` a launched game sees (DISC-4) is a directory under the
+  data directory, mounted only in the game's own namespace; it creates
+  nothing outside the standard directories but an empty `~/.steam` to mount
+  it on.
 
 ### 2.6 Spec-first reverse engineering
 
@@ -636,7 +640,8 @@ are reachable through their getters and fail truthfully under ABI-3.
   only the entries `steam_api` needs in order to find a client:
   - Linux: `~/.steam/sdk32/steamclient.so` and `~/.steam/sdk64/steamclient.so`
     as symlinks to our libraries, plus the running-client marker that the ABI
-    spec page establishes.
+    spec page establishes, while those locations are free (no other client's
+    entries are there).
   - Windows: `HKCU\Software\Valve\Steam\ActiveProcess`, with the client DLL
     paths and the PID.
   - macOS: the Mach service `steam_api` looks up, serving the path of a copy
@@ -644,9 +649,28 @@ are reachable through their getters and fail truthfully under ABI-3.
 - **[DISC-2]** The daemon removes the entries when it exits and repairs them
   on its next start after a crash.
 - **[DISC-3]** If these locations already belong to an official Steam
-  installation, the daemon does not touch them. Launching games then fails
-  with error `conflict` and a message that explains why. Coexistence is
-  documented, and ossteam never silently overwrites Valve's entries.
+  installation, the daemon does not touch them, except as DISC-5 allows on
+  Linux. Launching games then fails with error `conflict` and a message that
+  explains why, unless the launch finds ossteam another way (DISC-4).
+  Coexistence is documented, and ossteam never silently overwrites Valve's
+  entries.
+- **[DISC-4]** On Linux, every process the daemon starts for a launch runs in
+  a user and mount namespace of its own in which a `~/.steam` of ossteam's
+  own, holding only the entries `steam_api` needs, is mounted over the real
+  one. Launched games therefore find ossteam whether or not an official
+  client owns the real `~/.steam`, and the official client and everything it
+  starts are unaffected. When the system does not allow such a namespace,
+  launches use the real entries of DISC-1.
+- **[DISC-5]** On Linux, an off-by-default setting lets the daemon take over
+  an official client's entries while that client is not running, hand them
+  back as they were when it is done, and yield them at once when the
+  official client starts. The setting states its risks (`steamworks-abi.md`
+  §1.1.5) to the user before it is turned on.
+- **[DISC-6]** When the system does not allow DISC-4's namespace, the user is
+  told so, with the reason and what it means for launches: a warning line on
+  the daemon's standard error at start, the daemon's status, a warning line
+  from the CLI's `status` and `launch`, and the GUI, not only in a log. The
+  same places warn while DISC-5's setting is on.
 
 ### 12.6 Visibility
 
@@ -832,7 +856,7 @@ application identifier (§24, Q2).
 | Cache (PICS, assets, CDN list) | `$XDG_CACHE_HOME/ossteam` | `%LOCALAPPDATA%\ossteam\cache` | `~/Library/Caches/<id>` |
 | State (logs) | `$XDG_STATE_HOME/ossteam` | `%LOCALAPPDATA%\ossteam\state` | `~/Library/Logs/<id>` |
 | Runtime (sockets, lock) | `$XDG_RUNTIME_DIR/ossteam` | named pipes | per-user dir under `$TMPDIR` |
-| ABI exception | `~/.steam/sdk32`, `~/.steam/sdk64`, running marker | `HKCU\Software\Valve\Steam\ActiveProcess` | per ABI spec |
+| ABI exception | `~/.steam/sdk32`, `~/.steam/sdk64`, running marker; the private `~/.steam` in `<data>/steam-sdk` (DISC-4) | `HKCU\Software\Valve\Steam\ActiveProcess` | per ABI spec |
 
 Each library folder has this layout: `common/<installdir>`,
 `compatdata/<appid>` (Linux), `.ossteam/staging/`, and
@@ -1061,7 +1085,7 @@ Steamworks interfaces driven by ShimReport data.
 | Vulkan is not everywhere: macOS needs MoltenVK, and some Windows machines have no driver | Ship MoltenVK in the macOS bundle; draw with our own software renderer when no Vulkan device can be created (ADR 0004) |
 | The Steamworks interface versions in use are a large surface | Expand interfaces based on ShimReport data. Fail honestly in the meantime. |
 | The name "ossteam" contains "steam" | State non-affiliation clearly (LIC-8). Revisit the name before a 1.0 release (Q3). |
-| Coexisting with an official Steam install | DISC-3 conflict handling. Never overwrite Valve's entries. |
+| Coexisting with an official Steam install | DISC-3 conflict handling; on Linux a private `~/.steam` for launched games (DISC-4), and Valve's entries taken over only by the user's choice, with its risks stated (DISC-5). Never silently overwrite Valve's entries. |
 
 ---
 

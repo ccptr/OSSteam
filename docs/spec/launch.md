@@ -88,7 +88,7 @@ and stops at the first that fails:
 | The executable exists under the install directory and does not leave it | `NOT_FOUND`, with a message that the app needs a verify |
 | The executable is not protected by SteamStub (§7) | `UNSUPPORTED` |
 | Linux: the app's compatibility tool, if it has one, runs programs of the option's platform, and the install is for that platform (`compat-tools.md` §2, §4) | `UNSUPPORTED`; `CONFLICT` when the app must be updated for its tool |
-| The discovery entries are in place (`steamworks-abi.md` §1) | `CONFLICT` when an official Steam client owns them (DISC-3); `UNSUPPORTED` when ossteam's client library is not installed next to the daemon |
+| The game can find ossteam (`steamworks-abi.md` §1): on Linux through a private `~/.steam` (§1.1.2), or else through the real entries | `CONFLICT` when an official Steam client owns the entries and no private `~/.steam` can be made (DISC-3), with the reason and the ways out; `UNSUPPORTED` when ossteam's client library is not installed next to the daemon, or when the launch's own namespace steps fail |
 
 On Linux, the launch options that qualify are those of the platform the
 app's tool runs programs of (`windows` for Proton), or of `linux` when

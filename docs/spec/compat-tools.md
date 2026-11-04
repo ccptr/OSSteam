@@ -462,6 +462,13 @@ by another user only makes `steam_api` find no client.
 the container shares the process ID namespace, its default. A container
 started with `--unshare-pid` gets `Refused`.
 
+**The private `~/.steam`.** The tools of the chain run inside the
+launch's own namespace (`steamworks-abi.md` §1.1.2), so the container is
+built from a home directory whose `~/.steam` is `<data>/steam-sdk`,
+read-only. *Unverified:* that `pressure-vessel` carries that mount into
+the container, and that its `bwrap` nests in the user namespace
+(§1.1.7).
+
 ## 10. Stopping a game
 
 `StopGame` (`launch.md` §5) sends `SIGTERM` to every process of the tree

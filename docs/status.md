@@ -11,7 +11,7 @@ rules and [agent-notes](../AGENTS/rules/agent-notes.md) for the note format.
 Almost all remaining work needs one of these.
 
 - [CI fix waits on a push](status/waiting-push-macos-discovery-fix.md) — macOS CI is red on origin/main until 9487c6a runs
-- [Discovery entries](status/discovery-entries-official-steam.md) — official Steam owns `~/.steam/sdk64`, so launches fail with exit 8
+- [Discovery entries](status/discovery-entries-official-steam.md) — official Steam owns `~/.steam/sdk64`, so launches fail with exit 8; a private `~/.steam` per launch (DISC-4 to DISC-6) specified 2026-11-03, SPEC changes not reviewed
 - [install-scripts.md §2.6](status/install-scripts-2-6.md) — unverifiable `kvsignatures`; blocks HKLM writes and prefix scripts
 - [Own GUI toolkit](status/gui-toolkit-adr-0004.md) — ADR 0004 and its SPEC changes accepted 2026-11-03; spike done but for the maintainer's checks; toolkit (step 3) and the port (step 4) done, the previous framework removed, live checks passed 2026-11-03; the portal through our own D-Bus client (ADR amended); `main` since 2026-11-03 (the old `main` is the branch `gpui`), not pushed; open: font fallback can map every font (a decision for the maintainer)
 - [CONC-2 reworded](status/conc-2-reword.md) — SPEC rule and ADR 0001 amended in 471d6d3, not reviewed

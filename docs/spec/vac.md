@@ -303,6 +303,11 @@ session. Both are compared with the official client on the same server.
    runs, knowing that a mistake can ban it for good?
 5. **Scope.** Should M2 aim for Linux only first, with Windows and macOS
    reporting VAC as unavailable until §6.3 and §6.4 are done?
+6. **Games in a namespace of their own.** On Linux every launch runs in a
+   user and mount namespace with a private `~/.steam`
+   (`steamworks-abi.md` §1.1.2, DISC-4). Does VAC need to know, and is a
+   VAC-protected native game acceptable in it, or should such games use
+   the real entries?
 
 ## 8. Verification against the official client
 

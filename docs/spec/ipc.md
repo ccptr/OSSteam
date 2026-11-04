@@ -131,7 +131,7 @@ is left unchanged. Events always have `id = 0`.
 
 | Method | Behaviour |
 |---|---|
-| `GetStatus` | Daemon version, pid, uptime, the session (§5.2: connection state, active account, `logged_on`, `session_reason`), connected clients, active jobs, and the games the daemon launched that are running. |
+| `GetStatus` | Daemon version, pid, uptime, the session (§5.2: connection state, active account, `logged_on`, `session_reason`), connected clients, active jobs, the games the daemon launched that are running, and on Linux `game_isolation` (field 12): `available`, `reason` when not, `launches_blocked` and `holds_official_entries` (`steamworks-abi.md` §1.1.6). |
 | `GetVersion` | Daemon version, protocol version, and the OS and architecture the daemon was built for. |
 | `Shutdown{force}` | Replies, then shuts down (§6). A request without `force` is refused with `CONFLICT` while any game the daemon launched is running (D-5). With `force`, the games keep running. |
 | `Subscribe`, `Unsubscribe` | See §4. |
@@ -234,6 +234,7 @@ These keys exist:
 | `content.language` | `STRING` | `english` | The language whose depots are installed, as Steam names languages (`german`, `schinese`, ...) |
 | `compat.default_tool` | `STRING` | `proton_experimental` | Linux: the compatibility tool for apps without a Linux version that no other mapping covers; empty for none (`compat-tools.md` §2) |
 | `compat.tool.<app id>` | `STRING` | empty | Linux: the user's compatibility tool for one app, a tool's name or a selectable alias; empty for Valve's mapping. A family of keys: `GetSettings` lists those with an override (`compat-tools.md` §8) |
+| `discovery.take_over_official` | `BOOL` | `false` | Linux: take over an official Steam client's `~/.steam` entries while it is not running, hand them back afterwards, and yield them when it starts (`steamworks-abi.md` §1.1.5). The description states its two risks; the CLI prints them when it is turned on, and the GUI asks to confirm |
 | `secrets.file_fallback` | `BOOL` | `false` | When no OS keyring is available, store refresh tokens in `secrets.json` in the data directory, mode 0600 (D-8, `auth.md` §4). A change applies to the next token read or write. |
 
 **Secrets (IPC-10).** The password and Steam Guard codes travel only in

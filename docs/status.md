@@ -13,9 +13,8 @@ Almost all remaining work needs one of these.
 - [CI fix waits on a push](status/waiting-push-macos-peer-pid.md) — macOS CI is red on origin/main in the `Hello.pid` check; the `LOCAL_PEERPID` fix waits on a push
 - [install-scripts.md §2.6](status/install-scripts-2-6.md) — accepted for now 2026-11-03; how `kvsignatures` work stays half open, for the maintainer
 - [Own GUI toolkit](status/gui-toolkit-adr-0004.md) — ADR 0004 and its SPEC changes accepted 2026-11-03; spike done but for the maintainer's checks; toolkit (step 3) and the port (step 4) done, the previous framework removed, live checks passed 2026-11-03; the portal through our own D-Bus client (ADR amended); `main` since 2026-11-03 (the old `main` is the branch `gpui`), pushed; open: font fallback can map every font (a decision for the maintainer)
-- [CONC-2 reworded](status/conc-2-reword.md) — SPEC rule and ADR 0001 amended in f24cdc6, not reviewed
-- [reference-hw.md §5](status/reference-hw-questions.md) — Q1 to Q4 answered 2026-11-03 (dev PC is the interim Linux reference until the Deck is set up); Q5 and the VPN part of Q4 open
-- [Spec review gates](status/spec-review-gates.md) — the M2/M3 spec pages awaiting review before code
+- [reference-hw.md §5](status/reference-hw-questions.md) — answered 2026-11-03: budgets judged on the dev PC (interim) until the Steam Deck is set up; open: the VPN and a line below 1 Gbit/s for download runs
+- [Spec review gates](status/spec-review-gates.md) — M3 pages reviewed 2026-11-03 with some questions left open (cloud Q1, betas Q1/Q4/Q5, offline Q3); DRM and VAC not reviewed; friends needs a second test account
 - [A Mac and real Windows](status/hardware-mac-windows.md) — for macOS acceptance and what Wine can't show; waits until closer to release (2026-11-03)
 
 ## Decisions the maintainer hasn't confirmed

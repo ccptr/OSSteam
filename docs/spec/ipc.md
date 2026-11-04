@@ -236,6 +236,7 @@ These keys exist:
 | `compat.tool.<app id>` | `STRING` | empty | Linux: the user's compatibility tool for one app, a tool's name or a selectable alias; empty for Valve's mapping. A family of keys: `GetSettings` lists those with an override (`compat-tools.md` §8) |
 | `discovery.take_over_official` | `BOOL` | `false` | Linux: take over an official Steam client's `~/.steam` entries while it is not running, hand them back afterwards, and yield them when it starts (`steamworks-abi.md` §1.1.5). The description states its two risks; the CLI prints them when it is turned on, and the GUI asks to confirm |
 | `secrets.file_fallback` | `BOOL` | `false` | When no OS keyring is available, store refresh tokens in `secrets.json` in the data directory, mode 0600 (D-8, `auth.md` §4). A change applies to the next token read or write. |
+| `workshop.cache_limit` | `INTEGER` | `0` | MiB for the cached Workshop items of all library folders together, 0 to 2^30; 0 is no limit. Over it, the least recently used cached items are deleted (`workshop.md` §4) |
 
 **Secrets (IPC-10).** The password and Steam Guard codes travel only in
 their request. Both sides zero every frame buffer after use, the client

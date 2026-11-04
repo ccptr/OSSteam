@@ -1,6 +1,6 @@
 ---
 name: m3-workshop
-description: M3 workshop - workshop.md drafted (0aa5bfc); item content and layout; gated on §11 and §10 (subscribing is visible)
+description: M3 workshop - workshop.md drafted (0aa5bfc); §11 answered 2026-11-03 (own clean paths, no official layout; adjustable cache size); needs §10 (subscribing is visible)
 metadata:
   type: project
 ---
@@ -16,5 +16,8 @@ the profile, so ask first ([spec-review-gates](spec-review-gates.md)).
   `steamapps/workshop/{appworkshop_<app>.acf,content/<app>/<item>}` and
   `logs/workshop_log.txt` (daily subscription list, GetItemInfo full
   list, DownloadItem commits while the game runs).
-- Proposes `<library>/workshop/content/<app>/<item>` beside `common/`;
-  publishing is left out (no upload observed). §11 asks 5 questions.
+- §11 answered on 2026-11-03: every path is ossteam's own, new and
+  clean, nothing mirrors the official layout; items are in
+  `<library>/workshop/<app>/<item>/`. Cached items are bounded by
+  `workshop.cache_limit` (0 = no limit). Publishing is left out until an
+  upload has been observed; the rest as proposed.

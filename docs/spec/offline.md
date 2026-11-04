@@ -308,16 +308,30 @@ from ossteam before the user has approved it.
 
 1. **Starting without a connection** (§4): serve the stored library and
    keep trying, as proposed, or ask first as the official client does?
+
+   *Answer (2026-11-03):* as proposed.
+
 2. **The license list on disk** (§3.1): store it in the database, as
    proposed? It is what makes offline play possible, and `pics.md` §6
    says today that licenses are not cached.
+
+   *Answer (2026-11-03):* as proposed.
+
 3. **The offline logon ticket** (§2): leave it alone, as proposed, until
    something is found that needs it?
+
+   *Open (2026-11-03):* the maintainer has left this open.
+
 4. **Licenses that run out** (§3.2): refuse timed trials offline, as
    proposed, and also free weekends once their marker is known?
+
+   *Answer (2026-11-03):* as proposed.
+
 5. **Offline stats** (§6): keep them in the data directory and merge
    them at the next logon, as proposed? This changes
    `isteamuserstats.md`, which is M1 code.
+
+   *Answer (2026-11-03):* as proposed.
 
 ## 11. Verification against the official client
 

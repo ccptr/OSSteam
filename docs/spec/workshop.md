@@ -188,21 +188,23 @@ steamapps/workshop/
   temp/
 ```
 
-ossteam would mirror this inside its own library layout (`content.md`
-§8):
+ossteam does not mirror it: every path is its own (maintainer,
+2026-11-03). Items live in the library folder that holds the app, inside
+ossteam's own library layout (`content.md` §8), whose default folder is
+in the data directory (`$XDG_DATA_HOME/ossteam/library`, SPEC §17):
 
 ```
 <library>/
   common/<installdir>/                    the app
-  workshop/content/<app>/<item>/          an item's files
+  workshop/<app>/<item>/                  an item's files
   .ossteam/staging/workshop/<app>/<item>/ files being written
 ```
 
-`workshop/` sits beside `common/` as `steamapps/workshop/` sits beside
-`steamapps/common/` in the official layout. A game that finds its items
-by a path relative to its install directory
-(`../../workshop/content/<app>`) instead of asking `ISteamUGC` therefore
-still finds them (*unverified:* whether any game does this). There is no
+A game finds its items through `ISteamUGC`: `GetItemInstallInfo` gives
+an item's folder (§7). A game that looks for them by a path relative to
+its install directory, as the official layout allows
+(`../../workshop/content/<app>`), does not find them (*unverified:*
+whether any game does this). There is no
 `.acf`: the state lives in the database (§4).
 
 Staging, renaming into place, the checks for symbolic links and the
@@ -261,10 +263,14 @@ and is asked for again (§2.2); the database keeps the last copy so that
 an account offline still sees its items.
 
 **Cached items** stay until the game calls
-`MarkDownloadedItemAsUnused` (SDK 1.65), or until the app is
-uninstalled. *Unverified:* whether the official client evicts them on
-its own after a time; it keeps `timetouched`, which suggests it does.
-ossteam would not evict them until that is known.
+`MarkDownloadedItemAsUnused` (SDK 1.65), until the app is uninstalled,
+or until they no longer fit the cache. `workshop.cache_limit`
+(`ipc.md` §5.4) bounds the size of all cached items together, across
+library folders; 0, the default, is no limit. When cached items exceed
+it, the daemon deletes those a game used least recently until they fit,
+never a subscribed item, and never an item of an app that is running.
+*Unverified:* whether the official client evicts them on its own after a
+time; it keeps `timetouched`, which suggests it does.
 
 **Per-account choices** that SDK 1.6x added, `SetItemsDisabledLocally`
 and `SetSubscriptionsLoadOrder`, are stored per account and app in the
@@ -405,15 +411,32 @@ profile.
    beside `common/`, so that relative paths that work with the official
    client work with ossteam? Or under `.ossteam/`, which keeps ossteam's
    own files out of the library's top level?
+
+   *Answer (2026-11-03):* neither. Every path is ossteam's own, new and clean, in
+   the platform-standard directories; nothing mirrors the official layout
+   (§3.2).
+
 2. **Publishing** (§8): leave it out of M3's first step and write it up
    once an upload has been observed, as proposed? It needs an item
    published from the test account, at least privately.
+
+   *Answer (2026-11-03):* as proposed.
+
 3. **Updates while a game runs** (§3.4): defer subscribed items' updates
    until the game exits and commit `DownloadItem` at once, as proposed?
+
+   *Answer (2026-11-03):* as proposed.
+
 4. **Cached items** (§4): keep them until the game marks them unused or
    the app is uninstalled, until the official client's eviction is known?
+
+   *Answer (2026-11-03):* as proposed, and the cache's size is adjustable
+   (`workshop.cache_limit`, §4).
+
 5. **The CLI** (§5): `ossteam workshop <APP>` with `subscribe`,
    `unsubscribe` and `update`?
+
+   *Answer (2026-11-03):* as proposed.
 
 ## 12. Verification against the official client
 

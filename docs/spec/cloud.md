@@ -379,7 +379,12 @@ The quota checks of M1c stay as they are.
   `CloudSync` events with the app id, phase and files done; `GetApp`
   gains the app's cloud state. CLI: `ossteam cloud status [APP]` and
   `ossteam cloud resolve <APP> --keep local|steam`, plus `launch
-  --allow-unsynced`. GUI: the App page shows the cloud state and offers
+  --allow-unsynced`. When standard input and output are a terminal,
+  `ossteam launch` asks instead of failing: for a conflict, keep the
+  local files, keep Steam's, or cancel; for a pending session or a
+  failed sync, launch anyway or cancel. It then sends the launch again
+  with the choice. Otherwise, as in scripts, the launch fails with
+  `CONFLICT` and the commands above resolve it. GUI: the App page shows the cloud state and offers
   the choices of §4.1 and §4.4.
 - Tests: a fake `Cloud` service in the fake CM with an in-memory store
   behind a local HTTP server, driving both syncs, conflicts, pending
@@ -412,13 +417,27 @@ All of these need the test account logged in.
    alternative is to sync nothing for those rules and say so. The same
    question does not arise for the other roots, which are where the game
    writes anyway.
+
+   *Open (2026-11-03):* not answered yet.
+
 2. **Writing to the test account's Steam Cloud** (§8): acceptable? A
    mistake can only lose that account's cloud files for the test titles.
+
+   *Answer (2026-11-03):* acceptable.
+
 3. **Conflicts and pending sessions in the CLI**: the launch fails and
    the user resolves with a command (recommended, as `launch` asks
    nothing), or `ossteam launch` asks on the terminal?
+
+   *Answer (2026-11-03):* `ossteam launch` asks on the terminal when it runs
+   interactively; otherwise the launch fails and the user resolves with a
+   command (§7).
+
 4. **Order of M3**: Steam Cloud first, then the friends list and chat,
    Workshop, betas with passwords, and offline mode?
+
+   *Answer (2026-11-03):* Steam Cloud, then the friends list and chat, then
+   offline mode, then Workshop, then betas with passwords (SPEC §21).
 
 ## 10. Verification against the official client
 

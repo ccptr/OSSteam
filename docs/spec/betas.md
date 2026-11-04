@@ -269,16 +269,31 @@ watching. Nothing here is sent before the user has approved it.
    unlocked beta survives a restart without the code? The alternative is
    to keep it in memory and ask for the code again after each restart,
    which the official client does not seem to do (*unverified*, §8).
+
+   *Open (2026-11-03):* the maintainer has left this open.
+
 2. **Switching branches** (§5): in M3 with betas, as proposed? Without
    it a private branch can only be chosen at install time, and
    `SetActiveBeta` stays unimplemented.
+
+   *Answer (2026-11-03):* yes, in M3 with betas.
+
 3. **The CLI** (§6): `ossteam beta unlock|forget <APP>` and `ossteam
    branch <APP> <NAME>`? Or `--branch` on a new `ossteam update`?
+
+   *Answer (2026-11-03):* `ossteam beta unlock|forget <APP>` and `ossteam
+   branch <APP> <NAME>`.
+
 4. **The older forms** (§1.1): leave `pwdrequired` and
    `encryptedmanifests` unsupported until an app that uses them turns up,
    as proposed?
+
+   *Open (2026-11-03):* the maintainer has left this open.
+
 5. **`lcsrequired`** (§1.2): fix it now, as an M1 fix, so that such a
    branch is refused before the job starts?
+
+   *Open (2026-11-03):* the maintainer has left this open.
 
 ## 10. Verification against the official client
 

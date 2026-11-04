@@ -472,6 +472,11 @@ whose persona, messages and rich presence the test controls.
 
 ## 11. Questions for review
 
+*Answer (2026-11-03):* all five as recommended: a second test
+account for §10, group chat after M3, no chat history on disk, text
+filtering as the account's community setting says, and all three CLI
+commands.
+
 1. **A second account.** §10 needs the test account to be friends with
    another account. Your own account, a second test account you create,
    or none (then chat is only tested against the fake CM)? Recommended:

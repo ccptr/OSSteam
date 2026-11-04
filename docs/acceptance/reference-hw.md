@@ -7,8 +7,8 @@ defines that hardware and how a measurement on it is taken.
 **Status: partly answered (2026-11-03).** The Steam Deck is the Linux
 reference, but it is not set up yet; until then the development machine
 (§4) stands in for it. No Windows or macOS reference machine is
-available yet. Q5 of §5 is open, so no §20 row in the acceptance pages
-can be ticked yet.
+available yet. Budgets are judged on the development machine for now (§5
+Q5).
 
 ## 1. What a reference machine is for
 
@@ -83,15 +83,13 @@ the reference machine as follows, once it is chosen:
 ## 4. Machines on record
 
 **Linux x86_64, interim, from 2026-11-03:** the development machine
-below, until the Steam Deck is set up (§5 Q1). Its runs are recorded as
-interim results: they show regressions, but its CPU, GPU and display are
-far above the Deck's, so a budget met on it is run again on the Deck
-before it counts.
+below, until the Steam Deck is set up (§5 Q1). §20 rows are ticked on
+it, marked interim. Its CPU, GPU and display are far above the Deck's,
+so each such row is run again on the Deck once the Deck is set up.
 
-The development machine, for comparison only. Its numbers in the
-acceptance pages are labelled as such and are not results: its GPU and
-display are far above any reference machine's, and its traffic goes
-through a VPN.
+The development machine. Numbers taken on it before 2026-11-03 are
+labelled "not results"; from then on it is the interim Linux reference
+above. Its traffic goes through a VPN (§5 Q4).
 
 | | |
 |---|---|
@@ -133,3 +131,6 @@ through a VPN.
 5. Should a missed budget on a reference machine block M1 even when it
    is met everywhere else, as SPEC §21 M1e's exit says ("All §20 budgets
    are met"), or only be recorded until release?
+
+   *Answer (2026-11-03):* the reference will be the Steam Deck, but for
+   now budgets are judged on the development machine.

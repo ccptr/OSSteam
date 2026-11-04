@@ -8,8 +8,8 @@ metadata:
 Idle wakeups (§20): the CM I/O thread capped every poller wait at the
 1 s CONC-2 slice, so it woke 1.03 times a second when logged on and
 idle. `CancelToken::on_cancel` (ossteam-types) now wakes the poller:
-0.14/s for CM I/O, 0.23/s for the whole daemon (f24cdc6; see
-[conc-2-reword](conc-2-reword.md)). Dev-box numbers are in m1a.md (CLI
+0.14/s for CM I/O, 0.23/s for the whole daemon (f24cdc6; the CONC-2
+rewording and the ADR 0001 amendment were accepted on 2026-11-03). Dev-box numbers are in m1a.md (CLI
 p95 2.4 ms), labelled as not results. The GUI row was dry-run on the
 gui_states bench (4a986d3).
 

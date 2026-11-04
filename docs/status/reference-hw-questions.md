@@ -1,14 +1,22 @@
 ---
 name: reference-hw-questions
-description: reference-hw.md §5 Q1 to Q4 answered 2026-11-03 (dev PC is the interim Linux reference until the Deck is set up); Q5 and the VPN part of Q4 open
+description: reference-hw.md §5 answered 2026-11-03 - the Steam Deck will be the reference; budgets are judged on the dev PC (interim) until it is set up; the VPN and the sub-1 Gbit/s line for download runs are open
 metadata:
   type: project
 ---
 
-reference-hw.md §5 (e604d60) asks the maintainer 5 questions. Q1 to Q4
-were answered on 2026-11-03: the Steam Deck is the Linux reference once
-it is set up, and until then the dev PC is the interim one; Windows on
-the dev PC near release; no Mac yet; the line is up to 970 Mbit/s,
-about 800 in practice. Q5 and the VPN half of Q4 are open. No SPEC
-§20 row can be ticked until a reference machine is chosen. Numbers from
-the dev box are recorded only as "not results".
+reference-hw.md §5 (e604d60) was answered on 2026-11-03:
+
+- Q1 and Q5: the Steam Deck will be the Linux reference, but it needs
+  setting up. Until then budgets are judged on the dev PC: §20 rows are
+  ticked there, marked interim, and run again on the Deck later.
+- Q2: Windows is the dev PC's dual boot, closer to release.
+- Q3: no Mac yet.
+- Q4: wired Ethernet to a line of up to 970 Mbit/s, about 800 in
+  practice.
+
+**How to apply:** open: download runs need a 1 Gbit/s line with no VPN
+(§3), and this line is slower and goes through Mullvad. Proposed to the
+maintainer, not answered: count a run as saturating when it reaches what
+a speed test on the same line reaches just before. Ask before bypassing
+the VPN.

@@ -1053,9 +1053,9 @@ setting exists that could weaken it.
 
 ### M3: Social and cloud
 
-Steam Cloud sync (ISteamRemoteStorage and auto-cloud), the friends list and
-chat (ISteamFriends in full), Workshop (UGC), password-protected betas, and
-offline mode with truthful offline reporting to games.
+In this order: Steam Cloud sync (ISteamRemoteStorage and auto-cloud), the
+friends list and chat (ISteamFriends in full), offline mode with truthful
+offline reporting to games, Workshop (UGC), and password-protected betas.
 
 ### Later
 

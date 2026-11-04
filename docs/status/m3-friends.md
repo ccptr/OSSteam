@@ -1,6 +1,6 @@
 ---
 name: m3-friends
-description: M3 friends - friends.md drafted (00f4d0d); gated on §11 answers and §10 observations needing a second account
+description: M3 friends - friends.md drafted (00f4d0d); §11 answered 2026-11-03 as recommended; §10 observations need a second test account the maintainer has yet to make
 metadata:
   type: project
 ---
@@ -21,5 +21,8 @@ account logged in plus a second account
   Player.GetCommunityPreferences.
 - The official client stores coplay locally
   (`config/coplay_<steamid>.vdf`).
-- Proposes in-memory-only friends data and no chat log on disk. §11 asks
-  5 questions.
+- Proposes in-memory-only friends data and no chat log on disk. §11
+  answered on 2026-11-03, all as recommended: a second test account for
+  §10 (not made yet; ask the maintainer), group chat after M3, no chat
+  history on disk, text filtering per the community setting, and the
+  three CLI commands.

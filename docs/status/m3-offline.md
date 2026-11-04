@@ -1,6 +1,6 @@
 ---
 name: m3-offline
-description: M3 offline - offline.md drafted (37f78f3); a daemon started offline has an empty library today; gated on §10 and §9
+description: M3 offline - offline.md drafted (37f78f3); §10 answered 2026-11-03 as proposed but Q3 (offline logon ticket) open; a daemon started offline has an empty library today
 metadata:
   type: project
 ---
@@ -20,3 +20,7 @@ offline.md is drafted (37f78f3). Gate: §10 and §9
   and stats are kept.
 - Proposes a stored license list (changes pics.md §6), an offline stats
   merge (changes isteamuserstats.md) and a SetOfflineMode IPC.
+- §10 answered on 2026-11-03, as proposed: serve the stored library and
+  keep trying, the license list in the database, timed trials refused
+  offline, offline stats merged at the next logon. Q3 (the offline logon
+  ticket) is open.

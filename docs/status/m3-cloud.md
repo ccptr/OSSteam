@@ -1,6 +1,6 @@
 ---
 name: m3-cloud
-description: M3 cloud - cloud.md drafted (fd7c74d); gated on §9 answers and §8 live observations
+description: M3 cloud - cloud.md drafted (fd7c74d); §9 answered 2026-11-03 but Q1 (~/.SteamCloud vs DIRS-1); needs the §8 live observations
 metadata:
   type: project
 ---
@@ -17,5 +17,8 @@ cloud.md is drafted (fd7c74d). Gate: §9 answers and the §8 observations
 - Open: compressed (file_size < raw) and encrypted downloads, Auto-Cloud
   names on Steam (path prefixes), Proton roots and platform change, the
   conflict rule, client_id.
-- §9 asks 4 questions: SteamCloudDocuments `~/.SteamCloud` vs DIRS-1,
-  writing to the test account's cloud, CLI conflict UX, M3 order.
+- §9 answered on 2026-11-03: writing to the test account's cloud is
+  acceptable; `ossteam launch` asks on the terminal when it is
+  interactive, else fails and a command resolves; M3 order is cloud,
+  friends and chat, offline, Workshop, betas. Q1 (`~/.SteamCloud`
+  outside the XDG directories) is open.

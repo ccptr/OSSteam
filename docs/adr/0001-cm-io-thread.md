@@ -59,7 +59,7 @@ uses the system resolver and cannot be interrupted.
 - `polling` and `socket2` (non-blocking connect) are added as
   dependencies.
 
-## Amendment, 2026-10-19
+## Amendment, 2026-10-19 (accepted 2026-11-03)
 
 The I/O thread first also woke at the end of every 1 s cancellation slice
 of CONC-2. With heartbeats on top, an idle logged-in connection then woke

@@ -1,6 +1,6 @@
 ---
 name: m3-betas
-description: M3 betas - betas.md drafted (5228106); beta password flow, key storage proposal; gated on §9 and §8
+description: M3 betas - betas.md drafted (5228106); §9 answered 2026-11-03 but Q1 (key storage), Q4 (older forms) and Q5 (lcsrequired) left open; §8 needs a published beta code
 metadata:
   type: project
 ---
@@ -20,3 +20,7 @@ beta code ([spec-review-gates](spec-review-gates.md)).
   GetNumBetas/GetBetaInfo/SetActiveBeta.
 - Q5 proposes refusing `lcsrequired` branches (seen on 220070 `local`)
   as an M1 fix.
+- §9 answered on 2026-11-03: switching branches in M3, and the CLI
+  `ossteam beta unlock|forget` plus `ossteam branch`. Q1 (keeping the key
+  in the keyring), Q4 (the older forms) and Q5 (`lcsrequired`) are left
+  open.

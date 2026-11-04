@@ -16,7 +16,7 @@ use crate::throttle::Throttle;
 pub const PENALTY: Duration = Duration::from_secs(60);
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 const BODY_TIMEOUT: Duration = Duration::from_secs(60);
-/// Reads are accounted to the throttle in pieces of this size.
+/// The most one read asks for.
 const READ_PIECE: usize = 64 * 1024;
 
 /// One usable server.
@@ -201,28 +201,43 @@ impl Fetch for Https {
         };
         // One byte over the limit is let through so that the check below,
         // not the reader, reports it.
-        let mut reader = resp
+        let reader = resp
             .body_mut()
             .with_config()
             .limit(limit.saturating_add(1))
             .reader();
-        let mut out = Vec::new();
-        let mut piece = vec![0u8; READ_PIECE];
-        loop {
-            if !self.throttle.take(READ_PIECE, cancel) {
-                return Err(FetchError::Cancelled);
-            }
-            match reader.read(&mut piece) {
-                Ok(0) => return Ok(out),
-                Ok(n) => {
-                    out.extend_from_slice(&piece[..n]);
-                    if out.len() as u64 > limit {
-                        return Err(FetchError::TooLarge(limit));
-                    }
+        read_paced(reader, limit, &self.throttle, cancel)
+    }
+}
+
+/// Reads `reader` to its end, paced by `throttle`. Each read is charged
+/// what it returned, which over TLS is often one record (16 KiB), not the
+/// piece asked for.
+fn read_paced(
+    mut reader: impl Read,
+    limit: u64,
+    throttle: &Throttle,
+    cancel: &CancelToken,
+) -> Result<Vec<u8>, FetchError> {
+    let mut out = Vec::new();
+    let mut piece = vec![0u8; READ_PIECE];
+    loop {
+        if cancel.is_cancelled() {
+            return Err(FetchError::Cancelled);
+        }
+        match reader.read(&mut piece) {
+            Ok(0) => return Ok(out),
+            Ok(n) => {
+                out.extend_from_slice(&piece[..n]);
+                if out.len() as u64 > limit {
+                    return Err(FetchError::TooLarge(limit));
                 }
-                Err(e) if e.kind() == std::io::ErrorKind::Interrupted => {}
-                Err(e) => return Err(FetchError::Transport(e.to_string())),
+                if !throttle.take(n, cancel) {
+                    return Err(FetchError::Cancelled);
+                }
             }
+            Err(e) if e.kind() == std::io::ErrorKind::Interrupted => {}
+            Err(e) => return Err(FetchError::Transport(e.to_string())),
         }
     }
 }
@@ -249,6 +264,48 @@ pub const MANIFEST_LIMIT: u64 = manifest::MAX_SIZE;
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Gives out `left` bytes at most `piece` at a time, as TLS does.
+    struct Pieces {
+        left: usize,
+        piece: usize,
+    }
+
+    impl Read for Pieces {
+        fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+            let n = self.left.min(self.piece).min(buf.len());
+            buf[..n].fill(7);
+            self.left -= n;
+            Ok(n)
+        }
+    }
+
+    #[test]
+    fn short_reads_are_charged_what_they_returned() {
+        // 256 KiB in 16 KiB reads at 1 MiB/s takes about 0.25 s; charging
+        // each read 64 KiB would take a second.
+        let throttle = Throttle::new(1 << 20);
+        let start = Instant::now();
+        let reader = Pieces {
+            left: 256 * 1024,
+            piece: 16 * 1024,
+        };
+        let out = read_paced(reader, 1 << 20, &throttle, &CancelToken::new()).unwrap();
+        let took = start.elapsed();
+        assert_eq!(out.len(), 256 * 1024);
+        assert!(took >= Duration::from_millis(200), "{took:?}");
+        assert!(took < Duration::from_millis(600), "{took:?}");
+    }
+
+    #[test]
+    fn a_body_over_the_limit_is_refused() {
+        let reader = Pieces {
+            left: 1001,
+            piece: 100,
+        };
+        let r = read_paced(reader, 1000, &Throttle::new(0), &CancelToken::new());
+        assert!(matches!(r, Err(FetchError::TooLarge(1000))), "{r:?}");
+    }
 
     fn info(kind: &str, host: &str, load: f32, https: &str) -> CContentServerDirectoryServerInfo {
         CContentServerDirectoryServerInfo {

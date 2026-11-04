@@ -86,6 +86,8 @@ pub struct Games {
     pub sdk_dir: PathBuf,
     /// For the supervisor threads.
     pub commands: Sender<Command>,
+    /// DISC-5 (`steamworks-abi.md` §1.1.5).
+    pub take_over: super::takeover::TakeOver,
 }
 
 impl Games {
@@ -93,6 +95,7 @@ impl Games {
         settings: launch::Settings,
         data: &std::path::Path,
         state: &std::path::Path,
+        config: &std::path::Path,
         commands: Sender<Command>,
     ) -> Self {
         Self {
@@ -107,6 +110,7 @@ impl Games {
             client_dir: data.join("compat-client"),
             sdk_dir: data.join("steam-sdk"),
             commands,
+            take_over: super::takeover::TakeOver::new(config),
         }
     }
 
@@ -137,9 +141,10 @@ fn discovery_error(e: discovery::Error, isolation: &Isolation) -> RemoteError {
             // §1.1.4: the reason, and the ways out.
             Isolation::Unavailable(reason) => conflict(format!(
                 "{e}, so games cannot be launched: games get no private ~/.steam ({reason}). \
-                 Allow unprivileged user namespaces (or install ossteamd's AppArmor profile), \
-                 or quit the official Steam client and remove its ~/.steam/sdk32, sdk64 and \
-                 steam.pid, which it recreates when it starts"
+                 Allow unprivileged user namespaces (or install ossteamd's AppArmor profile); \
+                 quit the official Steam client and remove its ~/.steam/sdk32, sdk64 and \
+                 steam.pid, which it recreates when it starts, or turn on \
+                 discovery.take_over_official to take them over while it is not running"
             )),
             _ => conflict(format!("{e}, so games cannot be launched")),
         },
@@ -233,13 +238,14 @@ impl Core {
             Isolation::NotApplicable => None,
             Isolation::Available => Some(v1::GameIsolation {
                 available: true,
+                holds_official_entries: self.games.take_over.held,
                 ..Default::default()
             }),
             Isolation::Unavailable(reason) => Some(v1::GameIsolation {
                 available: false,
                 reason: reason.clone(),
                 launches_blocked: self.launches_blocked(),
-                holds_official_entries: false,
+                holds_official_entries: self.games.take_over.held,
             }),
         }
     }
@@ -277,7 +283,7 @@ impl Core {
         ))
     }
 
-    fn make_discovery(&mut self) -> Result<(), discovery::Error> {
+    pub(super) fn make_discovery(&mut self) -> Result<(), discovery::Error> {
         let account = self
             .session_state
             .account
@@ -310,6 +316,7 @@ impl Core {
     }
 
     pub(super) fn remove_discovery(&mut self) {
+        self.hand_back("no account is active, or the daemon stops");
         if !self.games.entries_made {
             return;
         }
@@ -329,6 +336,7 @@ impl Core {
         {
             tracing::info!("no discovery entries: {e}");
         }
+        self.sync_take_over();
     }
 
     pub(super) fn running_games(&self) -> u32 {

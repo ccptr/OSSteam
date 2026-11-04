@@ -245,6 +245,8 @@ impl TestDaemon {
             library_dir: Some(root.library_dir()),
             reaper: root.reaper(),
             private_steam: !r.join(NO_PRIVATE_STEAM).exists(),
+            take_over_quiet: Duration::from_millis(300),
+            take_over_tick: Duration::from_millis(100),
         };
         let env = Env {
             paths,

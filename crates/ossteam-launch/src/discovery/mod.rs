@@ -9,7 +9,7 @@ mod files;
 #[cfg(target_os = "linux")]
 mod linux;
 #[cfg(target_os = "linux")]
-pub use linux::Entries;
+pub use linux::{Entries, takeover};
 #[cfg(target_os = "macos")]
 mod macos;
 #[cfg(target_os = "macos")]

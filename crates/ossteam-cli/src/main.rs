@@ -663,9 +663,10 @@ fn isolation_lines(g: &v1::GameIsolation) -> Vec<String> {
     if g.launches_blocked {
         lines.push(
             "cannot be launched while an official Steam client owns ~/.steam; allow \
-             unprivileged user namespaces (or install ossteamd's AppArmor profile), or quit \
+             unprivileged user namespaces (or install ossteamd's AppArmor profile); quit \
              the official client and remove its ~/.steam/sdk32, sdk64 and steam.pid, which \
-             it recreates when it starts"
+             it recreates when it starts; or turn on discovery.take_over_official to take \
+             them over while it is not running, with the risks `ossteam config set` prints"
                 .into(),
         );
     }

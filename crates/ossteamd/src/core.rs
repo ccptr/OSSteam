@@ -27,6 +27,7 @@ mod compat;
 mod games;
 mod jobs;
 mod shim;
+mod takeover;
 mod tickets;
 
 pub use games::app_launch_options;
@@ -78,6 +79,10 @@ pub enum Command {
     /// A game's connections had their time to close (`steamworks-abi.md`
     /// §3.5).
     GameExitWait(ossteam_types::AppId),
+    /// Linux: `~/.steam` changed, or the take-over's interval passed
+    /// (`steamworks-abi.md` §1.1.5).
+    #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+    SteamDir,
 }
 
 /// Why the core loop ended.
@@ -149,6 +154,8 @@ pub struct Parts {
     pub launch: launch::Settings,
     pub data_dir: PathBuf,
     pub state_dir: PathBuf,
+    /// `<config>`, which holds the take-over's record.
+    pub config_dir: PathBuf,
     /// The core's own command channel, for game supervisors.
     pub commands: Sender<Command>,
 }
@@ -175,7 +182,13 @@ impl Core {
                 ..Default::default()
             },
             content_jobs: p.content_jobs,
-            games: games::Games::new(p.launch, &p.data_dir, &p.state_dir, p.commands),
+            games: games::Games::new(
+                p.launch,
+                &p.data_dir,
+                &p.state_dir,
+                &p.config_dir,
+                p.commands,
+            ),
             shims: shim::Shims::new(&p.data_dir),
             stats: p.stats,
             tickets: auth::Tickets::default(),
@@ -184,6 +197,7 @@ impl Core {
     }
 
     fn loaded(mut self) -> Self {
+        self.take_over_at_start();
         self.clean_discovery();
         self.check_isolation();
         if let Err(e) = self.load_content() {
@@ -252,6 +266,7 @@ impl Core {
                 Command::Stats(done) => self.on_stats(done),
                 Command::Tickets(e) => self.on_ticket_event(e),
                 Command::GameExitWait(app) => self.exit_wait_over(app),
+                Command::SteamDir => self.sync_take_over(),
             }
         };
         // Running jobs stop first and keep their journals (`content.md`
@@ -677,6 +692,7 @@ impl Core {
             .set_setting_override(&config::canonical(key), stored.as_deref())
             .map_err(|e| internal(&e))?;
         let before = self.config.proto(key);
+        let took_over = self.config.take_over_official();
         self.config.set_override(key, value);
         let after = self.config.proto(key);
         tracing::info!(key = %after.key, value = %after.value, reset = req.reset, "setting changed");
@@ -685,6 +701,9 @@ impl Core {
         if after != before && def.key.starts_with("compat.") {
             // An installed app's platform may change (`compat-tools.md` §8).
             self.check_updates();
+        }
+        if def.key == config::DISCOVERY_TAKE_OVER_OFFICIAL {
+            self.take_over_setting_changed(took_over);
         }
         if after != before {
             self.broadcast(

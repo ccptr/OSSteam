@@ -31,6 +31,7 @@ const DOWNLOAD_KEYS: [&str; 5] = [
     "content.language",
 ];
 const DEFAULT_TOOL: &str = "compat.default_tool";
+const TAKE_OVER: &str = "discovery.take_over_official";
 const TOOL_PREFIX: &str = "compat.tool.";
 const PICKER_TITLE: &str = "Add library folder";
 
@@ -48,6 +49,9 @@ pub struct SettingsPage {
     confirm_logout: bool,
     /// Shutdown failed with CONFLICT: offer to stop the games too.
     offer_force: bool,
+    /// Turning on `discovery.take_over_official` waits for a confirmation
+    /// of its risks (`gui.md` §4.5).
+    confirm_take_over: bool,
 }
 
 pub fn page_focus() -> FocusHandle {
@@ -157,7 +161,13 @@ fn setting(g: &Gui, s: &v1::Setting, label: Option<String>, p: Palette, cx: &Vie
             let on = s.value == "true";
             let k = key.clone();
             switch(p, id, name, on)
-                .on_toggle(move |g, _| set(g, k.clone(), Some((!on).to_string())))
+                .on_toggle(move |g, _| {
+                    if k == TAKE_OVER && !on {
+                        g.settings.confirm_take_over = true;
+                    } else {
+                        set(g, k.clone(), Some((!on).to_string()));
+                    }
+                })
                 .into()
         }
         _ => {
@@ -462,20 +472,78 @@ fn daemon(g: &Gui, m: &Model, others: &[&v1::Setting], p: Palette, cx: &ViewCx) 
         })
 }
 
-/// Whether launched games get a private `~/.steam` (`gui.md` §4.5).
-fn discovery(g: &v1::GameIsolation, p: Palette) -> El {
-    let isolated = if g.available { "Yes" } else { "No" };
-    let held = if g.holds_official_entries {
+/// Whether launched games get a private `~/.steam`, whether the daemon
+/// holds the official client's entries, and the switch that lets it
+/// (`gui.md` §4.5).
+fn discovery(
+    g: &Gui,
+    i: &v1::GameIsolation,
+    take_over: Option<&v1::Setting>,
+    p: Palette,
+    cx: &ViewCx,
+) -> El {
+    let isolated = if i.available { "Yes" } else { "No" };
+    let held = if i.holds_official_entries {
         "Held by ossteam"
     } else {
         "Not held by ossteam"
     };
+    let switch = take_over.map(|s| {
+        setting(
+            g,
+            s,
+            Some("Take over the official client's entries while it is not running".into()),
+            p,
+            cx,
+        )
+    });
+    // As with Log out…: Cancel takes the switch's focus handle.
+    let confirm = (g.settings.confirm_take_over && take_over.is_some()).then(|| {
+        let risks = config_risks(take_over.map_or("", |s| s.description.as_str()));
+        panel()
+            .gap(8.0)
+            .child(
+                text(format!("Turn it on? {risks}"))
+                    .font_size(widgets::TEXT)
+                    .text_color(p.warning)
+                    .reveal_when_shown(),
+            )
+            .child(
+                panel()
+                    .row()
+                    .gap(8.0)
+                    .child(
+                        button(p, "confirm-take-over", "Turn on, accepting the risks")
+                            .danger()
+                            .on_click(|g, _| {
+                                g.settings.confirm_take_over = false;
+                                set(g, TAKE_OVER.into(), Some("true".into()));
+                            }),
+                    )
+                    .child(
+                        button(p, "cancel-take-over", "Cancel")
+                            .secondary()
+                            .focus(FocusHandle::named(control_id(TAKE_OVER)))
+                            .on_click(|g, _| g.settings.confirm_take_over = false),
+                    ),
+            )
+    });
     group(p)
         .child(row(p, "Private ~/.steam", isolated))
-        .when_some(store::isolation_warning(g), |d, w| {
+        .when_some(store::isolation_warning(i), |d, w| {
             d.child(text(w).font_size(widgets::TEXT).text_color(p.warning))
         })
         .child(row(p, "Official entries", held))
+        .when_some(switch, |d, s| d.child(s))
+        .when_some(confirm, |d, c| d.child(c))
+}
+
+/// The risks the setting's description states, from "Risks:" on; the
+/// whole description if it has no such part.
+fn config_risks(description: &str) -> &str {
+    description
+        .find("Risks:")
+        .map_or(description, |i| &description[i..])
 }
 
 /// A label for the settings this page names.
@@ -521,8 +589,13 @@ pub fn view(g: &Gui, m: &Model, p: Palette, cx: &ViewCx) -> El {
         compat = compat.child(setting(g, s, Some(name), p, cx));
     }
 
-    let named =
-        |k: &str| DOWNLOAD_KEYS.contains(&k) || k == DEFAULT_TOOL || k.starts_with(TOOL_PREFIX);
+    let isolation = m.store.status.game_isolation.as_ref();
+    let named = |k: &str| {
+        DOWNLOAD_KEYS.contains(&k)
+            || k == DEFAULT_TOOL
+            || k.starts_with(TOOL_PREFIX)
+            || (k == TAKE_OVER && isolation.is_some())
+    };
     let others: Vec<&v1::Setting> = settings
         .values()
         .filter(|s| !named(&s.key) || (!linux && s.key.starts_with("compat.")))
@@ -535,8 +608,12 @@ pub fn view(g: &Gui, m: &Model, p: Palette, cx: &ViewCx) -> El {
         .child(section(p, "Library folders", folders(g, m, p)))
         .child(section(p, "Downloads", downloads))
         .when(linux, |d| d.child(section(p, "Compatibility", compat)))
-        .when_some(m.store.status.game_isolation.as_ref(), |d, i| {
-            d.child(section(p, "Discovery", discovery(i, p)))
+        .when_some(isolation, |d, i| {
+            d.child(section(
+                p,
+                "Discovery",
+                discovery(g, i, settings.get(TAKE_OVER), p, cx),
+            ))
         })
         .when_some(account(g, m, p), |d, a| d.child(section(p, "Account", a)))
         .child(section(p, "Daemon", daemon(g, m, &others, p, cx)));

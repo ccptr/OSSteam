@@ -99,7 +99,7 @@ events (GUI-2):
 
 | Store field | Read with | Kept current by |
 |---|---|---|
-| status | `GetStatus` | `SessionChanged` (connection, account, logged on, reason, persona state); on Linux, `game_isolation` alone read again after a warning `Notice`, by which the daemon tells of its changes (`steamworks-abi.md` §1.1.6) |
+| status | `GetStatus` | `SessionChanged` (connection, account, logged on, reason, persona state); on Linux, `game_isolation` alone read again after a `Notice`, by which the daemon tells of its changes (`steamworks-abi.md` §1.1.6) |
 | accounts | `ListAccounts` | read again after `SessionChanged` and `LoginEnded` |
 | library | `ListApps` | read again after `AppChanged`, at most every 250 ms, and when the active account changes |
 | app details | `GetApp`, `GetLaunchOptions`, for open App pages only | read again when `AppChanged` names the app, or a job of the app changes state |

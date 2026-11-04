@@ -299,6 +299,7 @@ fn serve(
         launch,
         data_dir: paths.data.clone(),
         state_dir: paths.state.clone(),
+        config_dir: paths.config.clone(),
         commands: cmd_tx,
     })
     .run(cmd_rx);

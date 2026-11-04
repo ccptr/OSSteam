@@ -18,6 +18,7 @@ pub const COMPAT_DEFAULT_TOOL: &str = "compat.default_tool";
 pub const COMPAT_TOOL: &str = "compat.tool.<app id>";
 const COMPAT_TOOL_PREFIX: &str = "compat.tool.";
 pub const SECRETS_FILE_FALLBACK: &str = "secrets.file_fallback";
+pub const DISCOVERY_TAKE_OVER_OFFICIAL: &str = "discovery.take_over_official";
 pub const CONTENT_AUTO_UPDATE: &str = "content.auto_update";
 pub const CONTENT_BANDWIDTH_LIMIT: &str = "content.bandwidth_limit";
 pub const CONTENT_CONCURRENT_JOBS: &str = "content.concurrent_jobs";
@@ -157,6 +158,23 @@ pub struct Def {
     pub description: &'static str,
 }
 
+/// `discovery.take_over_official`'s description, which states its risks
+/// (`steamworks-abi.md` §1.1.5, §1.1.6). The CLI prints it and the GUI asks
+/// to confirm with it when the setting is turned on.
+pub const TAKE_OVER_RISKS: &str = "Linux: take over an official Steam client's ~/.steam \
+    entries while it is not running, hand them back afterwards, and yield them when it starts. \
+    Risks: when games get no private ~/.steam, what a game ossteam started starts after the \
+    official client has started (a launcher's real game, a game restarting itself) finds the \
+    official client and plays under its account; and if the official client starts just as \
+    ossteam takes over, the games it starts may find ossteam and play under ossteam's account.";
+
+/// The risks alone, one sentence each, for the daemon's warning line.
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+pub const TAKE_OVER_RISK_LINE: &str = "when games get no private ~/.steam, what a game ossteam \
+    started starts after the official Steam client has started finds that client and its \
+    account. If the official client starts just as ossteam takes over, the games it starts may \
+    find ossteam and play under ossteam's account.";
+
 /// Every setting this build knows, sorted by key.
 pub const DEFS: &[Def] = &[
     Def {
@@ -206,6 +224,12 @@ pub const DEFS: &[Def] = &[
         kind: Kind::Choice(LANGUAGES),
         default: Value::Word("english"),
         description: "The language whose depots are installed, as Steam names it.",
+    },
+    Def {
+        key: DISCOVERY_TAKE_OVER_OFFICIAL,
+        kind: Kind::Bool,
+        default: Value::Bool(false),
+        description: TAKE_OVER_RISKS,
     },
     Def {
         key: SECRETS_FILE_FALLBACK,
@@ -405,6 +429,11 @@ impl Config {
 
     pub fn language(&self) -> &'static str {
         self.word(CONTENT_LANGUAGE)
+    }
+
+    /// `discovery.take_over_official` (DISC-5).
+    pub fn take_over_official(&self) -> bool {
+        self.bool(DISCOVERY_TAKE_OVER_OFFICIAL)
     }
 
     /// `secrets.file_fallback` (SPEC D-8).

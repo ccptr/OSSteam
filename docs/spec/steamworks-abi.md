@@ -274,7 +274,13 @@ It then records the official entries in `<config>/official-entries.toml`
 when it exists), and replaces them with its own: each link by creating
 the new one under a temporary name and renaming it over the old one,
 `steam.pid` last. The conditions are checked again just before each
-rename, and the daemon stops at the first that no longer holds.
+rename, and the daemon stops at the first that no longer holds, and
+hands back what it had taken. While the setting is on and an account is
+active, the daemon looks at the conditions whenever `~/.steam` changes
+and every 10 s, since the official client exiting and its games ending
+change nothing in `~/.steam`. Changes are ossteam's own when they are
+on its temporary names (`.<name>.ossteam`) or rename one into place;
+the 30 s count from when the daemon began to watch.
 
 **Handing back.** Where §1.5 removes the real entries (a logout, the
 daemon's exit, ossteam's own stale entries at start), and when the
@@ -368,6 +374,8 @@ take-over setting risks, wherever they would look:
   official Steam client took ~/.steam back. What games ossteam started
   without a private ~/.steam start from now on finds the official
   client and its account."), and when the setting is turned on.
+  An info `Notice` when the daemon takes the entries over and when it
+  hands them back, so that clients can read `game_isolation` again.
 - **The setting.** Its description in `GetSettings` states both risks of
   §1.1.5. Turning it on in the GUI asks for confirmation with that text;
   `ossteam config set discovery.take_over_official true` prints it on
@@ -408,7 +416,7 @@ take-over setting risks, wherever they would look:
 | Counter-Strike 2 in the Steam Linux Runtime 3.0 (sniper) reaches the daemon | done 2026-11-03 (64-bit), once a stale lock was removed: its single-instance lock `/tmp/source_engine_<n>.lock`, left by another user, cannot be opened with `fs.protected_regular` set, and the game then hangs after its error dialog fails (the same under the official client). It loaded `sdk64/steamclient.so` from the private `~/.steam` and connected within a second, with `userdata/` and `config/` covered inside the container, and loaded its menus. It cannot go online: `SteamGameCoordinator001` is not implemented, and it asks for `SteamNetworkingSocketsSerialized005` and `SteamAppDisableUpdate001`, which ossteam does not provide |
 | Anti-cheat (VAC, and EAC or BattlEye where the test account owns a title) accepts a native game in the namespace | to be run |
 | The check at start reports Ubuntu's AppArmor restriction | to be run on Ubuntu 24.04 |
-| The official client starting while ossteam holds the entries (§1.1.5) | to be run |
+| The official client starting while ossteam holds the entries (§1.1.5) | built 2026-11-04 and tested against `ln -fsn`-style renames in a scratch home (`m1c::official_entries_are_taken_over_and_handed_back`); with the real official client, to be run |
 | The client replaces a `steam.pid` naming a live process | unverified |
 
 ### 1.2 Windows

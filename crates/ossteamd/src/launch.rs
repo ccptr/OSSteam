@@ -4,6 +4,7 @@
 //! core (CONC-1, LAUNCH-4).
 
 use std::path::PathBuf;
+use std::time::Duration;
 
 use crossbeam_channel::Sender;
 use ossteam_launch::process::{Exit, Game};
@@ -26,6 +27,13 @@ pub struct Settings {
     /// (`steamworks-abi.md` §1.1.2). Only tests turn it off, to see
     /// launches without one.
     pub private_steam: bool,
+    /// Linux: how long `~/.steam` must go unchanged by others before a
+    /// take-over, and how often its conditions are looked at again
+    /// (`steamworks-abi.md` §1.1.5): 30 s and 10 s, shorter in tests.
+    #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+    pub take_over_quiet: Duration,
+    #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+    pub take_over_tick: Duration,
 }
 
 impl Settings {
@@ -41,6 +49,8 @@ impl Settings {
             library_dir: ossteam_launch::discovery::library_dir(),
             reaper: std::env::current_exe()?,
             private_steam: true,
+            take_over_quiet: Duration::from_secs(30),
+            take_over_tick: Duration::from_secs(10),
         })
     }
 }

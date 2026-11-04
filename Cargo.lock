@@ -2317,6 +2317,7 @@ dependencies = [
  "ossteam-vdf",
  "rustix 1.1.6",
  "thiserror 2.0.21",
+ "toml",
  "tracing",
  "windows-sys 0.61.2",
 ]

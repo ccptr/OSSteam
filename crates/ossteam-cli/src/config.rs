@@ -37,11 +37,29 @@ pub fn get(cli: &Cli, key: &str) -> Result<(), Failure> {
 
 /// Sets an override, or with `value` `None` removes it.
 pub fn set(cli: &Cli, key: &str, value: Option<&str>) -> Result<(), Failure> {
-    let s = connect(cli, true)?.set_setting(key, value)?;
+    let client = connect(cli, true)?;
+    if key.trim() == TAKE_OVER && value.map(str::trim) == Some("true") {
+        warn_take_over(&client)?;
+    }
+    let s = client.set_setting(key, value)?;
     if cli.json {
         println!("{}", setting_json(&s));
     } else if !cli.quiet {
         println!("{} = {} ({})", s.key, s.value, source_text(s.source));
+    }
+    Ok(())
+}
+
+/// The setting whose risks are printed before it is turned on.
+const TAKE_OVER: &str = "discovery.take_over_official";
+
+/// Prints the take-over's risks, as the daemon describes the setting, on
+/// standard error, whatever `--json` and `--quiet` say
+/// (`steamworks-abi.md` §1.1.6).
+fn warn_take_over(client: &ossteam_ipc::Client) -> Result<(), Failure> {
+    let settings = client.get_settings()?;
+    if let Some(s) = settings.iter().find(|s| s.key == TAKE_OVER) {
+        eprintln!("warning: turning on {TAKE_OVER}. {}", s.description);
     }
     Ok(())
 }

@@ -31,8 +31,9 @@ pub enum Read {
 /// The ways out when launches fail for want of a private `~/.steam`
 /// (`steamworks-abi.md` §1.1.4).
 const WAYS_OUT: &str = "Allow unprivileged user namespaces (or install ossteamd's AppArmor \
-     profile), or quit the official Steam client and remove its ~/.steam/sdk32, sdk64 and \
-     steam.pid, which it recreates when it starts.";
+     profile); quit the official Steam client and remove its ~/.steam/sdk32, sdk64 and \
+     steam.pid, which it recreates when it starts; or turn on taking over its entries while it \
+     is not running, in Settings, under Discovery, with the risks written there.";
 
 /// What the GUI says when launched games get no private `~/.steam`
 /// (`gui.md` §2.4): `None` while they get one.
@@ -300,9 +301,9 @@ impl Store {
             event::Kind::Notice(n) => {
                 let level = NoticeLevel::try_from(n.level).unwrap_or(NoticeLevel::Info);
                 self.push_notice(level, n.text);
-                // The daemon warns when the private `~/.steam` changes
-                // (`steamworks-abi.md` §1.1.6).
-                if level == NoticeLevel::Warning && self.status.game_isolation.is_some() {
+                // The daemon gives a notice when the private `~/.steam`, or
+                // the take-over, changes (`steamworks-abi.md` §1.1.6).
+                if self.status.game_isolation.is_some() {
                     vec![Read::Isolation]
                 } else {
                     Vec::new()
@@ -561,15 +562,16 @@ mod tests {
         assert!(n.text.contains("(unshare failed)"), "{}", n.text);
         assert!(n.text.contains("cannot be launched"), "{}", n.text);
 
-        // A warning from the daemon reads it again; an info does not.
-        let notice = |level: NoticeLevel| {
+        // A notice from the daemon reads it again; without it (off Linux),
+        // nothing is read.
+        let notice = || {
             event::Kind::Notice(v1::Notice {
-                level: level as i32,
+                level: NoticeLevel::Info as i32,
                 text: "x".into(),
             })
         };
-        assert_eq!(s.apply(notice(NoticeLevel::Warning)), [Read::Isolation]);
-        assert!(s.apply(notice(NoticeLevel::Info)).is_empty());
+        assert_eq!(s.apply(notice()), [Read::Isolation]);
+        assert!(store_with(None).apply(notice()).is_empty());
         s.set_isolation(Some(v1::GameIsolation::default()));
         assert!(!s.status.game_isolation.as_ref().unwrap().launches_blocked);
     }

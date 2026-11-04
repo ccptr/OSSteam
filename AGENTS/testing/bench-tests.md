@@ -21,7 +21,10 @@ has no lib target):
   - Bench jobs finish fast, so pause one with `ossteam jobs pause N`.
   - With `OSSTEAM_BENCH_NO_PRIVATE_STEAM` set (Linux), games get no
     private `~/.steam` and an official client owns the bench's
-    `~/.steam`, so status, `launch` and the GUI warn (DISC-6).
+    `~/.steam`, so status, `launch` and the GUI warn (DISC-6). Turning
+    on `discovery.take_over_official` there takes the bench's official
+    entries over within a second (the test daemon waits 300 ms, not
+    30 s).
 
 The bench daemon's RSS means nothing, because the fake CM runs in the
 same process.

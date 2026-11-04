@@ -26,6 +26,8 @@ fn remove_dir(dir: &Path) -> Result<(), Error> {
 }
 use super::{Error, Libraries};
 
+pub mod takeover;
+
 const SDKS: [&str; 2] = ["sdk64", "sdk32"];
 
 pub struct Entries {

@@ -1,6 +1,6 @@
 ---
 name: discovery-entries-official-steam
-description: An official Steam install owns ~/.steam/sdk64 on the dev machine, so launches failed with exit 8; a private ~/.steam per launch (DISC-4 to DISC-6) accepted 2026-11-03; DISC-4 built and run live 2026-11-03 (Portal: First Slice in the Steam Linux Runtime and on the host, Spacewar under Proton; Counter-Strike 2 in sniper, offline: no Game Coordinator); DISC-6 built 2026-11-04 but for the take-over's parts; DISC-5 to build
+description: An official Steam install owns ~/.steam/sdk64 on the dev machine, so launches failed with exit 8; a private ~/.steam per launch (DISC-4 to DISC-6) accepted 2026-11-03; DISC-4 built and run live 2026-11-03 (Portal: First Slice in the Steam Linux Runtime and on the host, Spacewar under Proton; Counter-Strike 2 in sniper, offline: no Game Coordinator); DISC-5 and DISC-6 built 2026-11-04; the take-over's live run with the official client left
 metadata:
   type: project
 ---
@@ -68,17 +68,26 @@ gui.md §3). Checked against the bench with
 `OSSTEAM_BENCH_NO_PRIVATE_STEAM` (CLI and GUI). `holds_official_entries`
 is always false until DISC-5.
 
-**How to apply:** still to build:
+**Built on 2026-11-04 (DISC-5):** `discovery.take_over_official`, the
+take-over and hand-back in `ossteam-launch::discovery::takeover`
+(record, renames, the §1.1.3 running test, the `/proc/*/maps` scan, the
+inotify watcher), and in the daemon (`core/takeover.rs`): take-over
+when the conditions hold, re-checked on changes and every 10 s;
+hand-back at logout, exit, setting off and at start from the record;
+yield with a warning `Notice`; info notices on take-over and hand-back
+(added to §1.1.6 so that clients can read `game_isolation` again). The
+DISC-6 parts for it too: the start and setting-on warnings, the second
+`launch` line, `config set` printing the risks, the ways out naming the
+setting, and the GUI's switch with a confirmation. Checked in the bench
+(CLI and GUI) and in `m1c::official_entries_are_taken_over_and_handed_back`.
 
-- DISC-5: the take-over, with DISC-6's parts for it (the start and
-  setting warnings, the second `launch` line, the Settings switch with
-  its confirmation, the `config set` text, and the ways out naming the
-  setting in the CLI's and GUI's texts). The `CONFLICT` message leaves out
-  `discovery.take_over_official` as a way out until the setting exists.
-  The take-over's record is `<config>/official-entries.toml`
-  (maintainer, 2026-11-03: in the configuration directory, not in
-  `<data>/steam-sdk` where every game would see it in its private
-  `~/.steam`; no mount hides `<config>`).
+**How to apply:** left to do: run the take-over against the real
+official client on the dev PC (§1.1.8). The maintainer allowed starting
+the official client for it (2026-11-03), but it rewrites their real
+`~/.steam`, so ask before the run. The take-over's record is
+`<config>/official-entries.toml` (maintainer, 2026-11-03: in the
+configuration directory, not in `<data>/steam-sdk` where every game
+would see it in its private `~/.steam`; no mount hides `<config>`).
 
 **Run live on 2026-11-03.** The real daemon, restarted on this build,
 launched Portal: First Slice (410) for the test account through the

@@ -322,6 +322,125 @@ fn discovery_entries_follow_the_account() {
     assert!(!exists(&steam.join("sdk64")));
 }
 
+/// With `discovery.take_over_official` on, the daemon takes over an
+/// official client's entries while it is not running, hands them back as
+/// they were, yields them when the official client makes its own again,
+/// and hands back at start what a crashed daemon held (DISC-5,
+/// `steamworks-abi.md` §1.1.5).
+#[cfg(target_os = "linux")]
+#[test]
+fn official_entries_are_taken_over_and_handed_back() {
+    use ossteam_launch::discovery::takeover::Record;
+
+    let cdn = Arc::new(FakeCdn::new());
+    let (os, _) = oses();
+    let cm = steam(&cdn, &[("bin/game.sh", os)]);
+    let root = Root::new();
+    root.install_client_libraries();
+    root.refuse_private_steam();
+    let steam = steam_dir(&root);
+    let valve = root.path().join("home/.local/share/Steam/linux64");
+    std::fs::create_dir_all(&valve).unwrap();
+    std::fs::create_dir_all(&steam).unwrap();
+    std::os::unix::fs::symlink(&valve, steam.join("sdk64")).unwrap();
+    // Not a live process with steam.pipe open: the client is not running.
+    std::fs::write(steam.join("steam.pid"), "99").unwrap();
+    let record = root.path().join("config/official-entries.toml");
+    let ours = root.path().join("data/steam-sdk/sdk64");
+    let official_as_left = || {
+        assert_eq!(std::fs::read_link(steam.join("sdk64")).unwrap(), valve);
+        assert_eq!(
+            std::fs::read_to_string(steam.join("steam.pid")).unwrap(),
+            "99"
+        );
+        assert!(!exists(&steam.join("sdk32")));
+        assert!(!exists(&record));
+    };
+
+    let d = TestDaemon::start_with_cdn(&root, &cm, POLL, cdn.clone());
+    login(&d);
+    let c = d.subscribed(&[Topic::Notices]);
+    let isolation = |c: &Client| c.get_status().unwrap().game_isolation.unwrap();
+    wait_until("the private entries", || {
+        exists(&root.path().join("data/steam-sdk/steam.pid"))
+    });
+    assert!(isolation(&c).launches_blocked);
+    assert!(!isolation(&c).holds_official_entries);
+
+    let warning = |c: &Client, what: &str, part: &'static str| {
+        wait_event(c, what, |k| match k {
+            event::Kind::Notice(n)
+                if n.level == v1::NoticeLevel::Warning as i32 && n.text.contains(part) =>
+            {
+                Some(n.text.clone())
+            }
+            _ => None,
+        })
+    };
+    c.set_setting("discovery.take_over_official", Some("true"))
+        .expect("set");
+    warning(
+        &c,
+        "the setting's warning",
+        "discovery.take_over_official is on",
+    );
+    wait_until("the take-over", || isolation(&c).holds_official_entries);
+    assert!(!isolation(&c).launches_blocked);
+    assert_eq!(std::fs::read_link(steam.join("sdk64")).unwrap(), ours);
+    assert_eq!(
+        std::fs::read_to_string(steam.join("steam.pid")).unwrap(),
+        std::process::id().to_string()
+    );
+    assert_eq!(
+        Record::read(&record).unwrap(),
+        Some(Record {
+            sdk64: Some(valve.clone()),
+            sdk32: None,
+            pid: Some("99".into()),
+        })
+    );
+
+    // Turned off: handed back as they were.
+    c.set_setting("discovery.take_over_official", Some("false"))
+        .expect("set");
+    official_as_left();
+    assert!(!isolation(&c).holds_official_entries);
+
+    // On again, then the official client starts: steam.sh makes sdk64
+    // again, and the daemon yields.
+    c.set_setting("discovery.take_over_official", None)
+        .expect("reset");
+    c.set_setting("discovery.take_over_official", Some("true"))
+        .expect("set");
+    wait_until("the take-over", || isolation(&c).holds_official_entries);
+    let tmp = steam.join("sdk64.tmp");
+    std::os::unix::fs::symlink(&valve, &tmp).unwrap();
+    std::fs::rename(&tmp, steam.join("sdk64")).unwrap();
+    warning(&c, "the yield", "took ~/.steam back");
+    assert!(!isolation(&c).holds_official_entries);
+    assert_eq!(std::fs::read_link(steam.join("sdk64")).unwrap(), valve);
+    c.set_setting("discovery.take_over_official", Some("false"))
+        .expect("set");
+    drop(c);
+    drop(d);
+
+    // A crashed daemon's take-over is handed back at start.
+    std::fs::write(steam.join("steam.pid"), "99").unwrap();
+    let libs = ossteam_launch::discovery::find_libraries(&root.library_dir()).unwrap();
+    let entries = ossteam_launch::discovery::Entries::new(
+        &root.path().join("home"),
+        &root.path().join("data"),
+    );
+    let _ = entries.create(&libs, 4_000_000, 0);
+    entries
+        .take_over(&record, 4_000_000, &mut || Ok(()))
+        .unwrap();
+    assert_eq!(std::fs::read_link(steam.join("sdk64")).unwrap(), ours);
+    let d = TestDaemon::start_with_cdn(&root, &cm, POLL, cdn.clone());
+    d.client().get_status().expect("status");
+    official_as_left();
+}
+
 /// A launched game finds ossteam in its private `~/.steam` while an
 /// official client owns the real one, and sees ossteam's `userdata/` and
 /// an empty `config/` in the official installation (DISC-4,

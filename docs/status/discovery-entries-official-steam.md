@@ -1,6 +1,6 @@
 ---
 name: discovery-entries-official-steam
-description: An official Steam install owns ~/.steam/sdk64 on the dev machine, so launches failed with exit 8; a private ~/.steam per launch (DISC-4 to DISC-6) accepted 2026-11-03; DISC-4 built and run live 2026-11-03 (Portal: First Slice in the Steam Linux Runtime and on the host, Spacewar under Proton; Counter-Strike 2 blocked by a stale lock); DISC-5 and most of DISC-6 to build
+description: An official Steam install owns ~/.steam/sdk64 on the dev machine, so launches failed with exit 8; a private ~/.steam per launch (DISC-4 to DISC-6) accepted 2026-11-03; DISC-4 built and run live 2026-11-03 (Portal: First Slice in the Steam Linux Runtime and on the host, Spacewar under Proton; Counter-Strike 2 in sniper, offline: no Game Coordinator); DISC-5 and most of DISC-6 to build
 metadata:
   type: project
 ---
@@ -94,7 +94,16 @@ outside the Steam Linux Runtime 3.0 (its `cs2.sh` checks
 `/etc/os-release`). In sniper it started but waited before loading
 `steamclient.so`: another local user had left
 `/tmp/source_engine_<n>.lock`, which `fs.protected_regular` keeps it
-from opening. It waits on that file being removed (§1.1.8).
+from opening. Once the maintainer removed it, CS2 loaded ossteam's
+`sdk64/steamclient.so` from the private `~/.steam`, connected, and
+loaded its menus (§1.1.8).
+
+Open for the maintainer: the Game Coordinator
+(`SteamGameCoordinator001`, which CS2, Team Fortress 2 and Dota 2 use to
+go online) is in no part of SPEC.md or `docs/spec/`, so where it belongs
+is a SPEC decision. CS2 also asked for two interfaces ossteam does not
+provide: `SteamNetworkingSocketsSerialized005` and
+`SteamAppDisableUpdate001`.
 
 Still open in §1.1.7: games installed under
 `~/.steam`, and the Steam Linux Runtime inside the namespace. The checks

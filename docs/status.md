@@ -33,7 +33,7 @@ When one is confirmed, write it into the spec and delete the note.
 
 - [M0: Foundations](status/m0-foundations.md) — acceptance items closed; startup flash and DPI fixed
 - [M1a: Session and library](status/m1a-session-library.md) — idle wakeups fixed; live runs left
-- [M1b: Content](status/m1b-content.md) — committed; most Linux live rows run 2026-11-04; DLC, delta, beta and Windows left; a question on cancelled first installs
+- [M1b: Content](status/m1b-content.md) — committed; most Linux live rows run 2026-11-04; CS2 matches the official tree once optional DLC is left out; a shared DLC depot, delta and Windows left; a question on cancelled first installs
 - [M1c: Play (native)](status/m1c-play.md) — shim, stats, storage, tickets committed; script steps and live runs left
 - [Discovery entries](status/discovery-entries-official-steam.md) — official Steam owns `~/.steam/sdk64`; a private `~/.steam` per launch (DISC-4 to DISC-6) accepted 2026-11-03; DISC-4 built and run live 2026-11-03 (scout, legacy scout, Proton, CS2 in sniper); the Game Coordinator is in no spec; DISC-5 and DISC-6 built 2026-11-04; the take-over not yet run against the real official client
 - [M1d: Compat tools](status/m1d-compat-tools.md) — committed; prefix scripts and real Proton runs left

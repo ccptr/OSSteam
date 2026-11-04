@@ -1,6 +1,6 @@
 ---
 name: m1b-content
-description: M1b status - content engine, downloader, jobs and install scripts committed; most Linux live rows run 2026-11-04; DLC, delta, beta and Windows left; cancelled first installs leave files
+description: M1b status - content engine, downloader, jobs and install scripts committed; most Linux live rows run 2026-11-04; CS2 matches the official tree once optional DLC is left out; a shared DLC depot, delta and Windows left; cancelled first installs leave files
 metadata:
   type: project
 ---
@@ -21,10 +21,15 @@ Left:
 - Launch-time script steps (registry writes, firewall, run process)
   belong to M1c ([install-scripts-2-6](install-scripts-2-6.md)).
 - Live on Linux, 2026-11-04 (m1b.md): info, a SIGKILL mid-download,
-  verify, uninstall, a second folder, job controls, the bandwidth limit
-  and two jobs at once. Left live: an install with DLC depots compared
-  with the official client's files, a delta update of a new build, a
-  beta branch, and the Windows column. No captures yet.
+  verify, uninstall, a second folder, job controls, the bandwidth limit,
+  two jobs at once and a beta branch. Counter-Strike 2's tree matched
+  the official client's install of the same build, once optional DLC
+  (`config/optionaldlc`, CS2's Workshop Tools) was left out unless
+  `content.optional_dlc.<app>` names it, and a removed depot's
+  directories that its manifest does not list were deleted too
+  (`content.md` §6 rule 5, §10). Left live: a DLC depot that both
+  clients install, compared, a delta update of a new build, and the
+  Windows column. No captures yet.
 - Open for the maintainer: cancelling a first install leaves the files
   already renamed into place in `apps/<installdir>` with no record
   (`ipc.md` §5.6), and `uninstall` refuses an app that is not installed,

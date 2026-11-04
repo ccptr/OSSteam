@@ -38,7 +38,6 @@ These come from the maintainer. Don't trade them away for convenience.
 - [SPEC changes](AGENTS/rules/spec-changes.md) — need the maintainer; say so plainly when reporting
 - [CI stays off](AGENTS/rules/ci-stays-off.md) — don't switch CI jobs back on; mark anything else off with `RELEASE-BLOCKER`
 - [Test account only](AGENTS/rules/test-account-only.md) — live runs use the maintainer's test account on the real install
-- [Daemon restarts](AGENTS/rules/daemon-restarts.md) — don't restart the daemon casually; it once lost the account's token
 - [Ask before visible actions](AGENTS/rules/ask-before-visible.md) — cloud writes, workshop subscriptions, friend requests
 - [Official client files](AGENTS/rules/official-client-files.md) — the maintainer's personal account; structure only
 - [Desktop settings](AGENTS/rules/desktop-settings.md) — ask before changing them

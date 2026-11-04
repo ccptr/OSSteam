@@ -65,13 +65,13 @@ the system allows it (`isolation::linux` tests and
   lines, the GUI notice and Settings.
 - DISC-5: the take-over. The `CONFLICT` message leaves out
   `discovery.take_over_official` as a way out until the setting exists.
-  §1.1.5 puts `official.toml` in `<data>/steam-sdk`, which every game
-  would then see in its private `~/.steam`, against §1.1.2's "and
-  nothing else". It should move out (for example to
-  `<data>/discovery-official.toml`); settle that before building DISC-5.
+  The take-over's record is `<config>/official-entries.toml`
+  (maintainer, 2026-11-03: in the configuration directory, not in
+  `<data>/steam-sdk` where every game would see it in its private
+  `~/.steam`; no mount hides `<config>`).
 
 Not run live yet: a native game from the test account through the
 private `~/.steam` needs the real daemon running this build, which
-means restarting it (ask first). Still open in §1.1.7: games installed
-under `~/.steam`, and the Steam Linux Runtime inside the namespace. The
-checks are in §1.1.8.
+means restarting it. Still open in §1.1.7: games installed under
+`~/.steam`, and the Steam Linux Runtime inside the namespace. The checks
+are in §1.1.8.

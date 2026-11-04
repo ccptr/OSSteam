@@ -15,6 +15,11 @@ client library.
 
 ## 1. Discovery entries (DISC-1 to DISC-6)
 
+`<data>` and `<config>` are ossteam's data and configuration
+directories (SPEC §17): on Linux `$XDG_DATA_HOME/ossteam` (by default
+`~/.local/share/ossteam`) and `$XDG_CONFIG_HOME/ossteam` (by default
+`~/.config/ossteam`).
+
 **Verification.** §1.1 comes from the official Linux client's files in
 the home directory, from its `steam.sh` (read for facts, §1.1.3), and
 from a shipped `libsteam_api.so`: the strings `%s/.steam/%s` and
@@ -193,8 +198,9 @@ Packages for distributions that restrict unprivileged user namespaces
 with AppArmor ship a profile for `ossteamd` that allows `userns`.
 
 **Launches without it.** When no private `~/.steam` can be made, a
-launch finds ossteam only through the real entries. The launch check
-(`launch.md` §2) then needs the real entries to be ossteam's, and fails
+launch finds ossteam only through the real entries, and the game sees
+the official installation as any other process of the user does. The
+launch check (`launch.md` §2) then needs the real entries to be ossteam's, and fails
 with `CONFLICT` when an official client owns them (§1.1.4). When a
 launch's own steps fail, the launch fails with `UNSUPPORTED`, with the
 step and its error in the message.
@@ -263,7 +269,7 @@ daemon takes the entries over when all of these hold:
 - nothing in `~/.steam` has been created, renamed or removed by anyone
   but ossteam in the last 30 s (the race, below).
 
-It then records the official entries in `<data>/steam-sdk/official.toml`
+It then records the official entries in `<config>/official-entries.toml`
 (the targets of `sdk64` and `sdk32`, and the text of `steam.pid`, each
 when it exists), and replaces them with its own: each link by creating
 the new one under a temporary name and renaming it over the old one,
@@ -272,15 +278,15 @@ rename, and the daemon stops at the first that no longer holds.
 
 **Handing back.** Where §1.5 removes the real entries (a logout, the
 daemon's exit, ossteam's own stale entries at start), and when the
-setting is turned off, the daemon puts back what `official.toml`
-records, by the same renames, `steam.pid` first, then deletes
-`official.toml`. An official client that never starts again therefore
-finds its entries as it left them.
+setting is turned off, the daemon puts back what
+`official-entries.toml` records, by the same renames, `steam.pid`
+first, then deletes `official-entries.toml`. An official client that
+never starts again therefore finds its entries as it left them.
 
 **Yielding.** The daemon watches `~/.steam` (inotify) while it holds
 the entries. When one of them changes and is no longer ossteam's, the
 official client is starting, or the user changed it. The daemon then
-writes nothing more to `~/.steam`, deletes `official.toml` (the
+writes nothing more to `~/.steam`, deletes `official-entries.toml` (the
 official client has made its own entries), sends a warning `Notice`
 (§1.1.6), and takes over again only when the conditions above hold
 again. Without a private `~/.steam`, launches fail with `CONFLICT`
@@ -550,7 +556,8 @@ and `<data>/steam-sdk/steam.pid`, which the private `~/.steam` needs
 (§1.1.2), whether or not the real ones are free. Real entries taken
 over from an official client (§1.1.5) are handed back, not just
 removed, wherever this section removes them; after a crash, the next
-start hands them back from `official.toml` before anything else.
+start hands them back from `official-entries.toml` before anything
+else.
 
 ## 2. The client library (ABI-1 to ABI-4)
 

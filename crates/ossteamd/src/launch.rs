@@ -22,6 +22,10 @@ pub struct Settings {
     pub library_dir: Option<PathBuf>,
     /// The program that runs `--reaper` on Linux: this executable.
     pub reaper: PathBuf,
+    /// Linux: whether launches may get a private `~/.steam`
+    /// (`steamworks-abi.md` §1.1.2). Only tests turn it off, to see
+    /// launches without one.
+    pub private_steam: bool,
 }
 
 impl Settings {
@@ -36,6 +40,7 @@ impl Settings {
             home,
             library_dir: ossteam_launch::discovery::library_dir(),
             reaper: std::env::current_exe()?,
+            private_steam: true,
         })
     }
 }

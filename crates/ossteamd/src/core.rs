@@ -185,6 +185,7 @@ impl Core {
 
     fn loaded(mut self) -> Self {
         self.clean_discovery();
+        self.check_isolation();
         if let Err(e) = self.load_content() {
             tracing::error!("reading folders, installs and jobs: {e:#}");
         }

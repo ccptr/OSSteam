@@ -40,6 +40,8 @@ case "$2" in
   exit) exit 3 ;;
   wait) exec sleep 60 ;;
   shim) exec "$3" --exact testing::m1c::shim_in_a_game --ignored --nocapture ;;
+  steam) ls -A "$3" > steam.txt; cat "$3/steam.pid" > pid.txt
+         ls -A "$4/userdata" > userdata.txt; ls -A "$4/config" > config.txt ;;
 esac
 "#;
 
@@ -181,6 +183,9 @@ fn launches_are_refused_as_launch_md_says() {
         ],
     );
     let root = Root::new();
+    // Without a private ~/.steam, an official client's entries stop
+    // launches (§1.1.4).
+    root.refuse_private_steam();
     let d = TestDaemon::start_with_cdn(&root, &cm, POLL, cdn.clone());
     let c = d.client();
     assert_eq!(code(launch(&c, Some(0), &[])), ErrorCode::NotLoggedIn);
@@ -301,6 +306,64 @@ fn discovery_entries_follow_the_account() {
     d.stop();
     assert!(!exists(&pid_file));
     assert!(!exists(&steam.join("sdk64")));
+}
+
+/// A launched game finds ossteam in its private `~/.steam` while an
+/// official client owns the real one, and sees ossteam's `userdata/` and
+/// an empty `config/` in the official installation (DISC-4,
+/// `steamworks-abi.md` §1.1.2).
+#[cfg(target_os = "linux")]
+#[test]
+fn games_get_a_private_steam() {
+    let root = Root::new();
+    if let Err(e) = ossteam_launch::isolation::check(&root.path().join("check")) {
+        eprintln!("skipped: no user namespace here: {e}");
+        return;
+    }
+    let cdn = Arc::new(FakeCdn::new());
+    let (os, _) = oses();
+    let cm = steam(&cdn, &[("bin/game.sh", os)]);
+    root.install_client_libraries();
+    // An official client that has run: its links, its pid, and its
+    // installation with an account's data.
+    let steam = steam_dir(&root);
+    let official = root.path().join("home/.local/share/Steam");
+    std::fs::create_dir_all(official.join("linux64")).unwrap();
+    std::fs::create_dir_all(official.join("userdata/1234/config")).unwrap();
+    std::fs::create_dir_all(official.join("config")).unwrap();
+    std::fs::write(official.join("config/loginusers.vdf"), b"accounts").unwrap();
+    std::fs::create_dir_all(&steam).unwrap();
+    std::os::unix::fs::symlink(official.join("linux64"), steam.join("sdk64")).unwrap();
+    std::os::unix::fs::symlink(&official, steam.join("root")).unwrap();
+    std::fs::write(steam.join("steam.pid"), "99").unwrap();
+
+    let d = TestDaemon::start_with_cdn(&root, &cm, POLL, cdn.clone());
+    login(&d);
+    let c = d.subscribed(&[Topic::Jobs, Topic::Games]);
+    let dir = install(&c);
+    let steam_arg = steam.to_str().unwrap();
+    launch(&c, None, &["steam", steam_arg, official.to_str().unwrap()]).expect("launched");
+    exited(&c);
+    let read = |n: &str| std::fs::read_to_string(dir.join(n)).unwrap();
+    assert_eq!(read("steam.txt"), "sdk32\nsdk64\nsteam.pid\n");
+    assert_eq!(read("pid.txt"), std::process::id().to_string());
+    assert!(!read("userdata.txt").contains("1234"));
+    assert_eq!(read("config.txt"), "");
+
+    // The real ~/.steam and the installation are as the official client
+    // left them.
+    assert_eq!(
+        std::fs::read_link(steam.join("sdk64")).unwrap(),
+        official.join("linux64")
+    );
+    assert_eq!(
+        std::fs::read_to_string(steam.join("steam.pid")).unwrap(),
+        "99"
+    );
+    assert!(!exists(&steam.join("sdk32")));
+    assert!(official.join("userdata/1234/config").is_dir());
+    assert!(official.join("config/loginusers.vdf").is_file());
+    d.stop();
 }
 
 #[cfg(target_os = "linux")]

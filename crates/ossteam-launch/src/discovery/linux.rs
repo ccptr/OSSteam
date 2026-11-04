@@ -7,6 +7,23 @@ use std::os::unix::fs::symlink;
 use std::path::{Path, PathBuf};
 
 use super::files::{make_dir, remove, replace_copy};
+
+/// Writes `<dir>/steam.pid` by renaming a new file over it.
+fn write_pid(dir: &Path, pid: u32) -> Result<(), Error> {
+    let file = dir.join("steam.pid");
+    let tmp = dir.join(".steam.pid.ossteam");
+    std::fs::write(&tmp, pid.to_string())
+        .and_then(|()| std::fs::rename(&tmp, &file))
+        .map_err(|e| Error::io(format!("writing {}", file.display()), e))
+}
+
+fn remove_dir(dir: &Path) -> Result<(), Error> {
+    match std::fs::remove_dir_all(dir) {
+        Ok(()) => Ok(()),
+        Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(()),
+        Err(e) => Err(Error::io(format!("removing {}", dir.display()), e)),
+    }
+}
 use super::{Error, Libraries};
 
 const SDKS: [&str; 2] = ["sdk64", "sdk32"];
@@ -81,38 +98,44 @@ impl Entries {
         Ok(())
     }
 
-    /// Creates or refreshes the entries for the daemon `pid`. Nothing is
-    /// touched when an entry is not ossteam's.
+    /// Creates or refreshes the entries for the daemon `pid`: first those
+    /// of the private `~/.steam` in `<data>/steam-sdk` (§1.1.2), whoever
+    /// owns the real ones (§1.5), then the real ones. Fails with
+    /// `Conflict`, having made only the private ones, when a real entry is
+    /// not ossteam's.
     pub fn create(&self, libs: &Libraries, pid: u32, _account_id: u32) -> Result<(), Error> {
-        self.check()?;
-        make_dir(&self.steam, 0o755)?;
         for (sdk, lib) in [("sdk64", Some(&libs.lib64)), ("sdk32", libs.lib32.as_ref())] {
             let dir = self.sdk.join(sdk);
-            let link = self.link(sdk);
-            let Some(lib) = lib else {
-                // No library of this width: no entry either.
-                if matches!(self.find(sdk)?, Found::Ours) {
-                    remove(&link)?;
+            match lib {
+                Some(lib) => {
+                    make_dir(&dir, 0o700)?;
+                    replace_copy(lib, &dir.join("steamclient.so"))?;
                 }
-                continue;
-            };
-            make_dir(&dir, 0o700)?;
-            replace_copy(lib, &dir.join("steamclient.so"))?;
-            if matches!(self.find(sdk)?, Found::Missing) {
-                symlink(&dir, &link)
-                    .map_err(|e| Error::io(format!("creating {}", link.display()), e))?;
+                // No library of this width: no entry either.
+                None => remove_dir(&dir)?,
             }
         }
         // Last, so that it never names a client whose library is missing.
-        let file = self.pid_file();
-        let tmp = self.steam.join(".steam.pid.ossteam");
-        std::fs::write(&tmp, pid.to_string())
-            .and_then(|()| std::fs::rename(&tmp, &file))
-            .map_err(|e| Error::io(format!("writing {}", file.display()), e))
+        write_pid(&self.sdk, pid)?;
+
+        self.check()?;
+        make_dir(&self.steam, 0o755)?;
+        for sdk in SDKS {
+            let link = self.link(sdk);
+            match (self.sdk.join(sdk).is_dir(), self.find(sdk)?) {
+                (true, Found::Missing) => symlink(self.sdk.join(sdk), &link)
+                    .map_err(|e| Error::io(format!("creating {}", link.display()), e))?,
+                (false, Found::Ours) => remove(&link)?,
+                _ => {}
+            }
+        }
+        write_pid(&self.steam, pid)
     }
 
-    /// Removes ossteam's entries: `steam.pid` first, then the links.
+    /// Removes ossteam's entries, the private `steam.pid` included:
+    /// `steam.pid` first, then the links.
     pub fn remove(&self) -> Result<(), Error> {
+        remove(&self.sdk.join("steam.pid"))?;
         if self.ours()? {
             remove(&self.pid_file())?;
         }
@@ -127,11 +150,16 @@ impl Entries {
     /// Removes ossteam's entries when their pid is not `own_pid`, as a
     /// crash leaves them (DISC-2).
     pub fn remove_stale(&self, own_pid: u32) -> Result<(), Error> {
+        let private = self.sdk.join("steam.pid");
+        let own = own_pid.to_string();
+        if std::fs::read_to_string(&private).is_ok_and(|p| p.trim() != own) {
+            remove(&private)?;
+        }
         if !self.ours()? && !SDKS.iter().any(|s| matches!(self.find(s), Ok(Found::Ours))) {
             return Ok(());
         }
         let recorded = std::fs::read_to_string(self.pid_file()).ok();
-        if recorded.as_deref().map(str::trim) == Some(own_pid.to_string().as_str()) {
+        if recorded.as_deref().map(str::trim) == Some(own.as_str()) {
             return Ok(());
         }
         tracing::info!("removing discovery entries left by an earlier daemon");
@@ -213,10 +241,14 @@ mod tests {
         };
         e.create(&only64, 1234, 0).unwrap();
         assert!(steam.join("sdk32").symlink_metadata().is_err());
+        assert!(!d.data.join("steam-sdk/sdk32").exists());
+        let private = d.data.join("steam-sdk/steam.pid");
+        assert_eq!(std::fs::read_to_string(&private).unwrap(), "1234");
         e.remove().unwrap();
         for n in ["sdk64", "sdk32", "steam.pid"] {
             assert!(steam.join(n).symlink_metadata().is_err(), "{n}");
         }
+        assert!(!private.exists());
     }
 
     #[test]
@@ -231,7 +263,15 @@ mod tests {
         let e = Entries::new(&d.home, &d.data);
         assert!(matches!(e.check(), Err(Error::Conflict(m)) if m.contains("sdk64")));
         assert!(matches!(e.create(&d.libs, 1, 0), Err(Error::Conflict(_))));
+        // The private ~/.steam is made all the same.
+        let sdk = d.data.join("steam-sdk");
+        assert_eq!(std::fs::read_to_string(sdk.join("steam.pid")).unwrap(), "1");
+        assert_eq!(
+            std::fs::read(sdk.join("sdk64/steamclient.so")).unwrap(),
+            b"64"
+        );
         e.remove().unwrap();
+        assert!(!sdk.join("steam.pid").exists());
         e.remove_stale(1).unwrap();
         assert_eq!(std::fs::read_link(steam.join("sdk64")).unwrap(), valve);
         assert_eq!(
@@ -254,6 +294,7 @@ mod tests {
         assert!(d.home.join(".steam/steam.pid").exists());
         e.remove_stale(5678).unwrap();
         assert!(!d.home.join(".steam/steam.pid").exists());
+        assert!(!d.data.join("steam-sdk/steam.pid").exists());
         assert!(d.home.join(".steam/sdk64").symlink_metadata().is_err());
     }
 }

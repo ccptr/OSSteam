@@ -5,6 +5,7 @@
 
 use std::collections::BTreeMap;
 use std::path::PathBuf;
+use std::sync::Arc;
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
 use crossbeam_channel::Sender;
@@ -12,8 +13,8 @@ use ossteam_ipc::RemoteError;
 use ossteam_ipc::v1::{self, ErrorCode, Topic, event, response};
 use ossteam_launch::discovery::{self, Entries, Libraries};
 use ossteam_launch::options::{self, ChoiceError, LaunchOption, Platform};
-use ossteam_launch::process::{self, Exit, Game, Stopper};
-use ossteam_launch::{command, env, steamstub};
+use ossteam_launch::process::{self, Exit, Game, SpawnError, Stopper};
+use ossteam_launch::{command, env, isolation, steamstub};
 use ossteam_proto::steam::{CMsgClientGamesPlayed, c_msg_client_games_played::GamePlayed};
 use ossteam_types::{AppId, SteamId};
 
@@ -47,12 +48,32 @@ pub struct Pending {
     jobs: Vec<u64>,
 }
 
+/// Whether launches get a private `~/.steam` (`steamworks-abi.md`
+/// §1.1.2).
+pub enum Isolation {
+    /// Not Linux: there is none to make.
+    NotApplicable,
+    Available,
+    /// With the failed step and what can be read about why.
+    Unavailable(String),
+}
+
+impl Isolation {
+    fn available(&self) -> bool {
+        matches!(self, Self::Available)
+    }
+}
+
 /// The launch state the core keeps.
 pub struct Games {
     pub settings: launch::Settings,
     pub entries: Entries,
-    /// Whether ossteam's discovery entries are in place.
+    /// Whether ossteam's discovery entries are in place: on Linux, at
+    /// least those of the private `~/.steam`.
     pub entries_made: bool,
+    pub isolation: Isolation,
+    /// The daemon's data directory, which holds the private `~/.steam`.
+    pub data: PathBuf,
     pub running: BTreeMap<AppId, Running>,
     /// Launches waiting for jobs that install their tools
     /// (`compat-tools.md` §4).
@@ -78,6 +99,8 @@ impl Games {
             entries: Entries::new(&settings.home, data),
             settings,
             entries_made: false,
+            isolation: Isolation::NotApplicable,
+            data: data.to_owned(),
             running: BTreeMap::new(),
             pending: BTreeMap::new(),
             log_dir: state.join("games"),
@@ -108,9 +131,18 @@ fn not_found(m: impl Into<String>) -> RemoteError {
     RemoteError::new(ErrorCode::NotFound, m)
 }
 
-fn discovery_error(e: discovery::Error) -> RemoteError {
+fn discovery_error(e: discovery::Error, isolation: &Isolation) -> RemoteError {
     match e {
-        discovery::Error::Conflict(_) => conflict(e.to_string()),
+        discovery::Error::Conflict(_) => match isolation {
+            // §1.1.4: the reason, and the ways out.
+            Isolation::Unavailable(reason) => conflict(format!(
+                "{e}, so games cannot be launched: games get no private ~/.steam ({reason}). \
+                 Allow unprivileged user namespaces (or install ossteamd's AppArmor profile), \
+                 or quit the official Steam client and remove its ~/.steam/sdk32, sdk64 and \
+                 steam.pid, which it recreates when it starts"
+            )),
+            _ => conflict(format!("{e}, so games cannot be launched")),
+        },
         discovery::Error::NoLibrary(_) | discovery::Error::Unsupported => {
             unsupported(e.to_string())
         }
@@ -156,6 +188,70 @@ impl Core {
         }
     }
 
+    /// Whether launches get a private `~/.steam`, checked once at start
+    /// (`steamworks-abi.md` §1.1.2), and the warning of §1.1.6 when not.
+    pub(super) fn check_isolation(&mut self) {
+        if !cfg!(target_os = "linux") {
+            return;
+        }
+        let checked = if self.games.settings.private_steam {
+            isolation::check(&self.games.data).map_err(|f| f.to_string())
+        } else {
+            Err("turned off in the daemon's settings".to_owned())
+        };
+        self.games.isolation = match checked {
+            Ok(()) => {
+                tracing::info!("games get a private ~/.steam");
+                Isolation::Available
+            }
+            Err(mut reason) => {
+                let why = isolation::restrictions();
+                if !why.is_empty() {
+                    reason = format!("{reason}, likely because {}", why.join(", and "));
+                }
+                // Launches fail because of it while an official client owns
+                // the real entries.
+                let fails = matches!(
+                    self.games.entries.check(),
+                    Err(discovery::Error::Conflict(_))
+                );
+                let consequence = if fails {
+                    "; while an official Steam client owns ~/.steam, games cannot be launched"
+                } else {
+                    ""
+                };
+                tracing::warn!("games get no private ~/.steam ({reason}){consequence}");
+                eprintln!(
+                    "ossteamd: warning: games get no private ~/.steam ({reason}){consequence}"
+                );
+                Isolation::Unavailable(reason)
+            }
+        };
+    }
+
+    /// A launch's private `~/.steam` failed although the check at start
+    /// passed: the launch fails, and the next ones get none until the
+    /// daemon restarts (`steamworks-abi.md` §1.1.2).
+    fn isolation_failed(&mut self, app: AppId, f: &isolation::Failure) -> RemoteError {
+        let reason = f.to_string();
+        tracing::warn!(app = %app, "games get no private ~/.steam any more: {reason}");
+        self.games.isolation = Isolation::Unavailable(reason.clone());
+        self.broadcast(
+            Topic::Notices,
+            event::Kind::Notice(v1::Notice {
+                level: v1::NoticeLevel::Warning as i32,
+                text: format!(
+                    "App {app} was not launched: games get no private ~/.steam any more \
+                     ({reason}). Until ossteamd restarts, games find ossteam only through \
+                     the real ~/.steam."
+                ),
+            }),
+        );
+        unsupported(format!(
+            "app {app} was not launched: games get no private ~/.steam: {reason}"
+        ))
+    }
+
     fn make_discovery(&mut self) -> Result<(), discovery::Error> {
         let account = self
             .session_state
@@ -163,14 +259,29 @@ impl Core {
             .as_ref()
             .map_or(0, |a| SteamId(a.steam_id).account_id());
         let libs = self.libraries()?;
-        self.games
+        let made = self
+            .games
             .entries
-            .create(&libs, std::process::id(), account)?;
-        if !self.games.entries_made {
-            tracing::info!("discovery entries created");
+            .create(&libs, std::process::id(), account);
+        // On Linux a conflict leaves the private `~/.steam`'s entries made
+        // (`steamworks-abi.md` §1.5).
+        let conflict = matches!(made, Err(discovery::Error::Conflict(_)));
+        if made.is_ok() || (cfg!(target_os = "linux") && conflict) {
+            if !self.games.entries_made {
+                match &made {
+                    Ok(()) => tracing::info!("discovery entries created"),
+                    Err(e) => tracing::info!(
+                        "the private ~/.steam's discovery entries created; not the real ones: {e}"
+                    ),
+                }
+            }
+            self.games.entries_made = true;
         }
-        self.games.entries_made = true;
-        Ok(())
+        match made {
+            // Launches find ossteam in their private `~/.steam` (§1.1.4).
+            Err(discovery::Error::Conflict(_)) if self.games.isolation.available() => Ok(()),
+            r => r,
+        }
     }
 
     pub(super) fn remove_discovery(&mut self) {
@@ -414,7 +525,8 @@ impl Core {
                 )));
             }
         }
-        self.make_discovery().map_err(discovery_error)?;
+        self.make_discovery()
+            .map_err(|e| discovery_error(e, &self.games.isolation))?;
 
         let ready = match (&list, &mapping) {
             (Some(list), Some(m)) => {
@@ -487,7 +599,7 @@ impl Core {
         std::fs::create_dir_all(&self.games.log_dir)
             .map_err(|e| internal(&anyhow::Error::from(e)))?;
         let log = self.games.log_dir.join(format!("{app}.log"));
-        let spec = process::Spec {
+        let mut spec = process::Spec {
             app,
             executable,
             command_line,
@@ -496,13 +608,26 @@ impl Core {
             log: log.clone(),
             reaper: self.games.settings.reaper.clone(),
             interrupt_first,
+            isolation: None,
         };
-        tracing::info!(app = %app, option = option.index, command = %spec.command_line, "launching");
-        let game = Game::spawn(&spec).map_err(|e| {
-            RemoteError::new(
+        if self.games.isolation.available() {
+            let plan = isolation::Plan::new(&self.games.settings.home, &self.games.data)
+                .map_err(|f| self.isolation_failed(app, &f))?;
+            spec.isolation = Some(Arc::new(plan));
+        }
+        tracing::info!(
+            app = %app,
+            option = option.index,
+            command = %spec.command_line,
+            private_steam = spec.isolation.is_some(),
+            "launching"
+        );
+        let game = Game::spawn(&spec).map_err(|e| match e {
+            SpawnError::Isolation(f) => self.isolation_failed(app, &f),
+            SpawnError::Io(e) => RemoteError::new(
                 ErrorCode::Internal,
                 format!("starting {} failed: {e}", spec.executable.display()),
-            )
+            ),
         })?;
         let pid = game.pid();
         let stopper = game.stopper();

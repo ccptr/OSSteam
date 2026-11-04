@@ -1,6 +1,6 @@
 ---
 name: discovery-entries-official-steam
-description: An official Steam install owns ~/.steam/sdk64 on the dev machine, so launches fail with exit 8; a private ~/.steam per launch (DISC-4 to DISC-6) specified and accepted 2026-11-03, with the official userdata/ and config/ covered too; ready to build
+description: An official Steam install owns ~/.steam/sdk64 on the dev machine, so launches failed with exit 8; a private ~/.steam per launch (DISC-4 to DISC-6) accepted 2026-11-03; DISC-4 built, not yet run live; DISC-5 and most of DISC-6 to build
 metadata:
   type: project
 ---
@@ -45,6 +45,33 @@ DISC-5 included, and answered the open questions:
 - The official client may be started for the take-over checks
   (§1.1.5).
 
-**How to apply:** DISC-4 to DISC-6 may be built. Still open in §1.1.7:
-games installed under `~/.steam`, and the Steam Linux Runtime inside
-the namespace. The checks are in §1.1.8.
+**Built on 2026-11-03 (DISC-4):** `ossteam-launch::isolation` does
+steps 1 to 6 of §1.1.2 between `fork` and `exec` (the reaper's, so the
+whole launch chain is inside), with system calls only, and reports a
+failed step through a pipe. The daemon runs the check at start, writes
+the private `steam.pid` whoever owns the real entries, and launches in
+the namespace. When an official client owns the real entries it lets
+the launch go on, and gives `CONFLICT` only without a namespace. A
+launch whose steps fail gets `UNSUPPORTED`, a warning `Notice`, and no
+private `~/.steam` until the daemon restarts. The start warning (log
+and standard error) is in. The tests run the namespace for real where
+the system allows it (`isolation::linux` tests and
+`m1c::games_get_a_private_steam`). The test daemon can turn it off
+(`Root::refuse_private_steam`).
+
+**How to apply:** still to build:
+
+- DISC-6: `GetStatus.game_isolation`, the `ossteam status` and `launch`
+  lines, the GUI notice and Settings.
+- DISC-5: the take-over. The `CONFLICT` message leaves out
+  `discovery.take_over_official` as a way out until the setting exists.
+  §1.1.5 puts `official.toml` in `<data>/steam-sdk`, which every game
+  would then see in its private `~/.steam`, against §1.1.2's "and
+  nothing else". It should move out (for example to
+  `<data>/discovery-official.toml`); settle that before building DISC-5.
+
+Not run live yet: a native game from the test account through the
+private `~/.steam` needs the real daemon running this build, which
+means restarting it (ask first). Still open in §1.1.7: games installed
+under `~/.steam`, and the Steam Linux Runtime inside the namespace. The
+checks are in §1.1.8.

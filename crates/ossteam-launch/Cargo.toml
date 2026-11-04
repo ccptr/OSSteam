@@ -16,8 +16,10 @@ tracing.workspace = true
 rustix = { workspace = true, features = ["fs", "process", "system", "thread"] }
 
 [target.'cfg(target_os = "linux")'.dependencies]
-# The reaper resets a signal's disposition before raising it (`launch.md` §4).
+# The reaper resets a signal's disposition before raising it (`launch.md` §4);
+# the check for a private ~/.steam forks (`steamworks-abi.md` §1.1.2).
 libc.workspace = true
+rustix = { workspace = true, features = ["mount", "pipe"] }
 
 [target.'cfg(target_os = "macos")'.dependencies]
 # The discovery service is a Mach service (`steamworks-abi.md` §1.3).

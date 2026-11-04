@@ -41,6 +41,9 @@ pub const WAIT: Duration = Duration::from_secs(20);
 /// same root share their state, as a restarted daemon does.
 pub struct Root(PathBuf);
 
+/// The marker of [`Root::refuse_private_steam`].
+const NO_PRIVATE_STEAM: &str = "no-private-steam";
+
 impl Root {
     pub fn new() -> Self {
         static NEXT: AtomicU32 = AtomicU32::new(0);
@@ -65,6 +68,12 @@ impl Root {
     /// [`Self::install_client_libraries`].
     pub fn library_dir(&self) -> PathBuf {
         self.0.join("bin")
+    }
+
+    /// Makes the next test daemon on this root launch games without a
+    /// private `~/.steam` (`steamworks-abi.md` §1.1.2).
+    pub fn refuse_private_steam(&self) {
+        std::fs::write(self.0.join(NO_PRIVATE_STEAM), b"").expect("write the marker");
     }
 
     /// Puts stand-ins for the client libraries where the daemon looks
@@ -235,6 +244,7 @@ impl TestDaemon {
             home: r.join("home"),
             library_dir: Some(root.library_dir()),
             reaper: root.reaper(),
+            private_steam: !r.join(NO_PRIVATE_STEAM).exists(),
         };
         let env = Env {
             paths,

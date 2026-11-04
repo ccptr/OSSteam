@@ -16,7 +16,7 @@ use std::time::{Duration, Instant};
 
 use rustix::process::{Pid, Signal};
 
-use super::{Exit, Spec};
+use super::{Exit, SpawnError, Spec};
 
 pub struct Game {
     child: Child,
@@ -25,7 +25,7 @@ pub struct Game {
 }
 
 impl Game {
-    pub fn spawn(spec: &Spec) -> io::Result<Self> {
+    pub fn spawn(spec: &Spec) -> Result<Self, SpawnError> {
         let log = File::create(&spec.log)?;
         let mut cmd = if cfg!(target_os = "linux") {
             let mut c = Command::new(&spec.reaper);
@@ -49,7 +49,23 @@ impl Game {
             // Its own group, so that signals meant for the daemon's group
             // do not reach the game.
             .process_group(0);
-        let child = cmd.spawn()?;
+        #[cfg(target_os = "linux")]
+        let attached = match &spec.isolation {
+            Some(plan) => Some(crate::isolation::attach(&mut cmd, plan)?),
+            None => None,
+        };
+        let child = match cmd.spawn() {
+            Ok(c) => c,
+            #[cfg(target_os = "linux")]
+            Err(e) => {
+                return Err(match attached.and_then(|a| a.failure()) {
+                    Some(f) => f.into(),
+                    None => e.into(),
+                });
+            }
+            #[cfg(not(target_os = "linux"))]
+            Err(e) => return Err(e.into()),
+        };
         Ok(Self {
             child,
             done: Arc::default(),

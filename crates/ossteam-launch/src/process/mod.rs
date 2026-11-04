@@ -3,6 +3,7 @@
 //! gone, and stopping it (`launch.md` §4 and §5, LAUNCH-4, LAUNCH-5).
 
 use std::path::PathBuf;
+use std::sync::Arc;
 use std::time::Duration;
 
 use ossteam_types::AppId;
@@ -43,6 +44,20 @@ pub struct Spec {
     /// a compatibility tool with `use_tool_subprocess_reaper`
     /// (`compat-tools.md` §10). Unused elsewhere.
     pub interrupt_first: bool,
+    /// Linux: the private `~/.steam` the reaper, and so every process of
+    /// the launch, runs in (`steamworks-abi.md` §1.1.2). Always `None`
+    /// elsewhere.
+    pub isolation: Option<Arc<crate::isolation::Plan>>,
+}
+
+/// Why a game was not started.
+#[derive(Debug, thiserror::Error)]
+pub enum SpawnError {
+    /// A step of the private `~/.steam` failed (`steamworks-abi.md` §1.1.2).
+    #[error("games get no private ~/.steam: {0}")]
+    Isolation(#[from] crate::isolation::Failure),
+    #[error(transparent)]
+    Io(#[from] std::io::Error),
 }
 
 /// How the process the daemon started ended.
@@ -60,7 +75,7 @@ pub struct Game {
 }
 
 impl Game {
-    pub fn spawn(spec: &Spec) -> std::io::Result<Self> {
+    pub fn spawn(spec: &Spec) -> Result<Self, SpawnError> {
         let inner = os::Game::spawn(spec)?;
         Ok(Self {
             pid: inner.pid(),

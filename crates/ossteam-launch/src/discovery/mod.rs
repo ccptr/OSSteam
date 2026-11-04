@@ -27,7 +27,7 @@ pub use other::Entries;
 pub enum Error {
     /// An official Steam client owns an entry (DISC-3).
     #[error(
-        "{0} belongs to an official Steam client, so ossteam leaves it alone and cannot launch games; see docs/spec/steamworks-abi.md §1"
+        "{0} belongs to an official Steam client, so ossteam leaves it alone (docs/spec/steamworks-abi.md §1)"
     )]
     Conflict(String),
     #[error("ossteam's client library is not installed: {} is missing", .0.display())]

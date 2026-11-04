@@ -214,6 +214,13 @@ fn info_text(r: &v1::GetAppResponse) -> String {
             if d.max_size != 0 {
                 tags.push(format!("up to {}", size(d.max_size)));
             }
+            if r
+                .installed
+                .as_ref()
+                .is_some_and(|i| i.depots.iter().any(|x| x.depot_id == d.depot_id))
+            {
+                tags.push("installed".into());
+            }
             if !tags.is_empty() {
                 let _ = write!(line, "  ({})", tags.join("; "));
             }
@@ -530,6 +537,34 @@ mod tests {
         assert!(!text.contains("depots"));
         assert!(!text.contains("compatibility tool"));
         assert!(!text.contains("last run"));
+    }
+
+    #[test]
+    fn info_marks_the_installed_depots() {
+        let depot = |id: u32| v1::Depot {
+            depot_id: id,
+            ..Default::default()
+        };
+        let r = v1::GetAppResponse {
+            app: Some(app(480, "Spacewar", "Game")),
+            depots: vec![
+                depot(481),
+                v1::Depot {
+                    oslist: vec!["windows".into()],
+                    ..depot(482)
+                },
+            ],
+            installed: Some(v1::InstalledApp {
+                depots: vec![v1::InstalledDepot {
+                    depot_id: 482,
+                    ..Default::default()
+                }],
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        let text = info_text(&r);
+        assert!(text.contains("depots\n  481\n  482         (windows; installed)\n"), "{text}");
     }
 
     #[test]

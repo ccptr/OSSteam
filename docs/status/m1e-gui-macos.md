@@ -20,7 +20,7 @@ which changes under the parallel suite.
 - The M1a–M1d rows were dry-run on the gui_states bench (4a986d3,
   943535e, 22fe26d, abf4bdb..e86b78f) and recorded in m1e.md. Each still
   needs its live run.
-- The GUI moved to `ossteam-ui` on the branch `ossteam-ui-port`
+- The GUI moved to `ossteam-ui` on `main` (2026-11-03)
   ([gui-toolkit-adr-0004](gui-toolkit-adr-0004.md)); the rows passed
   before were run again on it, and on 2026-11-03 parts of the M1a, M1b
   and M1c rows ran live on the test account (recorded in m1e.md).

@@ -1,6 +1,6 @@
 ---
 name: gui-toolkit-adr-0004
-description: ADR 0004 (own GUI toolkit ossteam-ui on winit + ash) and its SPEC changes accepted 2026-11-03; spike done but for the maintainer's checks; toolkit (step 3) and the port (step 4) done on the branch ossteam-ui-port, the previous framework gone from the workspace; live checks on the test account passed 2026-11-03; the portal moved to our own D-Bus client (an ADR amendment) the same day; not merged or pushed
+description: ADR 0004 (own GUI toolkit ossteam-ui on winit + ash) and its SPEC changes accepted 2026-11-03; spike done but for the maintainer's checks; toolkit (step 3) and the port (step 4) done, the previous framework gone from the workspace; live checks on the test account passed 2026-11-03; the portal moved to our own D-Bus client (an ADR amendment) the same day; local main since 2026-11-03 (the old main is the branch gpui), not pushed
 metadata:
   type: project
 ---
@@ -116,8 +116,9 @@ decide.
 The text field gained a secret mode for the login page's password
 (bullets; Copy and Cut do nothing).
 
-The port (step 4) was done on 2026-11-03 on the branch
-`ossteam-ui-port`, which is not merged or pushed. Every page is written
+The port (step 4) was done on 2026-11-03 on a branch that became
+`main` the same day, at the maintainer's request (the old `main`, with
+the previous framework, is the branch `gpui`); not pushed. Every page is written
 anew against `ossteam-ui` (`gui.rs`, `widgets.rs`, `pages/`); the
 model, store, daemon connection and formatting are the same code, now
 plain structs whose results come back as messages. The previous
@@ -214,7 +215,7 @@ merges them); `smithay-clipboard` 0.7.3 needs `smithay-client-toolkit`
 0.20 while winit 0.30 has 0.19 (0.7.2 would share it); `rsa` 0.9 keeps
 the older RustCrypto crates beside `sha1` 0.11's until `rsa` 0.10.
 
-Still the maintainer's: merging and pushing, real Windows
+Still the maintainer's: pushing, real Windows
 and macOS. The rows of m1e.md not run live (Steam Guard codes, a second
 account, a PICS change, a download big enough to pause, Proton) wait as
 before. Open as before: the font fallback.

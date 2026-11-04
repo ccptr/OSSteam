@@ -165,7 +165,9 @@ unverified*, and every chunk is checked on its own (§5).
 and symbolic link bits are the ones the engine acts on.
 
 **Encrypted names.** When `filenames_encrypted` is set, `filename` and
-`linktarget` are base64 text. Decoded, the first 16 bytes are the IV,
+`linktarget` are base64 text, which older manifests break into lines:
+depot 409's (Portal, from 2007) has a newline after every 72 characters
+and one at the end. Whitespace is ignored. Decoded, the first 16 bytes are the IV,
 encrypted on its own with AES-256-ECB under the depot key; the rest is
 AES-256-CBC under the depot key with that IV and PKCS#7 padding. The
 plaintext is the UTF-8 name, possibly followed by NUL bytes, which are
@@ -356,8 +358,15 @@ them already in staging), plus 1 % of that.
 `.ossteam/staging/<appid>/<depot>/<hex SHA-1 of its path>`, then renamed
 into place once all its chunks are written. Staging is on the same file
 system as the install, so the rename is atomic: a reader sees the old
-file or the new one, never a mix. The executable flag sets the owner,
-group and other execute bits on Unix; read-only sets the file read-only.
+file or the new one, never a mix. On Unix every file gets the owner,
+group and other execute bits, whatever its flags, as the official client
+gives them (seen 2026-11-03): in its Linux installs every file from a depot
+is mode 755, `README.md`, `.vpk` archives and text files included, while
+the files a game writes later are 644. Files that need the bits do not
+always carry the executable flag: the Steam Linux Runtime's
+`_v2-entry-point` and `run` have flags 0 in their manifests. On macOS
+the same is done (*unverified* there). Read-only sets the file
+read-only.
 Directories are created as the manifest lists them and as files need
 them. Symbolic links are created on Unix; on Windows, creating one needs a
 privilege the user may not have, and the job then fails and says so.

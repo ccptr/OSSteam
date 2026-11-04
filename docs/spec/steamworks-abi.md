@@ -400,11 +400,11 @@ take-over setting risks, wherever they would look:
 
 | Item | Status |
 |---|---|
-| `steam_api` builds the path from `$HOME` | one older 32-bit `libsteam_api.so` read; newer SDKs unverified |
-| A native game finds ossteam through the private `~/.steam` | to be run |
-| A game in the Steam Linux Runtime, and one under Proton, find ossteam through it | to be run |
-| Proton and the Steam Linux Runtime work with a read-only `~/.steam` | to be run |
-| A game in the namespace sees ossteam's `userdata/` and an empty `config/` in the official root, also inside the Steam Linux Runtime | to be run |
+| `steam_api` builds the path from `$HOME` | one older 32-bit `libsteam_api.so` read; newer SDKs unverified. Portal: First Slice's `libsteam_api.so` loaded `/home/<user>/.steam/sdk32/steamclient.so` (2026-11-03) |
+| A native game finds ossteam through the private `~/.steam` | done 2026-11-03: Portal: First Slice (410, 32-bit `hl2_linux`), with an official client owning the real `~/.steam`. It loaded ossteam's `sdk32/steamclient.so` and connected to the daemon (`Hello.pid` matched). It ran in the Steam Linux Runtime, as Valve maps native games; a native game run without it is not done |
+| A game in the Steam Linux Runtime, and one under Proton, find ossteam through it | Steam Linux Runtime: done 2026-11-03 (1.0, scout on soldier). Its container nests inside ossteam's namespace, and the game reached the daemon through the abstract socket. Proton: to be run |
+| Proton and the Steam Linux Runtime work with a read-only `~/.steam` | Steam Linux Runtime: done 2026-11-03. Proton: to be run |
+| A game in the namespace sees ossteam's `userdata/` and an empty `config/` in the official root, also inside the Steam Linux Runtime | done 2026-11-03 inside the Steam Linux Runtime's container; on the host both were unchanged |
 | Anti-cheat (VAC, and EAC or BattlEye where the test account owns a title) accepts a native game in the namespace | to be run |
 | The check at start reports Ubuntu's AppArmor restriction | to be run on Ubuntu 24.04 |
 | The official client starting while ossteam holds the entries (§1.1.5) | to be run |

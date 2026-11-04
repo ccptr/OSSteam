@@ -1,6 +1,6 @@
 ---
 name: discovery-entries-official-steam
-description: An official Steam install owns ~/.steam/sdk64 on the dev machine, so launches failed with exit 8; a private ~/.steam per launch (DISC-4 to DISC-6) accepted 2026-11-03; DISC-4 built, not yet run live; DISC-5 and most of DISC-6 to build
+description: An official Steam install owns ~/.steam/sdk64 on the dev machine, so launches failed with exit 8; a private ~/.steam per launch (DISC-4 to DISC-6) accepted 2026-11-03; DISC-4 built and run live 2026-11-03 (Portal: First Slice in the Steam Linux Runtime); DISC-5 and most of DISC-6 to build
 metadata:
   type: project
 ---
@@ -70,10 +70,18 @@ the system allows it (`isolation::linux` tests and
   `<data>/steam-sdk` where every game would see it in its private
   `~/.steam`; no mount hides `<config>`).
 
-Not run live yet: a native game from the test account through the
-private `~/.steam` needs the real daemon running this build, which
-means restarting it. Before it starts, rename the dev PC's library
-folder's `common/` to `apps/` (content.md §8 since 2026-11-03; no
-migration before release). Still open in §1.1.7: games installed under
+**Run live on 2026-11-03.** The real daemon, restarted on this build,
+launched Portal: First Slice (410) for the test account through the
+Steam Linux Runtime 1.0, while the official client owned the real
+`~/.steam`. The game loaded ossteam's `sdk32/steamclient.so` from its
+private `~/.steam` and connected to the daemon. In its namespace the
+official `userdata/` and `config/` were covered, and on the host nothing
+changed (steamworks-abi.md §1.1.8). The run needed three fixes first:
+encrypted names that span lines (content.md §4), every installed file
+executable on Unix (content.md §8, as the official client does), and a
+stale 32-bit library on the dev PC (rebuild with
+`cargo xtask build-steamclient`). Proton is not run yet.
+
+Still open in §1.1.7: games installed under
 `~/.steam`, and the Steam Linux Runtime inside the namespace. The checks
 are in §1.1.8.

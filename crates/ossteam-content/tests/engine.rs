@@ -181,7 +181,8 @@ fn installs_a_depot() {
                 .mode()
         };
         assert_eq!(mode("bin/game") & 0o111, 0o111);
-        assert_eq!(mode("data/small.txt") & 0o111, 0);
+        // Every file, as the official client makes them (content.md §8).
+        assert_eq!(mode("data/small.txt") & 0o111, 0o111);
     }
 }
 

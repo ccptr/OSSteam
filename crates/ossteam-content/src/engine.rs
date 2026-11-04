@@ -335,19 +335,15 @@ fn is_regular_file(path: &Path) -> bool {
     fs::symlink_metadata(path).is_ok_and(|m| m.is_file())
 }
 
-/// Sets the permission bits the manifest's flags ask for (`content.md`
-/// §8).
+/// Sets the permission bits (`content.md` §8): on Unix every file is
+/// executable, as the official client makes it, whatever the executable
+/// flag says; the read-only flag is followed.
 fn apply_flags(path: &Path, file_flags: u32) -> io::Result<()> {
     let mut perms = fs::metadata(path)?.permissions();
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
-        let mut mode = perms.mode();
-        if file_flags & flags::EXECUTABLE != 0 {
-            mode |= 0o111;
-        } else {
-            mode &= !0o111;
-        }
+        let mut mode = perms.mode() | 0o111;
         if file_flags & flags::READ_ONLY != 0 {
             mode &= !0o222;
         } else {

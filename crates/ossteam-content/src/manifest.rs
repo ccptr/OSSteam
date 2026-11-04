@@ -281,8 +281,10 @@ impl Manifest {
             return Ok(());
         }
         let decrypt = |text: &str| -> Result<String, ManifestError> {
+            // Older manifests break the text into lines (`content.md` §4).
+            let packed: String = text.chars().filter(|c| !c.is_ascii_whitespace()).collect();
             let raw = base64::engine::general_purpose::STANDARD
-                .decode(text.trim())
+                .decode(packed)
                 .map_err(|e| ManifestError::Name(format!("{text:?} is not base64: {e}")))?;
             let mut plain = key::decrypt(key, &raw)
                 .map_err(|e| ManifestError::Name(format!("{text:?}: {e}")))?;
@@ -489,6 +491,23 @@ mod tests {
         got.check().unwrap();
         assert_eq!(got, sample());
         assert_eq!(got.files[2].link_target.as_deref(), Some("game"));
+    }
+
+    /// Depot 409's manifest breaks names after 72 characters and ends
+    /// them with a newline.
+    #[test]
+    fn encrypted_names_may_span_lines() {
+        let mut m = sample();
+        m.files[1].name = "a/name/long/enough/for/its/base64/to/pass/seventy/two/characters".into();
+        m.encrypt_names(&key());
+        let one_line = m.files[1].name.clone();
+        assert!(one_line.len() > 72);
+        m.files[1].name = format!("{}\n{}\n", &one_line[..72], &one_line[72..]);
+        m.decrypt_names(&key()).unwrap();
+        assert_eq!(
+            m.files[1].name,
+            "a/name/long/enough/for/its/base64/to/pass/seventy/two/characters"
+        );
     }
 
     #[test]

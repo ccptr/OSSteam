@@ -84,6 +84,13 @@ pub fn peer_is_same_user(stream: &Stream) -> io::Result<bool> {
     imp::peer_is_same_user(stream)
 }
 
+/// The peer's pid, or `None` where the OS reports none
+/// (`steamworks-abi.md` §3.1): `SO_PEERCRED` on Linux, `LOCAL_PEERPID`
+/// on macOS, `GetNamedPipeClientProcessId` on Windows.
+pub fn peer_pid(stream: &Stream) -> io::Result<Option<u32>> {
+    imp::peer_pid(stream)
+}
+
 #[cfg(unix)]
 mod imp {
     use super::*;
@@ -181,6 +188,39 @@ mod imp {
         let me = rustix::process::geteuid().as_raw();
         Ok(creds.euid() == Some(me))
     }
+
+    #[cfg(not(target_os = "macos"))]
+    pub fn peer_pid(stream: &Stream) -> io::Result<Option<u32>> {
+        Ok(stream
+            .peer_creds()?
+            .pid()
+            .and_then(|p| u32::try_from(p).ok()))
+    }
+
+    /// interprocess reads `LOCAL_PEERCRED` here, whose `xucred` has no pid
+    /// on macOS, so the pid comes from `LOCAL_PEERPID`.
+    #[cfg(target_os = "macos")]
+    pub fn peer_pid(stream: &Stream) -> io::Result<Option<u32>> {
+        use std::os::fd::{AsFd, AsRawFd};
+
+        let Stream::UdSocket(socket) = stream;
+        let mut pid: libc::pid_t = 0;
+        let mut len = std::mem::size_of::<libc::pid_t>() as libc::socklen_t;
+        // SAFETY: `pid` and `len` are valid for writes of the sizes given.
+        let r = unsafe {
+            libc::getsockopt(
+                socket.as_fd().as_raw_fd(),
+                libc::SOL_LOCAL,
+                libc::LOCAL_PEERPID,
+                (&raw mut pid).cast(),
+                &raw mut len,
+            )
+        };
+        if r != 0 {
+            return Err(io::Error::last_os_error());
+        }
+        Ok(u32::try_from(pid).ok().filter(|&p| p != 0))
+    }
 }
 
 #[cfg(windows)]
@@ -247,6 +287,10 @@ mod imp {
             .pid()
             .ok_or_else(|| io::Error::new(io::ErrorKind::Unsupported, "peer pid unavailable"))?;
         Ok(win::process_user_sid(pid)? == win::current_user_sid()?)
+    }
+
+    pub fn peer_pid(stream: &Stream) -> io::Result<Option<u32>> {
+        Ok(stream.peer_creds()?.pid())
     }
 }
 

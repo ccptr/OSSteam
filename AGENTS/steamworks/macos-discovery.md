@@ -17,6 +17,7 @@ universal.
 The CI run on 0254d99 showed that launchd accepts check-in of an
 undeclared name (check-in succeeded and a look-up found it).
 
-Unverified: that destroying the receive right frees the name. The tests
-check it once the reply fix runs on CI
-([waiting-push-macos-discovery-fix](../../docs/status/waiting-push-macos-discovery-fix.md)).
+The reply fix (7e96d11: steam_api's reply port carries a send right,
+not send-once) passed on both macOS runners on 2026-11-04 (run
+41763529905), with the tests that check that destroying the receive
+right frees the name.

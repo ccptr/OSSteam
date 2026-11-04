@@ -2294,6 +2294,7 @@ dependencies = [
  "crossbeam-channel",
  "directories",
  "interprocess",
+ "libc",
  "ossteam-types",
  "prost",
  "prost-build",

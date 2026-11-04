@@ -1,6 +1,6 @@
 ---
 name: gui-toolkit-adr-0004
-description: ADR 0004 (own GUI toolkit ossteam-ui on winit + ash) and its SPEC changes accepted 2026-11-03; spike done but for the maintainer's checks; toolkit (step 3) and the port (step 4) done, the previous framework gone from the workspace; live checks on the test account passed 2026-11-03; the portal moved to our own D-Bus client (an ADR amendment) the same day; local main since 2026-11-03 (the old main is the branch gpui), not pushed
+description: ADR 0004 (own GUI toolkit ossteam-ui on winit + ash) and its SPEC changes accepted 2026-11-03; spike done but for the maintainer's checks; toolkit (step 3) and the port (step 4) done, the previous framework gone from the workspace; live checks on the test account passed 2026-11-03; the portal moved to our own D-Bus client (an ADR amendment) the same day; local main since 2026-11-03 (the old main is the branch gpui), pushed
 metadata:
   type: project
 ---
@@ -118,7 +118,7 @@ The text field gained a secret mode for the login page's password
 
 The port (step 4) was done on 2026-11-03 on a branch that became
 `main` the same day, at the maintainer's request (the old `main`, with
-the previous framework, is the branch `gpui`); not pushed. Every page is written
+the previous framework, is the branch `gpui`); pushed by 2026-11-04. Every page is written
 anew against `ossteam-ui` (`gui.rs`, `widgets.rs`, `pages/`); the
 model, store, daemon connection and formatting are the same code, now
 plain structs whose results come back as messages. The previous

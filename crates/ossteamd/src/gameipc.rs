@@ -185,13 +185,7 @@ fn serve(conn: ConnId, mut stream: Stream, core: &Sender<Command>) {
             return;
         }
     }
-    // A `pid_t` on Unix, a `u32` on Windows.
-    #[allow(clippy::useless_conversion)]
-    let peer_pid = stream
-        .peer_creds()
-        .ok()
-        .and_then(|c| c.pid())
-        .and_then(|p| u32::try_from(p).ok());
+    let peer_pid = endpoint::peer_pid(&stream).ok().flatten();
 
     if set_recv_timeout(&stream, Some(HELLO_TIMEOUT)).is_err() {
         return;

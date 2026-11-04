@@ -413,7 +413,7 @@ take-over setting risks, wherever they would look:
 | A game in the Steam Linux Runtime, and one under Proton, find ossteam through it | done 2026-11-03. Steam Linux Runtime 1.0 (scout on soldier): its container nests inside ossteam's namespace, and the game reached the daemon through the abstract socket. Proton Experimental in the Steam Linux Runtime 4.0: Spacewar (480) connected (64-bit) |
 | Proton and the Steam Linux Runtime work with a read-only `~/.steam` | done 2026-11-03, both |
 | A game in the namespace sees ossteam's `userdata/` and an empty `config/` in the official root, also inside the Steam Linux Runtime | done 2026-11-03 inside the Steam Linux Runtime's container; on the host both were unchanged |
-| Counter-Strike 2 in the Steam Linux Runtime 3.0 (sniper) reaches the daemon | done 2026-11-03 (64-bit), once a stale lock was removed: its single-instance lock `/tmp/source_engine_<n>.lock`, left by another user, cannot be opened with `fs.protected_regular` set, and the game then hangs after its error dialog fails (the same under the official client). It loaded `sdk64/steamclient.so` from the private `~/.steam` and connected within a second, with `userdata/` and `config/` covered inside the container, and loaded its menus. Its Game Coordinator answered it from 2026-11-04 (`steamworks/isteamgamecoordinator.md` §4). It asks for `SteamNetworkingSocketsSerialized005` and `SteamAppDisableUpdate001`, which ossteam does not provide |
+| Counter-Strike 2 in the Steam Linux Runtime 3.0 (sniper) reaches the daemon | done 2026-11-03 (64-bit), once a stale lock was removed: its single-instance lock `/tmp/source_engine_<n>.lock`, left by another user, cannot be opened with `fs.protected_regular` set, and the game then hangs after its error dialog fails (the same under the official client). It loaded `sdk64/steamclient.so` from the private `~/.steam` and connected within a second, with `userdata/` and `config/` covered inside the container, and loaded its menus. Its Game Coordinator answered it from 2026-11-04 (`steamworks/isteamgamecoordinator.md` §4). It asks for `SteamNetworkingSocketsSerialized005` and `SteamAppDisableUpdate001`, served from 2026-11-04: it accepted ossteam's relay certificate (`steamworks/isteamnetworkingsocketsserialized.md` §6) |
 | Anti-cheat (VAC, and EAC or BattlEye where the test account owns a title) accepts a native game in the namespace | to be run |
 | The check at start reports Ubuntu's AppArmor restriction | to be run on Ubuntu 24.04 |
 | The official client starting while ossteam holds the entries (§1.1.5) | built 2026-11-04 and tested against `ln -fsn`-style renames in a scratch home (`m1c::official_entries_are_taken_over_and_handed_back`); with the real official client, to be run |
@@ -740,6 +740,15 @@ client also answers versions that no published SDK declares
 in its library's strings). They are not in the table, so the getters
 return NULL for them (FAITH-2).
 
+**Versions Proton lacks.** `docs/spec/steamworks/vtables-observed.txt`,
+in the same format, lists versions that games ask for but Proton does
+not carry: `SteamAppDisableUpdate001` and
+`SteamNetworkingSocketsSerialized005`. They are written by hand from
+the official client's library (its adapter class's vtable and the
+method names its IPC layer carries, structure only) and from games'
+calls, as the interfaces' pages say. The shim serves both files alike;
+the import leaves the second alone.
+
 **Every slot is filled (ABI-2, ABI-3).** A slot runs ossteam's
 implementation when the interface's page lists the method as
 implemented and the slot's signature is the one implemented. Every other
@@ -902,7 +911,7 @@ the shim sends `Request`s and `Report`s, and the daemon sends
 
 ### 3.4 Messages
 
-Protocol version 5.
+Protocol version 6.
 
 | Tag | Message | Direction | Fields |
 |---|---|---|---|
@@ -965,6 +974,8 @@ one of them is installed.
 | 2 to 5 | the stats requests of `steamworks/isteamuserstats.md` §2 | their responses |
 | 6 to 11 | the ticket requests of `steamworks/isteamuser.md` §3 | their responses; `Done{}` (tag 7) for the requests that have nothing to say |
 | 12 | `GcSend` of `steamworks/isteamgamecoordinator.md` §2 | `GcSent` |
+| 13 | `UpdateHold` of `steamworks/isteamappdisableupdate.md` §2 | `Done{}` |
+| 14 to 16 | the certificate and relay ticket requests of `steamworks/isteamnetworkingsocketsserialized.md` §5 | `NetworkingCert` (tag 13), `Done{}`, `RelayTickets` (tag 14) |
 | 255 | — | `Error{message: string}`: the request could not be answered |
 
 `Call`: `interface: string` (a version string), `method: string`,
@@ -1000,7 +1011,8 @@ setting, or reads tokens, credentials or other accounts. `AppState`
 tells a game about another app only what Steam's own `ISteamApps` tells
 any game. The stats and ticket requests act only on the connection's
 own app id, and only for an app the account owns; so do Game Coordinator
-messages, which go only to the connection's own app's GC. A connection can
+messages, which go only to the connection's own app's GC, update holds,
+networking certificates and relay tickets. A connection can
 cancel only the tickets and end only the auth sessions it made.
 
 ### 3.7 The daemon's side
@@ -1072,6 +1084,8 @@ getter and fails under ABI-3.
 | `ISteamRemoteStorage` | `isteamremotestorage.md` | local files, nothing synced |
 | `ISteamUserStats` | `isteamuserstats.md` | stats, achievements, schema, icons, global achievement percentages |
 | `ISteamGameCoordinator` | `isteamgamecoordinator.md` | messages to and from the app's Game Coordinator |
+| `ISteamAppDisableUpdate` | `isteamappdisableupdate.md` | holding the app's automatic updates |
+| `ISteamNetworkingSocketsSerialized` | `isteamnetworkingsocketsserialized.md` | relay certificates and the relay ticket cache |
 
 ## 6. Verification against the official client
 

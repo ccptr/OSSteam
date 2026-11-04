@@ -17,6 +17,7 @@ mod gc;
 mod guard;
 mod images;
 mod log;
+mod networking;
 mod object;
 pub mod pipe;
 mod remote_storage;

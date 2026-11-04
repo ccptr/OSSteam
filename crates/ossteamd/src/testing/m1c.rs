@@ -1201,6 +1201,173 @@ fn games_talk_to_their_game_coordinator() {
     d.stop();
 }
 
+/// `isteamnetworkingsocketsserialized.md` §3, §5 against the fake CM.
+#[cfg(unix)]
+#[test]
+fn games_get_networking_certificates_and_keep_relay_tickets() {
+    use ossteam_gameipc::{
+        CacheRelayTicketRequest, Done, NetworkingCertRequest, RelayTickets, RelayTicketsRequest,
+        RequestBody, ResponseBody,
+    };
+    use ossteam_types::EResult;
+    use ring::signature::KeyPair as _;
+
+    let cdn = Arc::new(FakeCdn::new());
+    let (os, _) = oses();
+    let cm = steam(&cdn, &[("bin/game.sh", os)]);
+    let root = Root::new();
+    let addr = root.game_address();
+    let d = TestDaemon::start_with_cdn(&root, &cm, POLL, cdn.clone());
+    login(&d);
+    let mut g = GameConn::open(&addr, GAME);
+    let mut cert = || match g.ask(RequestBody::NetworkingCert(NetworkingCertRequest {})) {
+        ResponseBody::NetworkingCert(c) => c,
+        other => panic!("{other:?}"),
+    };
+
+    // Steam signs the daemon's new public key; the game gets the key pair.
+    let first = cert();
+    assert_eq!(first.result, 1, "{}", first.message);
+    let [(_, asked)] = cm.cert_requests().try_into().expect("one request");
+    assert_eq!(asked.app_id(), GAME);
+    let public = asked.key_data().to_vec();
+    assert_eq!(public.len(), 32);
+    assert_eq!(first.private_key.len(), 64);
+    assert_eq!(first.private_key[..32], public[..]);
+    let pair = ring::signature::Ed25519KeyPair::from_seed_unchecked(&first.private_key[32..])
+        .expect("a seed");
+    assert_eq!(pair.public_key().as_ref(), &public[..]);
+    assert_eq!((first.ca_key_id, first.signature.len()), (42, 64));
+    assert!(!first.cert.is_empty());
+
+    // With more than 4 hours left it is the answer again.
+    assert_eq!(cert(), first);
+    assert_eq!(cm.cert_requests().len(), 1);
+
+    // With less, Steam is asked again. Each app has its own.
+    cm.set_certs(2 * 3600, None);
+    let mut o = GameConn::open(&addr, OTHER);
+    let mut other_cert = || match o.ask(RequestBody::NetworkingCert(NetworkingCertRequest {})) {
+        ResponseBody::NetworkingCert(c) => c,
+        other => panic!("{other:?}"),
+    };
+    let short = other_cert();
+    assert_eq!(short.result, 1, "{}", short.message);
+    let again = other_cert();
+    assert_eq!(cm.cert_requests().len(), 3);
+    assert_eq!(cm.cert_requests()[2].1.app_id(), OTHER);
+    assert_ne!(again.private_key, short.private_key);
+    // When Steam refuses, a kept certificate with time left stands in.
+    cm.set_certs(2 * 3600, Some(EResult::BUSY));
+    assert_eq!(other_cert(), again);
+    assert_eq!(cm.cert_requests().len(), 4);
+    assert_eq!(cert(), first);
+
+    // Relay tickets: kept once each, in order, for every connection of the
+    // app.
+    let keep = |g: &mut GameConn, t: &[u8]| {
+        assert_eq!(
+            g.ask(RequestBody::CacheRelayTicket(CacheRelayTicketRequest {
+                ticket: t.to_vec()
+            })),
+            ResponseBody::Done(Done {})
+        );
+    };
+    keep(&mut g, &[1, 2]);
+    keep(&mut g, &[3]);
+    keep(&mut g, &[1, 2]);
+    keep(&mut g, &[]);
+    let mut other = GameConn::open(&addr, GAME);
+    assert_eq!(
+        other.ask(RequestBody::RelayTickets(RelayTicketsRequest {})),
+        ResponseBody::RelayTickets(RelayTickets {
+            tickets: vec![vec![1, 2], vec![3]]
+        })
+    );
+
+    // An app the account does not own gets neither.
+    let mut unowned = GameConn::open(&addr, 999);
+    assert!(matches!(
+        unowned.ask(RequestBody::NetworkingCert(NetworkingCertRequest {})),
+        ResponseBody::Error(_)
+    ));
+    assert!(matches!(
+        unowned.ask(RequestBody::RelayTickets(RelayTicketsRequest {})),
+        ResponseBody::Error(_)
+    ));
+    d.stop();
+}
+
+/// `isteamappdisableupdate.md` §3 against the fake CM.
+#[cfg(unix)]
+#[test]
+fn games_hold_their_automatic_updates() {
+    use ossteam_gameipc::{Done, RequestBody, ResponseBody, UpdateHoldRequest};
+
+    let cdn = Arc::new(FakeCdn::new());
+    let (os, _) = oses();
+    let cm = steam(&cdn, &[("bin/game.sh", os)]);
+    let root = Root::new();
+    let addr = root.game_address();
+    let d = TestDaemon::start_with_cdn(&root, &cm, POLL, cdn.clone());
+    login(&d);
+    let c = d.subscribed(&[Topic::Jobs]);
+    done(&c, c.install(GAME, "", "").expect("install queued"));
+    let mut g = GameConn::open(&addr, GAME);
+    let mut hold = |seconds| {
+        assert_eq!(
+            g.ask(RequestBody::UpdateHold(UpdateHoldRequest { seconds })),
+            ResponseBody::Done(Done {})
+        );
+    };
+
+    // A new build while the game holds updates: marked, not queued.
+    hold(900);
+    cm.publish(&game_depot(2, b"two"), 2);
+    cm.app_section(GAME, "depots", depots_section(2));
+    wait_until("the update to be known", || {
+        installed(&c, GAME).is_some_and(|i| i.update_available)
+    });
+    std::thread::sleep(Duration::from_millis(300));
+    let updates = |c: &Client| {
+        c.list_jobs()
+            .expect("jobs")
+            .into_iter()
+            .filter(|j| j.kind() == v1::JobKind::Update)
+            .count()
+    };
+    assert_eq!(updates(&c), 0);
+
+    // A shorter hold replaces it, and the update is queued when it runs out.
+    hold(1);
+    let update = wait_event(&c, "an update job", |k| match k {
+        event::Kind::JobStateChanged(v1::JobStateChanged { job: Some(j) })
+            if j.kind() == v1::JobKind::Update && j.app_id == GAME =>
+        {
+            Some(j.clone())
+        }
+        _ => None,
+    });
+    let j = if super::m1b::finished(update.state()) {
+        update
+    } else {
+        super::m1b::ended(&c, update.job_id)
+    };
+    assert_eq!(j.state(), v1::JobState::Done, "{:?}", j.error);
+
+    // Ending a hold with 0 queues the update at once.
+    hold(900);
+    cm.publish(&game_depot(3, b"three"), 3);
+    cm.app_section(GAME, "depots", depots_section(3));
+    wait_until("the next update to be known", || {
+        installed(&c, GAME).is_some_and(|i| i.update_available)
+    });
+    assert_eq!(updates(&c), 1);
+    hold(0);
+    wait_until("the held update to be queued", || updates(&c) == 2);
+    d.stop();
+}
+
 /// `isteamuser.md` §2, §3 against the fake CM.
 #[cfg(unix)]
 #[test]

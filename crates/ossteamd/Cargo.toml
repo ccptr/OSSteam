@@ -25,7 +25,10 @@ ctrlc = { version = "3.5.2", features = ["termination"] }
 directories.workspace = true
 interprocess.workspace = true
 keyring-core = "1.0.1"
+# The one field of a networking certificate the daemon reads.
+prost.workspace = true
 rand_core.workspace = true
+ring.workspace = true
 rusqlite = { version = "0.40.2", features = ["bundled"] }
 serde.workspace = true
 serde_json.workspace = true
@@ -76,6 +79,5 @@ ossteam-content = { workspace = true, features = ["testing"] }
 ossteam-gui.workspace = true
 base64.workspace = true
 png = "0.18.1"
-prost.workspace = true
 rand_core.workspace = true
 rsa.workspace = true

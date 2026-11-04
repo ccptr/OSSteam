@@ -95,12 +95,12 @@ pub(super) fn login(d: &TestDaemon) {
     });
 }
 
-fn finished(s: JobState) -> bool {
+pub fn finished(s: JobState) -> bool {
     matches!(s, JobState::Done | JobState::Failed | JobState::Cancelled)
 }
 
 /// Waits for the job to end; `c` must be subscribed to JOBS.
-fn ended(c: &Client, job_id: u64) -> v1::Job {
+pub fn ended(c: &Client, job_id: u64) -> v1::Job {
     wait_event(c, "the job to end", |k| match k {
         event::Kind::JobStateChanged(v1::JobStateChanged { job: Some(j) })
             if j.job_id == job_id && finished(j.state()) =>

@@ -144,7 +144,12 @@ Dota 2 (570), both with `checkguid` `client.dll`; Serious Sam HD: The
 Second Encounter Editor (41040), free on demand, with
 `SamHD_TSE_SeriousEditor.exe`; and its dedicated server (41005). The
 `.dll` name suggests that for 730 and 570 CEG covers the Windows build
-only. Whether their Linux builds use CEG is *unverified*.
+only. Whether their Linux builds use CEG is *unverified*. Seen on
+2026-11-04 for Counter-Strike 2's Linux build: it has no `client.dll`;
+its `libclient.so` and `cs2` carry only the usual ELF sections; and its
+files match the official client's install byte for byte, but for files
+the game writes. CEG therefore did not change its installed files on
+Linux, at least by then.
 
 ### 2.2 Messages
 

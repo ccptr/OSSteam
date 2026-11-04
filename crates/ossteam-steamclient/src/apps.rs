@@ -202,3 +202,23 @@ pub fn launch_command_line(_: &Object, buf: *mut c_void, size: i32) -> i32 {
     unsafe { write_str(buf, size.into(), "") };
     0
 }
+
+/// `ISteamAppDisableUpdate::SetAppUpdateDisabledSecondsRemaining`
+/// (`isteamappdisableupdate.md` §1): sent without waiting.
+pub fn set_update_hold(o: &Object, seconds: i32) {
+    let Some(p) = pipe::get(o.pipe) else {
+        return;
+    };
+    let body = RequestBody::UpdateHold(ossteam_gameipc::UpdateHoldRequest { seconds });
+    p.send_then(
+        body,
+        Box::new(move |_, answer| {
+            if !matches!(answer, Some(ResponseBody::Done(_))) {
+                crate::log::log!(
+                    Info,
+                    "holding the app's updates for {seconds} s: {answer:?}"
+                );
+            }
+        }),
+    );
+}

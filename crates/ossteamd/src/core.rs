@@ -27,9 +27,11 @@ mod compat;
 mod games;
 mod gc;
 mod jobs;
+mod networking;
 mod shim;
 mod takeover;
 mod tickets;
+mod update_hold;
 
 pub use games::app_launch_options;
 
@@ -80,6 +82,11 @@ pub enum Command {
     /// A game's connections had their time to close (`steamworks-abi.md`
     /// §3.5).
     GameExitWait(ossteam_types::AppId),
+    /// A networking certificate request ended
+    /// (`isteamnetworkingsocketsserialized.md` §3).
+    Networking(networking::CertReply),
+    /// An update hold ran out (`isteamappdisableupdate.md` §3).
+    UpdateHoldOver(ossteam_types::AppId, Instant),
     /// Linux: `~/.steam` changed, or the take-over's interval passed
     /// (`steamworks-abi.md` §1.1.5).
     #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
@@ -137,6 +144,10 @@ pub struct Core {
     stats: stats::Handle,
     /// Games' tickets and auth sessions.
     tickets: auth::Tickets,
+    /// Games' networking certificates and relay tickets.
+    networking: networking::Networking,
+    /// Apps whose automatic updates wait, until when.
+    update_holds: HashMap<ossteam_types::AppId, Instant>,
 }
 
 /// What a `Core` is made of.
@@ -193,6 +204,8 @@ impl Core {
             shims: shim::Shims::new(&p.data_dir),
             stats: p.stats,
             tickets: auth::Tickets::default(),
+            networking: networking::Networking::default(),
+            update_holds: HashMap::new(),
         }
         .loaded()
     }
@@ -266,6 +279,8 @@ impl Core {
                 Command::Shim(e) => self.on_shim(e),
                 Command::Stats(done) => self.on_stats(done),
                 Command::Tickets(e) => self.on_ticket_event(e),
+                Command::Networking(r) => self.on_cert_reply(r),
+                Command::UpdateHoldOver(app, until) => self.end_update_hold(app, Some(until)),
                 Command::GameExitWait(app) => self.exit_wait_over(app),
                 Command::SteamDir => self.sync_take_over(),
             }
@@ -286,6 +301,7 @@ impl Core {
         self.assets.shutdown();
         self.stats.shutdown();
         self.tickets.stop.cancel();
+        self.networking.stop.cancel();
         self.broadcast(
             Topic::Daemon,
             event::Kind::DaemonStopping(v1::DaemonStopping {}),

@@ -470,7 +470,9 @@ whose platform is no longer its tool's (`compat-tools.md` §4) has an
 update even when the depots are the same. Changing a `compat.*` setting
 runs the detection again. With `content.auto_update` set
 to `always` (the default) an update job is queued; with `never` the app
-is only marked. *Unverified: the official client's per-app policies
+is only marked. While a game holds its app's updates
+(`steamworks/isteamappdisableupdate.md` §3), the app is only marked, and
+the job is queued when the hold ends. *Unverified: the official client's per-app policies
 (always, on launch, high priority) are not reproduced in M1.*
 
 ## 11. Verify (CONT-5)

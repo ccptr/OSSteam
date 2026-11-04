@@ -192,6 +192,45 @@ pub fn gc_message_failed() -> Vec<u8> {
     vec![0]
 }
 
+/// `SteamNetworkingSocketsCert_t` (`isteamnetworkingsocketsserialized.md`
+/// §2): the result of `GetCertAsync`.
+pub const NETWORKING_CERT: i32 = 1296;
+/// Its size: every field falls on its natural alignment.
+pub const NETWORKING_CERT_SIZE: usize = 792;
+
+/// `SteamNetworkingSocketsCert_t`. On failure `cert_or_message` is a
+/// message, written with a NUL. Parts too large for their fields have
+/// been refused by the daemon (§3) and are cut here only as a last guard.
+pub fn networking_cert(
+    result: i32,
+    cert_or_message: &[u8],
+    ca_key_id: u64,
+    signature: &[u8],
+    private_key: &[u8],
+) -> Vec<u8> {
+    fn field(out: &mut [u8], at: usize, cap: usize, bytes: &[u8]) -> u32 {
+        let n = bytes.len().min(cap);
+        out[at..at + n].copy_from_slice(&bytes[..n]);
+        n as u32
+    }
+    let mut out = vec![0u8; NETWORKING_CERT_SIZE];
+    out[0..4].copy_from_slice(&result.to_le_bytes());
+    let n = if result == 1 {
+        field(&mut out, 8, 512, cert_or_message)
+    } else {
+        // Leave room for the NUL.
+        field(&mut out, 8, 511, cert_or_message);
+        0
+    };
+    out[4..8].copy_from_slice(&n.to_le_bytes());
+    out[520..528].copy_from_slice(&ca_key_id.to_le_bytes());
+    let n = field(&mut out, 532, 128, signature);
+    out[528..532].copy_from_slice(&n.to_le_bytes());
+    let n = field(&mut out, 664, 128, private_key);
+    out[660..664].copy_from_slice(&n.to_le_bytes());
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

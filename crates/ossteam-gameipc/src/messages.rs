@@ -351,6 +351,52 @@ record! {
 }
 
 record! {
+    /// Holds the app's automatic updates for `seconds`; 0 or less ends
+    /// the hold (`isteamappdisableupdate.md` §2).
+    pub struct UpdateHoldRequest {
+        pub seconds: i32,
+    }
+}
+
+record! {
+    /// Asks for the app's networking certificate
+    /// (`isteamnetworkingsocketsserialized.md` §3).
+    pub struct NetworkingCertRequest {}
+}
+
+record! {
+    pub struct NetworkingCert {
+        /// An `EResult`; 1 when the rest holds a certificate.
+        pub result: u32,
+        /// Why there is none, when `result` is not 1.
+        pub message: String,
+        /// The `CMsgSteamDatagramCertificate`, encoded.
+        pub cert: Vec<u8>,
+        pub ca_key_id: u64,
+        pub signature: Vec<u8>,
+        /// The Ed25519 public key, then the private key's seed.
+        pub private_key: Vec<u8>,
+    }
+}
+
+record! {
+    pub struct CacheRelayTicketRequest {
+        pub ticket: Vec<u8>,
+    }
+}
+
+record! {
+    pub struct RelayTicketsRequest {}
+}
+
+record! {
+    /// The app's relay tickets, oldest first.
+    pub struct RelayTickets {
+        pub tickets: Vec<Vec<u8>>,
+    }
+}
+
+record! {
     pub struct ErrorReply {
         pub message: String,
     }
@@ -390,6 +436,10 @@ pub enum RequestBody {
     UserLicense(UserLicenseRequest),
     EncryptedAppTicket(EncryptedAppTicketRequest),
     GcSend(GcSendRequest),
+    UpdateHold(UpdateHoldRequest),
+    NetworkingCert(NetworkingCertRequest),
+    CacheRelayTicket(CacheRelayTicketRequest),
+    RelayTickets(RelayTicketsRequest),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -405,6 +455,8 @@ pub enum ResponseBody {
     UserLicense(UserLicense),
     EncryptedAppTicket(EncryptedAppTicket),
     GcSent(GcSent),
+    NetworkingCert(NetworkingCert),
+    RelayTickets(RelayTickets),
     Error(ErrorReply),
 }
 
@@ -466,6 +518,10 @@ impl Wire for RequestBody {
             Self::UserLicense(r) => tagged(out, 10, r),
             Self::EncryptedAppTicket(r) => tagged(out, 11, r),
             Self::GcSend(r) => tagged(out, 12, r),
+            Self::UpdateHold(r) => tagged(out, 13, r),
+            Self::NetworkingCert(r) => tagged(out, 14, r),
+            Self::CacheRelayTicket(r) => tagged(out, 15, r),
+            Self::RelayTickets(r) => tagged(out, 16, r),
         }
     }
     fn get(r: &mut Reader<'_>) -> Result<Self, DecodeError> {
@@ -482,6 +538,10 @@ impl Wire for RequestBody {
             10 => Self::UserLicense(Wire::get(r)?),
             11 => Self::EncryptedAppTicket(Wire::get(r)?),
             12 => Self::GcSend(Wire::get(r)?),
+            13 => Self::UpdateHold(Wire::get(r)?),
+            14 => Self::NetworkingCert(Wire::get(r)?),
+            15 => Self::CacheRelayTicket(Wire::get(r)?),
+            16 => Self::RelayTickets(Wire::get(r)?),
             t => return Err(unknown("request", t)),
         })
     }
@@ -501,6 +561,8 @@ impl Wire for ResponseBody {
             Self::UserLicense(a) => tagged(out, 10, a),
             Self::EncryptedAppTicket(a) => tagged(out, 11, a),
             Self::GcSent(a) => tagged(out, 12, a),
+            Self::NetworkingCert(a) => tagged(out, 13, a),
+            Self::RelayTickets(a) => tagged(out, 14, a),
             Self::Error(e) => tagged(out, 255, e),
         }
     }
@@ -517,6 +579,8 @@ impl Wire for ResponseBody {
             10 => Self::UserLicense(Wire::get(r)?),
             11 => Self::EncryptedAppTicket(Wire::get(r)?),
             12 => Self::GcSent(Wire::get(r)?),
+            13 => Self::NetworkingCert(Wire::get(r)?),
+            14 => Self::RelayTickets(Wire::get(r)?),
             255 => Self::Error(Wire::get(r)?),
             t => return Err(unknown("response", t)),
         })

@@ -615,6 +615,8 @@ implementation of that library.
 | ISteamUtils | App id, IPC country, server time, image data, callback and API-call plumbing, overlay notification position (accepted and recorded; no overlay exists) |
 | ISteamFriends | Own persona name and state. Everything else returns its failure value until M3. |
 | ISteamGameCoordinator | Messages between the game and its app's Game Coordinator, carried through the CM (`ClientToGC`, `ClientFromGC`) without being read |
+| ISteamAppDisableUpdate | `SetAppUpdateDisabledSecondsRemaining`: automatic updates of the game's app wait while it asks |
+| ISteamNetworkingSocketsSerialized | Certificates for Steam Datagram Relay (`ClientNetworkingCertRequest`) and the relay ticket cache. Peer-to-peer signalling, STUN, direct connections and FakeIP fail truthfully until M3. |
 | ISteamRemoteStorage | `IsCloudEnabledFor*` returns `false` (truthful). File APIs write and read locally under the cloud root that the app's config defines, and are documented as not synced until M3. |
 
 Other interfaces, such as Networking, Matchmaking, UGC, Input and HTMLSurface,

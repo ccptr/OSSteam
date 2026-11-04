@@ -1020,7 +1020,11 @@ impl Core {
             }
             self.mark_update(a.app_id, changed);
             tracing::info!(app = %a.app_id, update = changed, "update state changed");
-            if changed && self.config.auto_update() && self.unfinished_job(a.app_id).is_none() {
+            if changed
+                && self.config.auto_update()
+                && self.unfinished_job(a.app_id).is_none()
+                && !self.update_held(a.app_id)
+            {
                 let _ = self.create_job(
                     steam_id,
                     a.app_id,
@@ -1065,7 +1069,8 @@ impl Core {
         }
         self.mark_update(app, true);
         tracing::info!(app = %app, "optional DLC turned on; update state changed");
-        if self.config.auto_update() && self.unfinished_job(app).is_none() {
+        if self.config.auto_update() && self.unfinished_job(app).is_none() && !self.update_held(app)
+        {
             let _ = self.create_job(
                 steam_id,
                 app,
@@ -1081,6 +1086,20 @@ impl Core {
                 complete: true,
             }),
         );
+    }
+
+    /// Queues the automatic update that a game's hold kept back
+    /// (`isteamappdisableupdate.md` §3), if the app still has one.
+    pub(super) fn queue_held_update(&mut self, app: AppId) {
+        let Ok(steam_id) = self.active_account() else {
+            return;
+        };
+        let Some(a) = self.content.installed.get(&app).cloned() else {
+            return;
+        };
+        if a.update_available && self.config.auto_update() && self.unfinished_job(app).is_none() {
+            let _ = self.create_job(steam_id, app, Kind::Update, a.folder_id, a.branch);
+        }
     }
 
     /// Stores the journals that jobs sent while the core was stopping.

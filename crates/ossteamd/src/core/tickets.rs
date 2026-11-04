@@ -351,7 +351,7 @@ impl Core {
 
     /// Steam's clock now, in Unix seconds; the local clock before the
     /// first logon.
-    fn steam_now(&self) -> u64 {
+    pub(super) fn steam_now(&self) -> u64 {
         match self.shims.clock {
             Some((t, at)) => u64::from(t) + at.elapsed().as_secs(),
             None => SystemTime::now()

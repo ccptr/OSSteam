@@ -122,6 +122,10 @@ impl Core {
                 Message::Request(r) => {
                     let answer = match r.body {
                         RequestBody::GcSend(g) => Some(self.gc_send(conn, g)),
+                        RequestBody::UpdateHold(h) => Some(self.update_hold(conn, h)),
+                        body if super::networking::is_networking_request(&body) => {
+                            self.networking_request(conn, r.id, body)
+                        }
                         body if super::tickets::is_ticket_request(&body) => {
                             self.ticket_request(conn, r.id, body)
                         }

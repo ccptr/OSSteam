@@ -2448,6 +2448,7 @@ dependencies = [
  "png",
  "prost",
  "rand_core 0.6.4",
+ "ring",
  "rsa",
  "rusqlite",
  "rustix 1.1.6",

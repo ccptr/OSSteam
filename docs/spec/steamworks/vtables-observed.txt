@@ -1,0 +1,21 @@
+# Interface versions that Proton does not carry (steamworks-abi.md §2.4),
+# written by hand. Each was read from the official client's
+# steamclient.so (its adapter class's vtable and the internal method
+# names its IPC layer carries, structure only) and from the calls a game
+# makes; the interface's page says which. Same format as vtables.txt.
+
+[SteamAppDisableUpdate001 ISteamAppDisableUpdate]
+0 SetAppUpdateDisabledSecondsRemaining(nSeconds: i32) -> void
+
+[SteamNetworkingSocketsSerialized005 ISteamNetworkingSocketsSerialized]
+0 SendP2PRendezvous(steamIDRemote: CSteamID, unConnectionIDSrc: u32, pMsgRendezvous: ptr, cbRendezvous: u32) -> void
+1 SendP2PConnectionFailure(steamIDRemote: CSteamID, unConnectionIDDest: u32, nReason: u32, pszReason: ptr) -> void
+2 GetCertAsync() -> u64
+3 GetNetworkConfigJSON(buf: ptr, cbBuf: u32, pszLauncherPartner: ptr) -> i32
+4 CacheRelayTicket(pTicket: ptr, cbTicket: u32) -> void
+5 GetCachedRelayTicketCount() -> u32
+6 GetCachedRelayTicket(idxTicket: u32, buf: ptr, cbBuf: u32) -> i32
+7 PostConnectionStateMsg(pMsg: ptr, cbMsg: u32) -> void
+8 GetSTUNServer(idx: i32, buf: ptr, cbBuf: u32) -> i8
+9 AllowDirectConnectToPeer(peer: ptr) -> u32
+10 BeginAsyncRequestFakeIP(nNumPorts: i32) -> u64

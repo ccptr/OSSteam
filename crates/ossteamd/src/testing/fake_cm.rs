@@ -42,7 +42,8 @@ use ossteam_proto::steam::{
     CMsgClientGetAppOwnershipTicketResponse, CMsgClientGetDepotDecryptionKey,
     CMsgClientGetDepotDecryptionKeyResponse, CMsgClientGetUserStats,
     CMsgClientGetUserStatsResponse, CMsgClientLicenseList, CMsgClientLoggedOff, CMsgClientLogon,
-    CMsgClientLogonResponse, CMsgClientPicsAccessTokenRequest, CMsgClientPicsAccessTokenResponse,
+    CMsgClientLogonResponse, CMsgClientNetworkingCertReply, CMsgClientNetworkingCertRequest,
+    CMsgClientPicsAccessTokenRequest, CMsgClientPicsAccessTokenResponse,
     CMsgClientPicsChangesSinceRequest, CMsgClientPicsChangesSinceResponse,
     CMsgClientPicsProductInfoRequest, CMsgClientPicsProductInfoResponse,
     CMsgClientRequestEncryptedAppTicket, CMsgClientRequestEncryptedAppTicketResponse,
@@ -170,6 +171,12 @@ struct State {
     /// `ClientToGC` messages, in arrival order, with the header's
     /// `routing_appid`.
     gc_sent: Vec<(SteamId, Option<u32>, CMsgGcClient)>,
+    /// `ClientNetworkingCertRequest` messages, in arrival order.
+    cert_requests: Vec<(SteamId, CMsgClientNetworkingCertRequest)>,
+    /// How long the certificates given last, and the result to give
+    /// instead of one.
+    cert_lifetime: u32,
+    cert_failure: Option<EResult>,
     /// Asks every live connection to drop.
     generation: u64,
     /// Depot keys Steam grants.
@@ -229,6 +236,7 @@ impl FakeCm {
                 state: Mutex::new(State {
                     change_number: 1000,
                     next_id: 1,
+                    cert_lifetime: 48 * 3600,
                     ..Default::default()
                 }),
                 changed: Condvar::new(),
@@ -376,6 +384,21 @@ impl FakeCm {
     #[cfg_attr(not(unix), allow(dead_code))]
     pub fn gc_sent(&self) -> Vec<(SteamId, Option<u32>, CMsgGcClient)> {
         self.state().gc_sent.clone()
+    }
+
+    /// The networking certificate requests so far.
+    #[cfg_attr(not(unix), allow(dead_code))]
+    pub fn cert_requests(&self) -> Vec<(SteamId, CMsgClientNetworkingCertRequest)> {
+        self.state().cert_requests.clone()
+    }
+
+    /// Certificates from now on last `lifetime` seconds (48 hours at
+    /// first), or Steam refuses them with `failure`.
+    #[cfg_attr(not(unix), allow(dead_code))]
+    pub fn set_certs(&self, lifetime: u32, failure: Option<EResult>) {
+        let mut s = self.state();
+        s.cert_lifetime = lifetime;
+        s.cert_failure = failure;
     }
 
     /// The verdict Steam gives on other users' tickets from now on.
@@ -532,6 +555,24 @@ struct ConnState {
     forget_at_logoff: Option<String>,
 }
 
+/// `CMsgSteamDatagramCertificate`, as the community definitions have it
+/// (`steamnetworkingsockets_messages_certs.proto`).
+#[derive(Clone, PartialEq, prost::Message)]
+struct FakeCert {
+    #[prost(int32, optional, tag = "1")]
+    key_type: Option<i32>,
+    #[prost(bytes = "vec", optional, tag = "2")]
+    key_data: Option<Vec<u8>>,
+    #[prost(fixed64, optional, tag = "4")]
+    legacy_steam_id: Option<u64>,
+    #[prost(fixed32, optional, tag = "8")]
+    time_created: Option<u32>,
+    #[prost(fixed32, optional, tag = "9")]
+    time_expiry: Option<u32>,
+    #[prost(uint32, repeated, packed = "false", tag = "10")]
+    app_ids: Vec<u32>,
+}
+
 fn reply_to(request: &Packet, emsg: EMsg, body: &impl prost::Message) -> Packet {
     let mut p = Packet::proto(emsg, body);
     let h = p.proto_header_mut().expect("protobuf header");
@@ -658,6 +699,10 @@ impl FakeCm {
                 let steam_id = conn.logged_on.expect("a GC message before logon");
                 self.game_coordinator(steam_id, p)
             }
+            EMsg::KEMsgClientNetworkingCertRequest => {
+                let steam_id = conn.logged_on.expect("a certificate request before logon");
+                vec![self.networking_cert(steam_id, p)]
+            }
             other => panic!("the fake CM does not handle {other:?}"),
         }
     }
@@ -717,6 +762,44 @@ impl FakeCm {
             ..Default::default()
         };
         vec![Packet::proto(EMsg::KEMsgClientFromGc, &answer)]
+    }
+
+    /// `isteamnetworkingsocketsserialized.md` §3: a certificate for the
+    /// request's key, signed with junk. An app the account does not own
+    /// gets `k_EResultAccessDenied` (the real answer is unverified).
+    fn networking_cert(&self, steam_id: SteamId, p: &Packet) -> Packet {
+        let body: CMsgClientNetworkingCertRequest = decode(p);
+        let mut s = self.state();
+        s.cert_requests.push((steam_id, body.clone()));
+        let failure = if Self::owns(&s, steam_id, body.app_id()) {
+            s.cert_failure
+        } else {
+            Some(EResult::ACCESS_DENIED)
+        };
+        // Steam's clock, as the fake's logon response sets it.
+        let now = FAKE_SERVER_TIME;
+        let (r, result) = match failure {
+            Some(e) => (CMsgClientNetworkingCertReply::default(), e),
+            None => {
+                let cert = FakeCert {
+                    key_type: Some(1),
+                    key_data: body.key_data.clone(),
+                    legacy_steam_id: Some(steam_id.0),
+                    time_created: Some(now),
+                    time_expiry: Some(now + s.cert_lifetime),
+                    app_ids: vec![body.app_id()],
+                };
+                let r = CMsgClientNetworkingCertReply {
+                    cert: Some(prost::Message::encode_to_vec(&cert)),
+                    ca_key_id: Some(42),
+                    ca_signature: Some(vec![7; 64]),
+                };
+                (r, EResult::OK)
+            }
+        };
+        let mut p = reply_to(p, EMsg::KEMsgClientNetworkingCertRequestResponse, &r);
+        p.proto_header_mut().expect("protobuf header").eresult = Some(result.0);
+        p
     }
 
     /// `isteamuser.md` §2.7. The "encrypted" ticket is the user data

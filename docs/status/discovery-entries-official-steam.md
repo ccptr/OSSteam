@@ -119,9 +119,14 @@ loaded its menus (§1.1.8).
 
 The Game Coordinator was added on 2026-11-04 at the maintainer's
 request (SPEC §12.3, `steamworks/isteamgamecoordinator.md`), and CS2
-reached its GC the same day. CS2 also asks for two interfaces ossteam
-does not provide: `SteamNetworkingSocketsSerialized005` and
-`SteamAppDisableUpdate001`.
+reached its GC the same day. The two other interfaces it asked for were
+added the same day, also at the maintainer's request:
+`SteamAppDisableUpdate001` (`steamworks/isteamappdisableupdate.md`) and
+`SteamNetworkingSocketsSerialized005`
+(`steamworks/isteamnetworkingsocketsserialized.md`). CS2 accepted
+ossteam's relay certificate, and its relay network came up. It fetches
+the relay config through `ISteamHTTP`, which ossteam does not provide
+yet.
 
 Still open in §1.1.7: games installed under
 `~/.steam`, and the Steam Linux Runtime inside the namespace. The checks

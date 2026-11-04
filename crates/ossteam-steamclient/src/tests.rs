@@ -19,9 +19,9 @@ use ossteam_gameipc::endpoint::Address;
 use ossteam_gameipc::{
     AchievementDef, AchievementPercent, App, AppState, AuthTicket, BeginAuthSession, Dlc, Done,
     EncryptedAppTicket, ErrorReply, GcMessage, GcSent, GlobalAchievements, Hello, Image, Message,
-    NoticeBody, Report, RequestBody, Response, ResponseBody, Session, StatDef, StatValue,
-    StatsSchema, StoreStats, TicketActive, TicketValidated, Unlock, UserLicense, UserStats,
-    Welcome, read_message, write_message,
+    NetworkingCert, NoticeBody, RelayTickets, Report, RequestBody, Response, ResponseBody, Session,
+    StatDef, StatValue, StatsSchema, StoreStats, TicketActive, TicketValidated, Unlock,
+    UserLicense, UserStats, Welcome, read_message, write_message,
 };
 
 use crate::abi::{CSteamID, CallbackMsg, find_version};
@@ -105,6 +105,7 @@ fn serve(
     app: App,
 ) {
     let mut writer = stream.try_clone().unwrap();
+    let mut relay_tickets: Vec<Vec<u8>> = Vec::new();
     while let Ok(msg) = read_message(stream) {
         match msg {
             Message::Hello(h) => {
@@ -139,6 +140,24 @@ fn serve(
                     // The fake GC: type 0xdead does not get through.
                     RequestBody::GcSend(g) => ResponseBody::GcSent(GcSent {
                         result: if g.msg_type == 0xdead { 3 } else { 0 },
+                    }),
+                    RequestBody::UpdateHold(_) => ResponseBody::Done(Done {}),
+                    RequestBody::NetworkingCert(_) => {
+                        ResponseBody::NetworkingCert(NetworkingCert {
+                            result: 1,
+                            message: String::new(),
+                            cert: vec![1, 2, 3],
+                            ca_key_id: 0x0102_0304_0506_0708,
+                            signature: vec![9; 64],
+                            private_key: (0..64).collect(),
+                        })
+                    }
+                    RequestBody::CacheRelayTicket(t) => {
+                        relay_tickets.push(t.ticket.clone());
+                        ResponseBody::Done(Done {})
+                    }
+                    RequestBody::RelayTickets(_) => ResponseBody::RelayTickets(RelayTickets {
+                        tickets: relay_tickets.clone(),
                     }),
                     other => ticket_answer(other),
                 };
@@ -822,6 +841,7 @@ fn a_game_session() {
     remote_storage_session(client, user, pipe, &user_dir);
     tickets_session(&fake, client, user, pipe);
     gc_session(&fake, client, user, pipe);
+    networking_session(&fake, client, user, pipe);
 
     // A stub returns its failure value and is reported, with the
     // interfaces handed out.
@@ -1812,7 +1832,6 @@ fn remote_storage_session(client: *mut c_void, user: i32, pipe: i32, user_dir: &
     assert_eq!(leftovers, ["save", "three"]);
 }
 
-/// `ISteamUser`'s tickets and auth sessions (`isteamuser.md` §4).
 /// `ISteamGameCoordinator` (`isteamgamecoordinator.md` §3).
 fn gc_session(fake: &Fake, client: *mut c_void, user: i32, pipe: i32) {
     let gc = call!(
@@ -1887,6 +1906,7 @@ fn gc_session(fake: &Fake, client: *mut c_void, user: i32, pipe: i32) {
 
     // A message that does not get through is reported by callback 1702.
     assert_eq!(send(0xdead, &[]), 0);
+    assert!(matches!(next_request(fake), RequestBody::GcSend(g) if g.msg_type == 0xdead));
     assert_eq!(wait_callback(pipe, 1702), [0]);
     // Null data with a size is refused at once.
     assert_eq!(
@@ -1903,6 +1923,139 @@ fn gc_session(fake: &Fake, client: *mut c_void, user: i32, pipe: i32) {
     );
 }
 
+/// `ISteamAppDisableUpdate` and `ISteamNetworkingSocketsSerialized`
+/// (`isteamappdisableupdate.md` §1, `isteamnetworkingsocketsserialized.md`
+/// §2, §5).
+fn networking_session(fake: &Fake, client: *mut c_void, user: i32, pipe: i32) {
+    let generic = |version: &CStr| {
+        call!(
+            client,
+            "SteamClient020",
+            "GetISteamGenericInterface",
+            fn(i32, i32, *const c_char) -> *mut c_void,
+            user,
+            pipe,
+            version.as_ptr()
+        )
+    };
+    // Versions whose layout is not known are not served.
+    assert!(generic(c"SteamNetworkingSocketsSerialized004").is_null());
+
+    let hold = generic(c"SteamAppDisableUpdate001");
+    assert!(!hold.is_null());
+    call!(
+        hold,
+        "SteamAppDisableUpdate001",
+        "SetAppUpdateDisabledSecondsRemaining",
+        fn(i32) -> (),
+        900
+    );
+    assert!(matches!(next_request(fake), RequestBody::UpdateHold(h) if h.seconds == 900));
+
+    let net = generic(c"SteamNetworkingSocketsSerialized005");
+    assert!(!net.is_null());
+    let call = call!(
+        net,
+        "SteamNetworkingSocketsSerialized005",
+        "GetCertAsync",
+        fn() -> u64
+    );
+    assert_ne!(call, 0);
+    assert!(matches!(next_request(fake), RequestBody::NetworkingCert(_)));
+    assert_eq!(wait_callback(pipe, 703)[..8], call.to_le_bytes());
+    let mut cert = vec![0u8; 792];
+    let mut failed = true;
+    // SAFETY: `cert` holds 792 bytes.
+    assert!(unsafe {
+        crate::Steam_GetAPICallResult(pipe, call, cert.as_mut_ptr().cast(), 792, 1296, &mut failed)
+    });
+    assert!(!failed);
+    let u32_at = |at: usize| u32::from_le_bytes(cert[at..at + 4].try_into().unwrap());
+    assert_eq!((u32_at(0), u32_at(4)), (1, 3));
+    assert_eq!(cert[8..11], [1, 2, 3]);
+    assert_eq!(cert[520..528], 0x0102_0304_0506_0708u64.to_le_bytes());
+    assert_eq!((u32_at(528), cert[532]), (64, 9));
+    assert_eq!(u32_at(660), 64);
+    assert_eq!(cert[664..728], (0..64).collect::<Vec<u8>>()[..]);
+
+    let ticket = |index: u32, cap: u32| {
+        let mut buf = vec![0u8; cap as usize];
+        let n = call!(
+            net,
+            "SteamNetworkingSocketsSerialized005",
+            "GetCachedRelayTicket",
+            fn(u32, *mut u8, u32) -> i32,
+            index,
+            buf.as_mut_ptr(),
+            cap
+        );
+        buf.truncate(n.max(0) as usize);
+        (n, buf)
+    };
+    let count = || {
+        call!(
+            net,
+            "SteamNetworkingSocketsSerialized005",
+            "GetCachedRelayTicketCount",
+            fn() -> u32
+        )
+    };
+    assert_eq!(count(), 0);
+    assert!(matches!(next_request(fake), RequestBody::RelayTickets(_)));
+    let data = [4u8, 5, 6];
+    call!(
+        net,
+        "SteamNetworkingSocketsSerialized005",
+        "CacheRelayTicket",
+        fn(*const u8, u32) -> (),
+        data.as_ptr(),
+        3
+    );
+    assert!(matches!(next_request(fake), RequestBody::CacheRelayTicket(t) if t.ticket == data));
+    assert_eq!(count(), 1);
+    assert_eq!(ticket(0, 2048), (3, data.to_vec()));
+    // Too small a buffer, or no such ticket.
+    assert_eq!(ticket(0, 2).0, 0);
+    assert_eq!(ticket(1, 2048).0, 0);
+
+    // What is not implemented fails truthfully: relays only, no STUN
+    // server, no FakeIP.
+    let mut buf = [0u8; 128];
+    assert_eq!(
+        call!(
+            net,
+            "SteamNetworkingSocketsSerialized005",
+            "GetSTUNServer",
+            fn(i32, *mut u8, u32) -> u8,
+            0,
+            buf.as_mut_ptr(),
+            128
+        ),
+        0
+    );
+    assert_eq!(
+        call!(
+            net,
+            "SteamNetworkingSocketsSerialized005",
+            "AllowDirectConnectToPeer",
+            fn(*const u8) -> u32,
+            buf.as_ptr()
+        ),
+        0
+    );
+    assert_eq!(
+        call!(
+            net,
+            "SteamNetworkingSocketsSerialized005",
+            "BeginAsyncRequestFakeIP",
+            fn(i32) -> u64,
+            1
+        ),
+        0
+    );
+}
+
+/// `ISteamUser`'s tickets and auth sessions (`isteamuser.md` §4).
 fn tickets_session(fake: &Fake, client: *mut c_void, user: i32, pipe: i32) {
     let get = |version: &CStr| {
         let obj = call!(

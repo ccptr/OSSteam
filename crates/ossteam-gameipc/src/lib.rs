@@ -17,7 +17,7 @@ use wire::{DecodeError, Reader, Wire};
 
 /// The protocol version (`steamworks-abi.md` §3.4). Both sides must
 /// agree exactly.
-pub const PROTOCOL: u32 = 5;
+pub const PROTOCOL: u32 = 6;
 
 /// The largest frame either side accepts.
 pub const MAX_FRAME_LEN: usize = 16 * 1024 * 1024;
@@ -310,6 +310,39 @@ mod tests {
         round_trip(Message::Response(Response {
             id: 9,
             body: ResponseBody::GcSent(GcSent { result: 3 }),
+        }));
+        round_trip(Message::Request(Request {
+            id: 10,
+            body: RequestBody::UpdateHold(UpdateHoldRequest { seconds: -1 }),
+        }));
+        round_trip(Message::Request(Request {
+            id: 11,
+            body: RequestBody::NetworkingCert(NetworkingCertRequest {}),
+        }));
+        round_trip(Message::Response(Response {
+            id: 11,
+            body: ResponseBody::NetworkingCert(NetworkingCert {
+                result: 1,
+                message: String::new(),
+                cert: vec![8, 1],
+                ca_key_id: u64::MAX,
+                signature: vec![7; 64],
+                private_key: vec![6; 64],
+            }),
+        }));
+        round_trip(Message::Request(Request {
+            id: 12,
+            body: RequestBody::CacheRelayTicket(CacheRelayTicketRequest { ticket: vec![5] }),
+        }));
+        round_trip(Message::Request(Request {
+            id: 13,
+            body: RequestBody::RelayTickets(RelayTicketsRequest {}),
+        }));
+        round_trip(Message::Response(Response {
+            id: 13,
+            body: ResponseBody::RelayTickets(RelayTickets {
+                tickets: vec![vec![1, 2], Vec::new(), vec![3]],
+            }),
         }));
         round_trip(Message::Report(Report {
             interfaces: vec!["SteamUser023".into()],

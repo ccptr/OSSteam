@@ -18,10 +18,10 @@ use std::time::{Duration, Instant};
 use ossteam_gameipc::endpoint::Address;
 use ossteam_gameipc::{
     AchievementDef, AchievementPercent, App, AppState, AuthTicket, BeginAuthSession, Dlc, Done,
-    EncryptedAppTicket, ErrorReply, GlobalAchievements, Hello, Image, Message, NoticeBody, Report,
-    RequestBody, Response, ResponseBody, Session, StatDef, StatValue, StatsSchema, StoreStats,
-    TicketActive, TicketValidated, Unlock, UserLicense, UserStats, Welcome, read_message,
-    write_message,
+    EncryptedAppTicket, ErrorReply, GcMessage, GcSent, GlobalAchievements, Hello, Image, Message,
+    NoticeBody, Report, RequestBody, Response, ResponseBody, Session, StatDef, StatValue,
+    StatsSchema, StoreStats, TicketActive, TicketValidated, Unlock, UserLicense, UserStats,
+    Welcome, read_message, write_message,
 };
 
 use crate::abi::{CSteamID, CallbackMsg, find_version};
@@ -136,6 +136,10 @@ fn serve(
                     | RequestBody::StoreStats(_)
                     | RequestBody::GlobalAchievements(_)
                     | RequestBody::AchievementIcon(_)) => stats_answer(other),
+                    // The fake GC: type 0xdead does not get through.
+                    RequestBody::GcSend(g) => ResponseBody::GcSent(GcSent {
+                        result: if g.msg_type == 0xdead { 3 } else { 0 },
+                    }),
                     other => ticket_answer(other),
                 };
                 let notice = ticket_notice(&r.body, &body);
@@ -259,6 +263,13 @@ fn ticket_notice(request: &RequestBody, answer: &ResponseBody) -> Option<NoticeB
             Some(NoticeBody::TicketActive(TicketActive {
                 crc: a.crc,
                 result: 1,
+            }))
+        }
+        // The fake GC answers with the next type and the payload reversed.
+        (RequestBody::GcSend(g), ResponseBody::GcSent(s)) if s.result == 0 => {
+            Some(NoticeBody::GcMessage(GcMessage {
+                msg_type: g.msg_type + 1,
+                payload: g.payload.iter().rev().copied().collect(),
             }))
         }
         (RequestBody::BeginAuthSession(r), ResponseBody::BeginAuthSession(b)) if b.result == 0 => {
@@ -810,6 +821,7 @@ fn a_game_session() {
     stats_session(&fake, client, user, pipe, utils);
     remote_storage_session(client, user, pipe, &user_dir);
     tickets_session(&fake, client, user, pipe);
+    gc_session(&fake, client, user, pipe);
 
     // A stub returns its failure value and is reported, with the
     // interfaces handed out.
@@ -1801,6 +1813,96 @@ fn remote_storage_session(client: *mut c_void, user: i32, pipe: i32, user_dir: &
 }
 
 /// `ISteamUser`'s tickets and auth sessions (`isteamuser.md` §4).
+/// `ISteamGameCoordinator` (`isteamgamecoordinator.md` §3).
+fn gc_session(fake: &Fake, client: *mut c_void, user: i32, pipe: i32) {
+    let gc = call!(
+        client,
+        "SteamClient020",
+        "GetISteamGenericInterface",
+        fn(i32, i32, *const c_char) -> *mut c_void,
+        user,
+        pipe,
+        c"SteamGameCoordinator001".as_ptr()
+    );
+    assert!(!gc.is_null());
+    let send = |msg_type: u32, data: &[u8]| {
+        call!(
+            gc,
+            "SteamGameCoordinator001",
+            "SendMessage",
+            fn(u32, *const u8, u32) -> u32,
+            msg_type,
+            data.as_ptr(),
+            data.len() as u32
+        )
+    };
+    let mut size = 99u32;
+    let available = |size: &mut u32| {
+        call!(
+            gc,
+            "SteamGameCoordinator001",
+            "IsMessageAvailable",
+            fn(*mut u32) -> u8,
+            size
+        )
+    };
+    let mut msg_type = 0u32;
+    let mut buf = [0u8; 16];
+    let retrieve = |cap: u32, msg_type: &mut u32, size: &mut u32, buf: &mut [u8; 16]| {
+        call!(
+            gc,
+            "SteamGameCoordinator001",
+            "RetrieveMessage",
+            fn(*mut u32, *mut u8, u32, *mut u32) -> u32,
+            msg_type,
+            buf.as_mut_ptr(),
+            cap,
+            size
+        )
+    };
+
+    // Nothing yet.
+    assert_eq!(available(&mut size), 0);
+    assert_eq!(size, 0);
+    assert_eq!(retrieve(16, &mut msg_type, &mut size, &mut buf), 1);
+
+    // A message goes to the daemon as it is, and the answer waits for the
+    // game, announced by callback 1701.
+    assert_eq!(send(0x8000_0fa6, &[1, 2, 3, 4, 5]), 0);
+    assert!(matches!(
+        next_request(fake),
+        RequestBody::GcSend(g) if g.msg_type == 0x8000_0fa6 && g.payload == [1, 2, 3, 4, 5]
+    ));
+    let ready = wait_callback(pipe, 1701);
+    assert_eq!(ready, 5u32.to_le_bytes());
+    assert_eq!(available(&mut size), 1);
+    assert_eq!(size, 5);
+    // Too small a buffer leaves it first.
+    assert_eq!(retrieve(4, &mut msg_type, &mut size, &mut buf), 2);
+    assert_eq!((msg_type, size), (0x8000_0fa7, 5));
+    assert_eq!(retrieve(16, &mut msg_type, &mut size, &mut buf), 0);
+    assert_eq!((msg_type, size), (0x8000_0fa7, 5));
+    assert_eq!(buf[..5], [5, 4, 3, 2, 1]);
+    assert_eq!(retrieve(16, &mut msg_type, &mut size, &mut buf), 1);
+
+    // A message that does not get through is reported by callback 1702.
+    assert_eq!(send(0xdead, &[]), 0);
+    assert_eq!(wait_callback(pipe, 1702), [0]);
+    // Null data with a size is refused at once.
+    assert_eq!(
+        call!(
+            gc,
+            "SteamGameCoordinator001",
+            "SendMessage",
+            fn(u32, *const u8, u32) -> u32,
+            1,
+            std::ptr::null(),
+            3
+        ),
+        4
+    );
+}
+
 fn tickets_session(fake: &Fake, client: *mut c_void, user: i32, pipe: i32) {
     let get = |version: &CStr| {
         let obj = call!(

@@ -178,6 +178,20 @@ pub fn file_read_async_complete(call: u64, result: i32, offset: u32, read: u32) 
     out
 }
 
+/// `GCMessageAvailable_t { uint32 m_nMessageSize; }`
+/// (`isteamgamecoordinator.md` §3).
+pub const GC_MESSAGE_AVAILABLE: i32 = 1701;
+/// `GCMessageFailed_t` has no fields; as a C++ struct it is one byte.
+pub const GC_MESSAGE_FAILED: i32 = 1702;
+
+pub fn gc_message_available(size: u32) -> Vec<u8> {
+    size.to_le_bytes().to_vec()
+}
+
+pub fn gc_message_failed() -> Vec<u8> {
+    vec![0]
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

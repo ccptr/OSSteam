@@ -137,6 +137,9 @@ pub enum Report {
     /// `ClientGameConnectTokens`, `ClientAuthListAck` or
     /// `ClientTicketAuthComplete`.
     Tickets(Packet),
+    /// `ClientFromGC`: a message from a Game Coordinator
+    /// (`isteamgamecoordinator.md` §1).
+    FromGc(Packet),
     PersonaName {
         steam_id: SteamId,
         name: String,

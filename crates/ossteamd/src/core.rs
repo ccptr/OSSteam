@@ -25,6 +25,7 @@ use crate::{assets, content, launch, library, pics, stats};
 
 mod compat;
 mod games;
+mod gc;
 mod jobs;
 mod shim;
 mod takeover;
@@ -535,6 +536,10 @@ impl Core {
             Report::PersonaName { steam_id, name } => self.db.set_persona_name(steam_id, &name),
             Report::Tickets(p) => {
                 self.on_ticket_message(&p);
+                Ok(())
+            }
+            Report::FromGc(p) => {
+                self.on_gc_message(&p);
                 Ok(())
             }
         };

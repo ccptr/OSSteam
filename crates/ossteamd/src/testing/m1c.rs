@@ -1124,6 +1124,83 @@ impl GameConn {
     }
 }
 
+/// `isteamgamecoordinator.md` §1, §2 against the fake CM and its GC.
+#[cfg(unix)]
+#[test]
+fn games_talk_to_their_game_coordinator() {
+    use ossteam_gameipc::{
+        GcMessage, GcSendRequest, GcSent, NoticeBody, RequestBody, ResponseBody,
+    };
+
+    let cdn = Arc::new(FakeCdn::new());
+    let (os, _) = oses();
+    let cm = steam(&cdn, &[("bin/game.sh", os)]);
+    let me = ossteam_types::SteamId::individual(ACCOUNT_ID);
+    let root = Root::new();
+    let addr = root.game_address();
+    let d = TestDaemon::start_with_cdn(&root, &cm, POLL, cdn.clone());
+    login(&d);
+    // Two connections of the game; only the second talks to the GC.
+    let quiet = GameConn::open(&addr, GAME);
+    let mut g = GameConn::open(&addr, GAME);
+    let send = |msg_type, payload: &[u8]| {
+        RequestBody::GcSend(GcSendRequest {
+            msg_type,
+            payload: payload.to_vec(),
+        })
+    };
+
+    let hello = [0xa6, 0x0f, 0, 0x80, 0, 0, 0, 0, 1, 2, 3];
+    assert_eq!(
+        g.ask(send(0x8000_0fa6, &hello)),
+        ResponseBody::GcSent(GcSent { result: 0 })
+    );
+    let mut back = hello.to_vec();
+    back.reverse();
+    assert_eq!(
+        g.notice(),
+        NoticeBody::GcMessage(GcMessage {
+            msg_type: 0x8000_0fa7,
+            payload: back,
+        })
+    );
+    // Steam got the game's bytes as they were, routed to the game's app.
+    let sent = cm.gc_sent();
+    let [(who, routing, m)] = sent.as_slice() else {
+        panic!("{sent:?}")
+    };
+    assert_eq!((*who, *routing), (me, Some(GAME)));
+    assert_eq!(
+        (m.appid(), m.msgtype(), m.payload()),
+        (GAME, 0x8000_0fa6, &hello[..])
+    );
+
+    // Answers come in the order Steam sent them, and only to the
+    // connection that talks to the GC.
+    for i in 0..3u8 {
+        assert_eq!(
+            g.ask(send(u32::from(i), &[i])),
+            ResponseBody::GcSent(GcSent { result: 0 })
+        );
+    }
+    for i in 0..3u8 {
+        assert_eq!(
+            g.notice(),
+            NoticeBody::GcMessage(GcMessage {
+                msg_type: u32::from(i) + 1,
+                payload: vec![i],
+            })
+        );
+    }
+    assert!(quiet.rx.recv_timeout(Duration::from_millis(300)).is_err());
+
+    // An app the account does not own reaches no GC.
+    let mut other = GameConn::open(&addr, 999);
+    assert!(matches!(other.ask(send(1, &[])), ResponseBody::Error(e) if e.message.contains("999")));
+    assert_eq!(cm.gc_sent().len(), 4);
+    d.stop();
+}
+
 /// `isteamuser.md` §2, §3 against the fake CM.
 #[cfg(unix)]
 #[test]

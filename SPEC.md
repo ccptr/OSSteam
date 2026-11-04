@@ -614,6 +614,7 @@ implementation of that library.
 | ISteamUserStats | Stats and achievements: request current stats, get and set, `StoreStats`, schema and icons, global achievement percentages |
 | ISteamUtils | App id, IPC country, server time, image data, callback and API-call plumbing, overlay notification position (accepted and recorded; no overlay exists) |
 | ISteamFriends | Own persona name and state. Everything else returns its failure value until M3. |
+| ISteamGameCoordinator | Messages between the game and its app's Game Coordinator, carried through the CM (`ClientToGC`, `ClientFromGC`) without being read |
 | ISteamRemoteStorage | `IsCloudEnabledFor*` returns `false` (truthful). File APIs write and read locally under the cloud root that the app's config defines, and are documented as not synced until M3. |
 
 Other interfaces, such as Networking, Matchmaking, UGC, Input and HTMLSurface,

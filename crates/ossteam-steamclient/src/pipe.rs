@@ -108,6 +108,8 @@ pub struct Pipe {
     pub stats: Mutex<crate::userstats::Stats>,
     /// `ISteamUser`'s tickets (`isteamuser.md` §4).
     pub tickets: Mutex<crate::tickets::Tickets>,
+    /// Messages from the Game Coordinator (`isteamgamecoordinator.md` §3).
+    pub gc: Mutex<crate::gc::Inbox>,
 }
 
 static PIPES: Mutex<Vec<Arc<Pipe>>> = Mutex::new(Vec::new());
@@ -248,6 +250,7 @@ pub fn create() -> i32 {
         pending: Mutex::new(HashMap::new()),
         stats: Mutex::new(crate::userstats::Stats::default()),
         tickets: Mutex::new(crate::tickets::Tickets::default()),
+        gc: Mutex::new(crate::gc::Inbox::default()),
     });
     lock(&PIPES).push(Arc::clone(&pipe));
     let _ = pipe_tx.send(Arc::clone(&pipe));
@@ -520,6 +523,8 @@ impl Pipe {
             q.items.clear();
             q.handed = false;
             q.results.clear();
+            drop(q);
+            *lock(&self.gc) = crate::gc::Inbox::default();
             return;
         }
         for p in pending {

@@ -772,6 +772,8 @@ impl Worker {
             || p.is(EMsg::KEMsgClientTicketAuthComplete)
         {
             self.report(Report::Tickets(p.clone()));
+        } else if p.is(EMsg::KEMsgClientFromGc) {
+            self.report(Report::FromGc(p.clone()));
         } else {
             tracing::trace!(emsg = p.emsg, kind = ?p.kind(), "unhandled CM message");
         }

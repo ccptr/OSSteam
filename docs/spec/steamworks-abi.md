@@ -413,7 +413,7 @@ take-over setting risks, wherever they would look:
 | A game in the Steam Linux Runtime, and one under Proton, find ossteam through it | done 2026-11-03. Steam Linux Runtime 1.0 (scout on soldier): its container nests inside ossteam's namespace, and the game reached the daemon through the abstract socket. Proton Experimental in the Steam Linux Runtime 4.0: Spacewar (480) connected (64-bit) |
 | Proton and the Steam Linux Runtime work with a read-only `~/.steam` | done 2026-11-03, both |
 | A game in the namespace sees ossteam's `userdata/` and an empty `config/` in the official root, also inside the Steam Linux Runtime | done 2026-11-03 inside the Steam Linux Runtime's container; on the host both were unchanged |
-| Counter-Strike 2 in the Steam Linux Runtime 3.0 (sniper) reaches the daemon | done 2026-11-03 (64-bit), once a stale lock was removed: its single-instance lock `/tmp/source_engine_<n>.lock`, left by another user, cannot be opened with `fs.protected_regular` set, and the game then hangs after its error dialog fails (the same under the official client). It loaded `sdk64/steamclient.so` from the private `~/.steam` and connected within a second, with `userdata/` and `config/` covered inside the container, and loaded its menus. It cannot go online: `SteamGameCoordinator001` is not implemented, and it asks for `SteamNetworkingSocketsSerialized005` and `SteamAppDisableUpdate001`, which ossteam does not provide |
+| Counter-Strike 2 in the Steam Linux Runtime 3.0 (sniper) reaches the daemon | done 2026-11-03 (64-bit), once a stale lock was removed: its single-instance lock `/tmp/source_engine_<n>.lock`, left by another user, cannot be opened with `fs.protected_regular` set, and the game then hangs after its error dialog fails (the same under the official client). It loaded `sdk64/steamclient.so` from the private `~/.steam` and connected within a second, with `userdata/` and `config/` covered inside the container, and loaded its menus. Its Game Coordinator answered it from 2026-11-04 (`steamworks/isteamgamecoordinator.md` §4). It asks for `SteamNetworkingSocketsSerialized005` and `SteamAppDisableUpdate001`, which ossteam does not provide |
 | Anti-cheat (VAC, and EAC or BattlEye where the test account owns a title) accepts a native game in the namespace | to be run |
 | The check at start reports Ubuntu's AppArmor restriction | to be run on Ubuntu 24.04 |
 | The official client starting while ossteam holds the entries (§1.1.5) | built 2026-11-04 and tested against `ln -fsn`-style renames in a scratch home (`m1c::official_entries_are_taken_over_and_handed_back`); with the real official client, to be run |
@@ -902,7 +902,7 @@ the shim sends `Request`s and `Report`s, and the daemon sends
 
 ### 3.4 Messages
 
-Protocol version 4.
+Protocol version 5.
 
 | Tag | Message | Direction | Fields |
 |---|---|---|---|
@@ -914,7 +914,7 @@ Protocol version 4.
 | 6 | `SessionUpdate` | daemon → shim | `session: Session` |
 | 7 | `AppUpdate` | daemon → shim | `app: App` |
 | 8 | `Report` | shim → daemon | `interfaces: list<string>`, `unknown: list<string>`, `calls: list<Call>` (§4) |
-| 9 | `Notice` | daemon → shim | `body: NoticeBody`, which starts with its own tag: what Steam said later about a request (`steamworks/isteamuser.md` §3) |
+| 9 | `Notice` | daemon → shim | `body: NoticeBody`, which starts with its own tag: what Steam said later about a request (`steamworks/isteamuser.md` §3), or a message from the app's Game Coordinator (`steamworks/isteamgamecoordinator.md` §2) |
 
 `Session`:
 
@@ -964,6 +964,7 @@ one of them is installed.
 | 1 | `AppState{app_id: u32}` | `AppState{owned: bool, installed: bool, install_dir: string, build_id: u32, depots: list<u32>}` |
 | 2 to 5 | the stats requests of `steamworks/isteamuserstats.md` §2 | their responses |
 | 6 to 11 | the ticket requests of `steamworks/isteamuser.md` §3 | their responses; `Done{}` (tag 7) for the requests that have nothing to say |
+| 12 | `GcSend` of `steamworks/isteamgamecoordinator.md` §2 | `GcSent` |
 | 255 | — | `Error{message: string}`: the request could not be answered |
 
 `Call`: `interface: string` (a version string), `method: string`,
@@ -998,7 +999,8 @@ of them logs in or out, installs, uninstalls, verifies, changes a
 setting, or reads tokens, credentials or other accounts. `AppState`
 tells a game about another app only what Steam's own `ISteamApps` tells
 any game. The stats and ticket requests act only on the connection's
-own app id, and only for an app the account owns. A connection can
+own app id, and only for an app the account owns; so do Game Coordinator
+messages, which go only to the connection's own app's GC. A connection can
 cancel only the tickets and end only the auth sessions it made.
 
 ### 3.7 The daemon's side
@@ -1069,6 +1071,7 @@ getter and fails under ABI-3.
 | `ISteamFriends` | `isteamfriends.md` | own persona name and state |
 | `ISteamRemoteStorage` | `isteamremotestorage.md` | local files, nothing synced |
 | `ISteamUserStats` | `isteamuserstats.md` | stats, achievements, schema, icons, global achievement percentages |
+| `ISteamGameCoordinator` | `isteamgamecoordinator.md` | messages to and from the app's Game Coordinator |
 
 ## 6. Verification against the official client
 

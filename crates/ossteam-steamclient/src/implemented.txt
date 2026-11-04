@@ -170,3 +170,6 @@ ISteamUserStats.RequestGlobalAchievementPercentages() -> u64 = userstats::reques
 ISteamUserStats.GetMostAchievedAchievementInfo(ptr, u32, ptr, ptr) -> i32 = userstats::most_achieved_achievement_info
 ISteamUserStats.GetNextMostAchievedAchievementInfo(i32, ptr, u32, ptr, ptr) -> i32 = userstats::next_most_achieved_achievement_info
 ISteamUserStats.GetAchievementAchievedPercent(ptr, ptr) -> bool = userstats::achievement_achieved_percent
+ISteamGameCoordinator.SendMessage(u32, ptr, u32) -> u32 = gc::send_message
+ISteamGameCoordinator.IsMessageAvailable(ptr) -> bool = gc::is_message_available
+ISteamGameCoordinator.RetrieveMessage(ptr, ptr, u32, ptr) -> u32 = gc::retrieve_message

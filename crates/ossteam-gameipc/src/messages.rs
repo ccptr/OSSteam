@@ -327,6 +327,30 @@ record! {
 }
 
 record! {
+    /// A message for the app's Game Coordinator
+    /// (`isteamgamecoordinator.md` §2).
+    pub struct GcSendRequest {
+        pub msg_type: u32,
+        pub payload: Vec<u8>,
+    }
+}
+
+record! {
+    pub struct GcSent {
+        /// 0 sent, 3 the account is not logged on.
+        pub result: u32,
+    }
+}
+
+record! {
+    /// A message from the app's Game Coordinator.
+    pub struct GcMessage {
+        pub msg_type: u32,
+        pub payload: Vec<u8>,
+    }
+}
+
+record! {
     pub struct ErrorReply {
         pub message: String,
     }
@@ -365,6 +389,7 @@ pub enum RequestBody {
     EndAuthSession(EndAuthSessionRequest),
     UserLicense(UserLicenseRequest),
     EncryptedAppTicket(EncryptedAppTicketRequest),
+    GcSend(GcSendRequest),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -379,14 +404,17 @@ pub enum ResponseBody {
     BeginAuthSession(BeginAuthSession),
     UserLicense(UserLicense),
     EncryptedAppTicket(EncryptedAppTicket),
+    GcSent(GcSent),
     Error(ErrorReply),
 }
 
-/// What Steam said later about a request (`isteamuser.md` §3).
+/// What Steam said later about a request (`isteamuser.md` §3), or a
+/// message from the app's Game Coordinator.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum NoticeBody {
     TicketActive(TicketActive),
     TicketValidated(TicketValidated),
+    GcMessage(GcMessage),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -437,6 +465,7 @@ impl Wire for RequestBody {
             Self::EndAuthSession(r) => tagged(out, 9, r),
             Self::UserLicense(r) => tagged(out, 10, r),
             Self::EncryptedAppTicket(r) => tagged(out, 11, r),
+            Self::GcSend(r) => tagged(out, 12, r),
         }
     }
     fn get(r: &mut Reader<'_>) -> Result<Self, DecodeError> {
@@ -452,6 +481,7 @@ impl Wire for RequestBody {
             9 => Self::EndAuthSession(Wire::get(r)?),
             10 => Self::UserLicense(Wire::get(r)?),
             11 => Self::EncryptedAppTicket(Wire::get(r)?),
+            12 => Self::GcSend(Wire::get(r)?),
             t => return Err(unknown("request", t)),
         })
     }
@@ -470,6 +500,7 @@ impl Wire for ResponseBody {
             Self::BeginAuthSession(a) => tagged(out, 8, a),
             Self::UserLicense(a) => tagged(out, 10, a),
             Self::EncryptedAppTicket(a) => tagged(out, 11, a),
+            Self::GcSent(a) => tagged(out, 12, a),
             Self::Error(e) => tagged(out, 255, e),
         }
     }
@@ -485,6 +516,7 @@ impl Wire for ResponseBody {
             8 => Self::BeginAuthSession(Wire::get(r)?),
             10 => Self::UserLicense(Wire::get(r)?),
             11 => Self::EncryptedAppTicket(Wire::get(r)?),
+            12 => Self::GcSent(Wire::get(r)?),
             255 => Self::Error(Wire::get(r)?),
             t => return Err(unknown("response", t)),
         })
@@ -496,12 +528,14 @@ impl Wire for NoticeBody {
         match self {
             Self::TicketActive(n) => tagged(out, 1, n),
             Self::TicketValidated(n) => tagged(out, 2, n),
+            Self::GcMessage(n) => tagged(out, 3, n),
         }
     }
     fn get(r: &mut Reader<'_>) -> Result<Self, DecodeError> {
         Ok(match u8::get(r)? {
             1 => Self::TicketActive(Wire::get(r)?),
             2 => Self::TicketValidated(Wire::get(r)?),
+            3 => Self::GcMessage(Wire::get(r)?),
             t => return Err(unknown("notice", t)),
         })
     }

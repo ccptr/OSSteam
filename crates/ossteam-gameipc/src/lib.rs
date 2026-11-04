@@ -17,7 +17,7 @@ use wire::{DecodeError, Reader, Wire};
 
 /// The protocol version (`steamworks-abi.md` §3.4). Both sides must
 /// agree exactly.
-pub const PROTOCOL: u32 = 4;
+pub const PROTOCOL: u32 = 5;
 
 /// The largest frame either side accepts.
 pub const MAX_FRAME_LEN: usize = 16 * 1024 * 1024;
@@ -296,6 +296,21 @@ mod tests {
                 response: 0,
             },
         )));
+        round_trip(Message::Notice(NoticeBody::GcMessage(GcMessage {
+            msg_type: 0x8000_0fa4,
+            payload: vec![0xa4, 0x0f, 0, 0x80, 0, 0, 0, 0],
+        })));
+        round_trip(Message::Request(Request {
+            id: 9,
+            body: RequestBody::GcSend(GcSendRequest {
+                msg_type: 0x8000_0fa6,
+                payload: vec![1, 2, 3],
+            }),
+        }));
+        round_trip(Message::Response(Response {
+            id: 9,
+            body: ResponseBody::GcSent(GcSent { result: 3 }),
+        }));
         round_trip(Message::Report(Report {
             interfaces: vec!["SteamUser023".into()],
             unknown: vec!["SteamFoo001".into()],

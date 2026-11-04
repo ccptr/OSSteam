@@ -47,9 +47,9 @@ use ossteam_proto::steam::{
     CMsgClientPicsProductInfoRequest, CMsgClientPicsProductInfoResponse,
     CMsgClientRequestEncryptedAppTicket, CMsgClientRequestEncryptedAppTicketResponse,
     CMsgClientStoreUserStats2, CMsgClientStoreUserStatsResponse, CMsgClientTicketAuthComplete,
-    CMsgIpAddress, CPlayerGetGameAchievementsRequest, CPlayerGetGameAchievementsResponse,
-    EAuthSessionGuardType, EMsg, EncryptedAppTicket, authentication,
-    c_msg_client_get_user_stats_response, c_msg_client_license_list,
+    CMsgGcClient, CMsgIpAddress, CPlayerGetGameAchievementsRequest,
+    CPlayerGetGameAchievementsResponse, EAuthSessionGuardType, EMsg, EncryptedAppTicket,
+    authentication, c_msg_client_get_user_stats_response, c_msg_client_license_list,
     c_msg_client_pics_access_token_response, c_msg_client_pics_changes_since_response,
     c_msg_client_pics_product_info_response, c_msg_ip_address,
     c_player_get_game_achievements_response, content_server_directory as csd, player,
@@ -167,6 +167,9 @@ struct State {
     persona_states: Vec<(SteamId, u32)>,
     /// `ClientGamesPlayedWithDataBlob` messages, in arrival order.
     games_played: Vec<(SteamId, CMsgClientGamesPlayed)>,
+    /// `ClientToGC` messages, in arrival order, with the header's
+    /// `routing_appid`.
+    gc_sent: Vec<(SteamId, Option<u32>, CMsgGcClient)>,
     /// Asks every live connection to drop.
     generation: u64,
     /// Depot keys Steam grants.
@@ -366,6 +369,13 @@ impl FakeCm {
     #[cfg_attr(not(unix), allow(dead_code))]
     pub fn auth_lists(&self) -> Vec<CMsgClientAuthList> {
         self.state().auth_lists.clone()
+    }
+
+    /// The Game Coordinator messages the daemon sent, in arrival order,
+    /// with the header's `routing_appid`.
+    #[cfg_attr(not(unix), allow(dead_code))]
+    pub fn gc_sent(&self) -> Vec<(SteamId, Option<u32>, CMsgGcClient)> {
+        self.state().gc_sent.clone()
     }
 
     /// The verdict Steam gives on other users' tickets from now on.
@@ -644,6 +654,10 @@ impl FakeCm {
                 let steam_id = conn.logged_on.expect("an auth list before logon");
                 self.auth_list(steam_id, p)
             }
+            EMsg::KEMsgClientToGc => {
+                let steam_id = conn.logged_on.expect("a GC message before logon");
+                self.game_coordinator(steam_id, p)
+            }
             other => panic!("the fake CM does not handle {other:?}"),
         }
     }
@@ -681,6 +695,28 @@ impl FakeCm {
             }
         };
         reply_to(p, EMsg::KEMsgClientGetAppOwnershipTicketResponse, &r)
+    }
+
+    /// `isteamgamecoordinator.md` §1. The fake GC of an app the account
+    /// owns answers each message with the next type and the payload
+    /// reversed, so a test can tell it read them; other GCs say nothing.
+    fn game_coordinator(&self, steam_id: SteamId, p: &Packet) -> Vec<Packet> {
+        let body: CMsgGcClient = decode(p);
+        let routing = p.proto_header().and_then(|h| h.routing_appid);
+        let mut s = self.state();
+        s.gc_sent.push((steam_id, routing, body.clone()));
+        if !Self::owns(&s, steam_id, body.appid()) {
+            return Vec::new();
+        }
+        let mut payload = body.payload().to_vec();
+        payload.reverse();
+        let answer = CMsgGcClient {
+            appid: body.appid,
+            msgtype: Some(body.msgtype().wrapping_add(1)),
+            payload: Some(payload),
+            ..Default::default()
+        };
+        vec![Packet::proto(EMsg::KEMsgClientFromGc, &answer)]
     }
 
     /// `isteamuser.md` §2.7. The "encrypted" ticket is the user data

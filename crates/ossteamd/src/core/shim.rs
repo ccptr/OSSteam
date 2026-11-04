@@ -38,6 +38,9 @@ struct Conn {
     /// The session last sent, with the clock's base instead of its value.
     session: Session,
     app_state: App,
+    /// The connection has sent a message to its app's Game Coordinator
+    /// (`isteamgamecoordinator.md` §2).
+    gc: bool,
 }
 
 /// What one process's shim reported (§4).
@@ -117,10 +120,12 @@ impl Core {
             Event::Connected { conn, hello, out } => self.shim_connected(conn, hello, out),
             Event::Message { conn, msg } => match *msg {
                 Message::Request(r) => {
-                    let answer = if super::tickets::is_ticket_request(&r.body) {
-                        self.ticket_request(conn, r.id, r.body)
-                    } else {
-                        self.shim_request(conn, r.id, r.body)
+                    let answer = match r.body {
+                        RequestBody::GcSend(g) => Some(self.gc_send(conn, g)),
+                        body if super::tickets::is_ticket_request(&body) => {
+                            self.ticket_request(conn, r.id, body)
+                        }
+                        body => self.shim_request(conn, r.id, body),
                     };
                     if let Some(body) = answer {
                         self.shim_send(conn, Message::Response(Response { id: r.id, body }));
@@ -169,6 +174,7 @@ impl Core {
                 out,
                 session,
                 app_state,
+                gc: false,
             },
         );
         self.ticket_game_connected(app);
@@ -325,6 +331,29 @@ impl Core {
     /// The app of a game connection.
     pub(super) fn shim_app_of(&self, conn: ConnId) -> Option<AppId> {
         self.shims.conns.get(&conn).map(|c| c.app)
+    }
+
+    /// Marks the connection as one that talks to its app's Game
+    /// Coordinator. True the first time.
+    pub(super) fn shim_talks_to_gc(&mut self, conn: ConnId) -> bool {
+        self.shims
+            .conns
+            .get_mut(&conn)
+            .is_some_and(|c| !std::mem::replace(&mut c.gc, true))
+    }
+
+    /// The connections of `app` that talk to its Game Coordinator, in a
+    /// fixed order.
+    pub(super) fn shim_gc_conns(&self, app: AppId) -> Vec<ConnId> {
+        let mut conns: Vec<ConnId> = self
+            .shims
+            .conns
+            .iter()
+            .filter(|(_, c)| c.gc && c.app == app)
+            .map(|(&id, _)| id)
+            .collect();
+        conns.sort_unstable();
+        conns
     }
 
     /// The apps of the open game connections.

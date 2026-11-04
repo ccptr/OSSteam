@@ -13,6 +13,7 @@ mod apps;
 mod callbacks;
 mod client;
 mod friends;
+mod gc;
 mod guard;
 mod images;
 mod log;

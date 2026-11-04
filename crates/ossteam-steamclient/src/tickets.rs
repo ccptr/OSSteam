@@ -53,7 +53,7 @@ fn lock<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
     m.lock().unwrap_or_else(|e| e.into_inner())
 }
 
-/// A daemon's notice (§3).
+/// A daemon's notice (§3). Game Coordinator messages go on to `gc`.
 pub fn on_notice(p: &Pipe, n: NoticeBody) {
     match n {
         NoticeBody::TicketActive(a) => {
@@ -69,6 +69,7 @@ pub fn on_notice(p: &Pipe, n: NoticeBody) {
             callbacks::VALIDATE_AUTH_TICKET_RESPONSE,
             callbacks::validate_auth_ticket_response(v.steam_id, v.response, v.owner),
         ),
+        NoticeBody::GcMessage(m) => crate::gc::on_message(p, m),
     }
 }
 

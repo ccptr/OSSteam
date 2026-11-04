@@ -1,6 +1,6 @@
 ---
 name: discovery-entries-official-steam
-description: An official Steam install owns ~/.steam/sdk64 on the dev machine, so launches fail with exit 8; a private ~/.steam per launch (DISC-4 to DISC-6) was specified 2026-11-03 and waits on the maintainer's review before code
+description: An official Steam install owns ~/.steam/sdk64 on the dev machine, so launches fail with exit 8; a private ~/.steam per launch (DISC-4 to DISC-6) specified and accepted 2026-11-03, with the official userdata/ and config/ covered too; ready to build
 metadata:
   type: project
 ---
@@ -34,7 +34,17 @@ it counts the client as running only when `steam.pid`'s process has
 `ln -fsn`, ossteam's included. One shipped `libsteam_api.so` builds
 `~/.steam` from `$HOME`.
 
-**How to apply:** no code until the maintainer has reviewed these SPEC
-changes. Open questions for them are in §1.1.7 (hiding
-`~/.local/share/Steam`, anti-cheat, the Steam Linux Runtime inside the
-namespace). Don't work around the conflict meanwhile.
+On 2026-11-03 the maintainer accepted these SPEC changes as drafted,
+DISC-5 included, and answered the open questions:
+
+- In the game's namespace each official root's `userdata/` is
+  ossteam's own `<data>/userdata` (writable) and its `config/` an empty
+  read-only directory, so games cannot read the official client's
+  accounts (§1.1.2 steps 5 and 6; a clause added to DISC-4).
+- Anti-cheat: build DISC-4 now and check it live later (§1.1.8).
+- The official client may be started for the take-over checks
+  (§1.1.5).
+
+**How to apply:** DISC-4 to DISC-6 may be built. Still open in §1.1.7:
+games installed under `~/.steam`, and the Steam Linux Runtime inside
+the namespace. The checks are in §1.1.8.

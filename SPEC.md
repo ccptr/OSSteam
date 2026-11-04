@@ -659,8 +659,10 @@ are reachable through their getters and fail truthfully under ABI-3.
   own, holding only the entries `steam_api` needs, is mounted over the real
   one. Launched games therefore find ossteam whether or not an official
   client owns the real `~/.steam`, and the official client and everything it
-  starts are unaffected. When the system does not allow such a namespace,
-  launches use the real entries of DISC-1.
+  starts are unaffected. In the same namespace, an official installation's
+  `userdata/` shows ossteam's own user data and its `config/` is empty, so
+  that games cannot read the official client's accounts. When the system
+  does not allow such a namespace, launches use the real entries of DISC-1.
 - **[DISC-5]** On Linux, an off-by-default setting lets the daemon take over
   an official client's entries while that client is not running, hand them
   back as they were when it is done, and yield them at once when the

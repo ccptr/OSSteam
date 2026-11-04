@@ -110,6 +110,10 @@ In the child, after `fork` and before `exec`, in this order:
    that bind read-only (`MS_REMOUNT | MS_BIND | MS_RDONLY`), keeping the
    flags of the mount it comes from, which a user namespace may not
    clear.
+5. For each official root (below): when `<root>/userdata` is a
+   directory, bind `<data>/userdata` onto it (`MS_BIND`, writable).
+6. For each official root: when `<root>/config` is a directory, bind
+   `<data>/empty` onto it and remount that bind read-only, as in step 4.
 
 These are system calls only, as the code between `fork` and `exec`
 must be. The process ID namespace is shared, so the daemon's pid in
@@ -126,8 +130,38 @@ namespace only. When it exists and is not a directory, no private
 What the game sees in `~/.steam` is `sdk64/`, `sdk32/` and `steam.pid`,
 read-only. It does not see the official client's links (`root`,
 `steam`, `bin*`), its `registry.vdf` or its `steam.pipe`, so it cannot
-reach the official client through them. `~/.local/share/Steam` and the
-rest of the home directory stay as they are.
+reach the official client through them.
+
+**The official installation.** The official client keeps its accounts'
+data in `<root>/userdata/<account id>/` and their names in
+`<root>/config/loginusers.vdf`. Steps 5 and 6 keep a game under
+ossteam's account from reading them, and leave the rest of the
+installation (its library folders, the content other games read)
+visible:
+
+- In `<root>/userdata` the game sees ossteam's own
+  `<data>/userdata/<account id>/<app id>/` (`user_dir`, §3.4), the
+  same tree `GetUserDataFolder` and `ISteamRemoteStorage` serve, laid
+  out as the official client's. It is writable, so a game that writes
+  into `remote/` or `local/` directly writes into ossteam's copy. What
+  only the official client keeps there (`config/localconfig.vdf`,
+  screenshots and the like) is absent.
+- `<root>/config` is an empty directory, read-only. `<data>/empty` is
+  a directory of ossteam's that it keeps empty.
+
+The **official roots** are found by the daemon before the fork, as
+canonical paths, each once: the targets of the real `~/.steam/root` and
+`~/.steam/steam` when they are symlinks, and those of
+`~/.local/share/Steam`,
+`~/.var/app/com.valvesoftware.Steam/.local/share/Steam` (Flatpak) and
+`~/snap/steam/common/.local/share/Steam` (Snap) that exist. A root
+under `~/.steam`, such as Debian's `~/.steam/debian-installation`, needs
+neither step: step 4 has already hidden it. ossteam never creates
+anything in an official root; a root without `userdata/` or `config/`
+gets no bind for it. The daemon creates `<data>/userdata` and
+`<data>/empty` before the first launch.
+
+The rest of the home directory stays as it is.
 
 In the namespace the user is the same, but setuid and setgid programs
 do not gain privileges, `setgroups` is refused, and files owned by
@@ -335,20 +369,23 @@ take-over setting risks, wherever they would look:
 
 #### 1.1.7 Open questions
 
-- **Hiding `~/.local/share/Steam`.** The private `~/.steam` leaves the
-  official installation visible. Hiding it in the namespace too would
-  keep games under ossteam's account from reading the official client's
-  `userdata/`, but would break library folders the user keeps there and
-  games that read the official installation (Source mods that need
-  another game's content). Not done until the maintainer decides.
 - **Anti-cheat.** Anti-cheat accepts the Steam Linux Runtime's
   containers, which are user namespaces too; a native game in a user
   namespace of its own is less common. Whether any anti-cheat, VAC
-  included (`vac.md`), treats it differently is *unverified*.
+  included (`vac.md`), treats it differently is *unverified*. DISC-4 is
+  built without waiting for it, and checked live with an anti-cheat
+  title the test account owns (§1.1.8).
+- **Games installed under `~/.steam`.** Step 4 hides everything under
+  the real `~/.steam`, so a game whose install directory is there (a
+  library folder in Debian's `~/.steam/debian-installation`, say) is
+  not found in its own namespace. Whether the launch check refuses
+  such a game with a message of its own, or adding a library folder
+  under `~/.steam` is refused, is not decided.
 - **Inside the Steam Linux Runtime.** `pressure-vessel` builds its
   container from the mounts it sees, so it should carry the private
-  `~/.steam` into the container, and its own `bwrap` should nest inside
-  the user namespace. Both are *unverified* (§1.1.8). A setuid `bwrap`
+  `~/.steam`, and the binds of steps 5 and 6, into the container, and
+  its own `bwrap` should nest inside the user namespace. Both are
+  *unverified* (§1.1.8). A setuid `bwrap`
   gains no privileges in a user namespace, so a system that allows user
   namespaces only through a setuid `bwrap` makes no private `~/.steam`
   (the check at start fails), and the real entries are used.
@@ -361,6 +398,8 @@ take-over setting risks, wherever they would look:
 | A native game finds ossteam through the private `~/.steam` | to be run |
 | A game in the Steam Linux Runtime, and one under Proton, find ossteam through it | to be run |
 | Proton and the Steam Linux Runtime work with a read-only `~/.steam` | to be run |
+| A game in the namespace sees ossteam's `userdata/` and an empty `config/` in the official root, also inside the Steam Linux Runtime | to be run |
+| Anti-cheat (VAC, and EAC or BattlEye where the test account owns a title) accepts a native game in the namespace | to be run |
 | The check at start reports Ubuntu's AppArmor restriction | to be run on Ubuntu 24.04 |
 | The official client starting while ossteam holds the entries (§1.1.5) | to be run |
 | The client replaces a `steam.pid` naming a live process | unverified |

@@ -27,8 +27,10 @@ HTTP or TLS stack, SPEC WS-2).
   every slot unchanged to one internal interface; the internal one has
   one more method, `SetHTTPRequestRedirectsEnabled`, which games cannot
   reach. The User-Agent (§3) and the empty URL (§1) come from its code,
-  and so do the cache's rules (§3.1): the log messages of its
-  `CHTTPRequestCache` name each decision it makes.
+  and so does what is known of its cache (§3.1): the log messages of
+  its `CHTTPRequestCache`, which name the decisions it makes, and the
+  code that decides what it stores, read in part. §3.1 marks the source
+  of each statement.
 - **Its cache on disk:** the layout of the files in its
   `appcache/httpcache/` (structure only, `official-client-files.md`).
 - **What Counter-Strike 2 asks of the cache:** its
@@ -126,47 +128,94 @@ the first and every redirect; any other request fails.
 - **Timeouts:** the activity timeout bounds DNS, connecting, and each
   read and write; the absolute timeout bounds the whole request.
 
-The game's `Cache-Control` header goes to the server as it is. Its
-directives also steer the cache (§3.1), as in the official client.
+The game's `Cache-Control` header goes to the server as it is
+(*unverified* for the official client). Its directives also steer the
+cache (§3.1).
 
 ### 3.1 The cache
 
-The daemon keeps an HTTP cache, as the official client does, and every
-GET request goes through it, on every hop. Counter-Strike 2 relies on
-it: its networking library first asks for its relay config with
+The daemon keeps an HTTP cache, and every GET request goes through it,
+on every hop. Counter-Strike 2 relies on a cache: its networking library
+first asks for its relay config with
 `Cache-Control: only-if-cached, max-stale=2678400`, and when the cache
 answers 504 it asks again without it (§9).
 
-The rules are RFC 9111's, with the choices the official client's log
-messages show. A request skips the cache, and its response is not
-stored, when the game set `Range`, `If-Match`, `If-None-Match`,
-`If-Modified-Since`, `If-Unmodified-Since` or `If-Range` itself.
+**What is known of the official cache.** Each statement is marked by
+its source: *read* from the official client's code (`steamclient.so`,
+its `CHTTPRequestCache`), *logged* when only a log message in that code
+says it, *inferred*, or *unverified*.
+
+- *Unverified, the main uncertainty:* whether the official client's
+  cache serves games' requests at all. Its code stores a response only
+  when a flag on its request is set, and skips the lookup when another
+  is set (*read*); what sets those flags for an `ISteamHTTP` request was
+  not traced. That games' requests use it is *inferred*
+  from Counter-Strike 2 asking for `only-if-cached` and falling back
+  when it gets a 504.
+- It stores only GET and HEAD responses, and none for a request with
+  `If-Modified-Since`, `If-None-Match`, `If-Unmodified-Since`,
+  `If-Match` or `If-Range`, or with some other request fields set that
+  were not identified (*read*).
+- It stores statuses 200, 300, 301, 308 and 410; 302 and 307 take
+  another path, not traced (*read*).
+- It stores no response with `Content-Range`, with a `Vary` other than
+  `Accept-Encoding`, with `private` or `no-store`, none for a request
+  with `no-store`, and none for a request with `Authorization` unless
+  the response says `public`. It looks at `max-age`, `s-maxage`,
+  `Expires`, `Date`, `ETag` and `Last-Modified` to decide (*read*; how
+  it weighs them was read only in part).
+- It stores nothing over 4 MiB (*read*: a size compared with 4 MiB;
+  that it is the body's size is *inferred*). Its total size:
+  *unverified*.
+- POST, PUT, DELETE and PATCH mark what is stored for the URL to be
+  removed, whatever the status (*read* from its method switch; the log
+  message names only PUT, POST and DELETE).
+- At lookup: the request's `max-age`, `min-fresh`, `max-stale` (with or
+  without a value) and `only-if-cached`, and the stored response's
+  `no-cache` and `must-revalidate`, steer the decision; validation sends
+  `If-None-Match` and `If-Modified-Since`; a stale answer allowed by
+  `max-stale` gets `Warning: 100 127.0.0.1 stale`, appended after a
+  comma to any `Warning` it had; `only-if-cached` with nothing usable
+  gets a 504 with a small HTML page (*logged*, the `Warning` and the
+  page's shape *read*). That `no-cache` and `must-revalidate` force
+  validation even while fresh is *inferred* from where the message sits.
+- It keeps its files on disk in `appcache/httpcache/`, and a
+  least-recently-used list (*read*).
+- *Unverified:* whether it has a heuristic freshness rule; whether it
+  stores `Set-Cookie`; how it handles several variants of one URL (its
+  file names hold a second hash whose input is not known); whether it
+  honours `Pragma: no-cache`.
+
+**What ossteam does.** The rules are RFC 9111's, with the official
+choices above where they were read or logged. A request skips the
+cache, and its response is not stored, when the game set `Range`,
+`If-Match`, `If-None-Match`, `If-Modified-Since`, `If-Unmodified-Since`
+or `If-Range` itself.
 
 **Directives.** The request's `Cache-Control` (`Pragma: no-cache` when
 it has none) may say `no-cache`, `no-store`, `max-age`, `min-fresh`,
 `max-stale` (with or without a value) and `only-if-cached`. The
 response's may say `max-age`, `no-cache`, `must-revalidate`, `no-store`,
-`public` and `private`; `Expires` counts too. Others are ignored.
+`public` and `private`; `Expires` counts too. Others, `s-maxage`
+included, are ignored.
 
 **Age and freshness.** A stored response's age is computed as RFC 9111
 §4.2.3 says, from its `Date` and `Age` and the times it was asked for and
 received. Its freshness lifetime is its `max-age`, else `Expires` minus
 `Date`, else a tenth of `Date` minus `Last-Modified`, at most a day,
-else 0. *Unverified:* whether the official client has that last,
-heuristic, rule.
+else 0. That last, heuristic, rule is ossteam's.
 
 **Lookup.** With a stored response for the URL whose `Vary` headers
 match the request (below):
 
 1. It must be validated when it says `no-cache` or `must-revalidate`
-   (the official client validates these even while fresh), when the
-   request says `no-cache`, when its age passes the request's `max-age`,
-   or when its remaining freshness is under the request's `min-fresh`.
+   (even while fresh), when the request says `no-cache`, when its age
+   passes the request's `max-age`, or when its remaining freshness is
+   under the request's `min-fresh`.
 2. Otherwise, while fresh, it is the answer, without the network.
 3. Stale, it is still the answer when the request says `max-stale`
    without a value, or with a value its staleness does not pass. It then
-   carries `Warning: 100 127.0.0.1 stale`, after any `Warning` it had,
-   as in the official client.
+   carries `Warning: 100 127.0.0.1 stale`, after any `Warning` it had.
 4. Otherwise it must be validated.
 
 Validating sends the request with `If-None-Match` (its `ETag`) and
@@ -179,9 +228,8 @@ out as if nothing were stored.
 
 **`only-if-cached`.** Such a request never reaches the network. When
 nothing usable is stored, or what is stored must be validated, the cache
-answers itself, as the official client does: the request is successful,
-with status 504, `Content-Type: text/html` and a short HTML page naming
-the status.
+answers itself: the request is successful, with status 504,
+`Content-Type: text/html` and a short HTML page naming the status.
 
 **An answer from the cache** looks like one from the network: its
 status, its stored headers with `Age` set to its age, `HttpHeaders` with
@@ -208,8 +256,7 @@ response is kept per URL: the newest replaces the one before. A stored
 
 **Invalidation.** A PUT, POST or DELETE whose answer is 2xx or 3xx
 removes what is stored for its URL, and for its `Location` and
-`Content-Location` on the same host, as the official client removes
-cached data "due to PUT, POST, or DELETE".
+`Content-Location` on the same host.
 
 **On disk.** The cache lives in the daemon's cache directory (SPEC §17),
 in `http/<app>/`, one file per URL named by the SHA-1 of the URL, and it
@@ -217,12 +264,24 @@ outlasts the daemon. It holds at most 256 MiB over all apps; past that,
 the least recently used responses go. A file that does not read back is
 removed.
 
-The official client keeps one cache for all of its requests, in
-`appcache/httpcache/`. ossteam keeps one for each app instead: games are
-untrusted (SEC-4), and with one cache a game could read, through
-`only-if-cached`, what another game fetched, private responses
-included. A game therefore never sees a response that the client itself
-or another game stored. *Unverified:* the official client's size limits.
+**Where ossteam differs from what was read.**
+
+- One cache per app, where the official client has one for all of its
+  requests: games are untrusted (SEC-4), and with one cache a game could
+  read, through `only-if-cached`, what another game fetched. A game
+  therefore never sees a response that the client itself or another
+  game stored. This is deliberate.
+- ossteam stores `private` responses and responses to requests with
+  `Authorization`, which the official client refuses; it accepts any
+  `Vary` but `*`, where the official client accepts only
+  `Accept-Encoding`; it stores bodies up to 16 MiB, not 4 MiB; it stores
+  the statuses RFC 9111 allows (203, 204, 404, 405, 414 and 501 too, and
+  302 and 307 with explicit freshness); it ignores `s-maxage`.
+- HEAD requests skip ossteam's cache; the official client's cache takes
+  them.
+- ossteam invalidates only after a 2xx or 3xx and not for PATCH; the
+  official client invalidates for PATCH too, whatever the status.
+- The 256 MiB total and the heuristic freshness rule are ossteam's.
 
 ## 4. Sending and completing
 
@@ -371,5 +430,5 @@ itself, but the requests go out from the daemon's process.
 | Counter-Strike 2 through `ISteamHTTP` | done 2026-11-04, test account, main menu only: it fetched its relay config (`api.steampowered.com/ISteamApps/GetSDRConfig/v1`) twice, Steam's news and the HLTV event feed. Its console logged "Got SDR network config. Loaded revision … OK", then pings to 26 relays and "avail=OK". No request failed. That was before the cache (§3.1): ossteam made its `only-if-cached` request over the network then. |
 | Counter-Strike 2 and the cache | done 2026-11-04, test account, main menu only. First launch, nothing cached: its `only-if-cached` relay-config request got the cache's 504 at once, it logged "fetch attempt #1 failed. HTTP 504. Trying again", fetched the config from the server (stored, `max-age=228`), and its relay network came up (24 relays, "avail=OK"). Second launch: that request was answered from the cache, it logged "Got SDR network config … OK" with no retry, and measured 26 relays. |
 | Requests without certificate checks | done 2026-11-04 against `self-signed.badssl.com`: unsuccessful by default, status 200 with `skip_certificate_check` |
-| The cache's rules | read from the official client's log messages; whether its own cache answers a game's request as §3.1 says is inferred from Counter-Strike 2 relying on it |
+| The official cache | its lookup from its log messages, its storing check from its code, in part (§3.1); whether it serves games' requests is inferred from Counter-Strike 2 relying on it, not verified |
 | The official client's limits, encoding, redirects and cookie rules | unverified |

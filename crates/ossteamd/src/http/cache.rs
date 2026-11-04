@@ -646,7 +646,7 @@ mod tests {
             Freshness::Stale
         );
         // must-revalidate and no-cache validate even while fresh, as the
-        // official client does.
+        // official client's log message suggests (§3.1).
         let e = entry(&[("cache-control", "max-age=100, must-revalidate")], 1000);
         assert_eq!(e.decide(&none, 1001), Freshness::Validate);
         assert_eq!(e.decide(&req("max-stale"), 1200), Freshness::Validate);

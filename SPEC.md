@@ -880,7 +880,7 @@ Each library folder has this layout: `common/<installdir>`,
   verifier. Certificate checks cannot be disabled, with one exception: an
   `ISteamHTTP` request whose game called
   `SetHTTPRequestRequiresVerifiedCertificate(false)` is made without
-  them, as the official client makes it.
+  them, as the SDK says the official client makes it.
 - **[SEC-4]** The game endpoint is restricted (GIPC-1) and treats every game
   as untrusted input. Message sizes, rates and the decoding of every field
   are checked.

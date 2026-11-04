@@ -128,6 +128,10 @@ ossteam's relay certificate, and its relay network came up. It fetches
 the relay config through `ISteamHTTP`, which ossteam has had since the
 same day, also at the maintainer's request (`steamworks/isteamhttp.md`):
 CS2 loaded the config from ossteam's answer and measured 26 relays.
+The HTTP cache and the certificate flag followed the same day, also at
+the maintainer's request (SEC-3 reworded): CS2's first relay-config
+request asks only for a cached copy, and from its second launch on the
+cache answers it.
 
 Still open in §1.1.7: games installed under
 `~/.steam`, and the Steam Linux Runtime inside the namespace. The checks

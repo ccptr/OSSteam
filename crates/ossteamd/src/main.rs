@@ -294,6 +294,7 @@ fn serve(
         pics_cache: Cache::new(pics_dir),
         assets,
         assets_dir: paths.cache.join("assets"),
+        http_cache: paths.cache.join("http"),
         stats,
         content_jobs,
         default_folder: paths.data.join("library"),

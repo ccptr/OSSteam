@@ -617,7 +617,7 @@ implementation of that library.
 | ISteamGameCoordinator | Messages between the game and its app's Game Coordinator, carried through the CM (`ClientToGC`, `ClientFromGC`) without being read |
 | ISteamAppDisableUpdate | `SetAppUpdateDisabledSecondsRemaining`: automatic updates of the game's app wait while it asks |
 | ISteamNetworkingSocketsSerialized | Certificates for Steam Datagram Relay (`ClientNetworkingCertRequest`) and the relay ticket cache. Peer-to-peer signalling, STUN, direct connections and FakeIP fail truthfully until M3. |
-| ISteamHTTP | HTTP and HTTPS requests that the daemon makes for the game, streamed responses and cookie containers. Certificates are always checked (SEC-3). |
+| ISteamHTTP | HTTP and HTTPS requests that the daemon makes for the game, streamed responses, cookie containers, and an HTTP cache on disk for each app. Certificates are checked unless the game asks otherwise (SEC-3). |
 | ISteamRemoteStorage | `IsCloudEnabledFor*` returns `false` (truthful). File APIs write and read locally under the cloud root that the app's config defines, and are documented as not synced until M3. |
 
 Other interfaces, such as Networking, Matchmaking, UGC, Input and HTMLSurface,
@@ -859,7 +859,7 @@ application identifier (§24, Q2).
 | Config | `$XDG_CONFIG_HOME/ossteam` | `%APPDATA%\ossteam\config` | `~/Library/Application Support/<id>` |
 | Data (database, generated client-install dir) | `$XDG_DATA_HOME/ossteam` | `%LOCALAPPDATA%\ossteam\data` | `~/Library/Application Support/<id>` |
 | Default library | `$XDG_DATA_HOME/ossteam/library` | `%LOCALAPPDATA%\ossteam\library` | `~/Library/Application Support/<id>/library` |
-| Cache (PICS, assets, CDN list) | `$XDG_CACHE_HOME/ossteam` | `%LOCALAPPDATA%\ossteam\cache` | `~/Library/Caches/<id>` |
+| Cache (PICS, assets, CDN list, games' HTTP responses) | `$XDG_CACHE_HOME/ossteam` | `%LOCALAPPDATA%\ossteam\cache` | `~/Library/Caches/<id>` |
 | State (logs) | `$XDG_STATE_HOME/ossteam` | `%LOCALAPPDATA%\ossteam\state` | `~/Library/Logs/<id>` |
 | Runtime (sockets, lock) | `$XDG_RUNTIME_DIR/ossteam` | named pipes | per-user dir under `$TMPDIR` |
 | ABI exception | `~/.steam/sdk32`, `~/.steam/sdk64`, running marker; the private `~/.steam` in `<data>/steam-sdk` (DISC-4) | `HKCU\Software\Valve\Steam\ActiveProcess` | per ABI spec |
@@ -877,7 +877,10 @@ Each library folder has this layout: `common/<installdir>`,
 - **[SEC-2]** Secrets have dedicated types that are zeroed on drop
   (`zeroize`) and never appear in logs (D-10).
 - **[SEC-3]** All HTTPS and WSS connections use rustls with the platform
-  verifier. Certificate checks cannot be disabled.
+  verifier. Certificate checks cannot be disabled, with one exception: an
+  `ISteamHTTP` request whose game called
+  `SetHTTPRequestRequiresVerifiedCertificate(false)` is made without
+  them, as the official client makes it.
 - **[SEC-4]** The game endpoint is restricted (GIPC-1) and treats every game
   as untrusted input. Message sizes, rates and the decoding of every field
   are checked.

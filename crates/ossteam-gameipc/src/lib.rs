@@ -17,7 +17,7 @@ use wire::{DecodeError, Reader, Wire};
 
 /// The protocol version (`steamworks-abi.md` §3.4). Both sides must
 /// agree exactly.
-pub const PROTOCOL: u32 = 7;
+pub const PROTOCOL: u32 = 8;
 
 /// The largest frame either side accepts.
 pub const MAX_FRAME_LEN: usize = 16 * 1024 * 1024;
@@ -360,6 +360,7 @@ mod tests {
                 absolute_timeout_ms: 0,
                 streaming: true,
                 cookies: 2,
+                skip_certificate_check: true,
             }),
         }));
         round_trip(Message::Response(Response {

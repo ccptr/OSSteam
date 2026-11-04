@@ -1,9 +1,10 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 //! The core's side of `ISteamHTTP` (`docs/spec/steamworks/isteamhttp.md`
-//! §6 to §8): each connection's requests, queued and run on worker
-//! threads, and each process's cookie containers.
+//! §3.1, §6 to §8): each connection's requests, queued and run on worker
+//! threads, each process's cookie containers, and the cache.
 
 use std::collections::{HashMap, VecDeque};
+use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
 use ossteam_gameipc::{
@@ -14,7 +15,7 @@ use ossteam_types::CancelToken;
 use super::shim::error;
 use super::{Command, Core};
 use crate::gameipc::ConnId;
-use crate::http::{self, Event, Jar, Job};
+use crate::http::{self, Cache, Event, Jar, Job};
 
 /// The limits of §6.
 const RUNNING: usize = 8;
@@ -43,14 +44,30 @@ struct Lane {
     waiting: VecDeque<Waiting>,
 }
 
-#[derive(Default)]
 pub struct Http {
     agent: Option<ureq::Agent>,
+    /// For requests that skip certificate checks (§4).
+    unverified: Option<ureq::Agent>,
+    cache: Arc<Cache>,
     lanes: HashMap<ConnId, Lane>,
     /// Cookie containers by process and handle.
     jars: HashMap<(u32, u32), Arc<Mutex<Jar>>>,
     next_seq: u64,
     pub stop: CancelToken,
+}
+
+impl Http {
+    pub fn new(cache: PathBuf) -> Self {
+        Self {
+            agent: None,
+            unverified: None,
+            cache: Arc::new(Cache::new(cache)),
+            lanes: HashMap::new(),
+            jars: HashMap::new(),
+            next_seq: 0,
+            stop: CancelToken::new(),
+        }
+    }
 }
 
 /// What a request's worker reports, back on the core's thread.
@@ -190,14 +207,27 @@ impl Core {
         let jar = (request.cookies != 0)
             .then(|| self.http.jars.get(&(pid, request.cookies)).cloned())
             .flatten();
-        let agent = self.http.agent.get_or_insert_with(http::agent).clone();
+        let agent = if request.skip_certificate_check {
+            tracing::debug!("a game's HTTP request without certificate checks, as it asked");
+            self.http
+                .unverified
+                .get_or_insert_with(http::unverified_agent)
+                .clone()
+        } else {
+            self.http.agent.get_or_insert_with(http::agent).clone()
+        };
         let handle = request.handle;
         self.http.next_seq += 1;
         let seq = self.http.next_seq;
         let stop = CancelToken::new();
         let all = self.http.stop.clone();
         let commands = self.games.commands.clone();
-        let job = Job { app, request, jar };
+        let job = Job {
+            app,
+            request,
+            jar,
+            cache: Some(Arc::clone(&self.http.cache)),
+        };
         let worker_stop = stop.clone();
         let spawned = std::thread::Builder::new()
             .name("http-request".into())

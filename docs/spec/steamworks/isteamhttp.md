@@ -2,10 +2,10 @@
 
 | | |
 |---|---|
-| Status | Implemented: HTTP and HTTPS requests that the daemon makes for a game, streamed responses, and cookie containers |
+| Status | Implemented: HTTP and HTTPS requests that the daemon makes for a game, streamed responses, cookie containers, and the HTTP cache |
 | Requirements | SPEC §12.3, GIPC-1, SEC-3, SEC-4, FAITH-1 to FAITH-3 |
 | Versions | `STEAMHTTP_INTERFACE_VERSION001` to `003` (`vtables.txt`), reached through `ISteamClient::GetISteamHTTP` |
-| Code | `crates/ossteam-steamclient/src/http.rs`; the daemon's side in `crates/ossteamd/src/core/http.rs` and `crates/ossteamd/src/http.rs` |
+| Code | `crates/ossteam-steamclient/src/http.rs`; the daemon's side in `crates/ossteamd/src/core/http.rs`, `crates/ossteamd/src/http.rs` and `crates/ossteamd/src/http/cache.rs` |
 
 A game asks Steam to make an HTTP request for it and hands it the
 response. Counter-Strike 2's networking library fetches its relay
@@ -26,7 +26,13 @@ HTTP or TLS stack, SPEC WS-2).
   (structure only). Its adapter classes for the three versions pass
   every slot unchanged to one internal interface; the internal one has
   one more method, `SetHTTPRequestRedirectsEnabled`, which games cannot
-  reach. The User-Agent (§3) and the empty URL (§1) come from its code.
+  reach. The User-Agent (§3) and the empty URL (§1) come from its code,
+  and so do the cache's rules (§3.1): the log messages of its
+  `CHTTPRequestCache` name each decision it makes.
+- **Its cache on disk:** the layout of the files in its
+  `appcache/httpcache/` (structure only, `official-client-files.md`).
+- **What Counter-Strike 2 asks of the cache:** its
+  `libsteamnetworkingsockets.so` (structure only).
 
 What these sources do not show is marked *unverified*.
 
@@ -60,7 +66,7 @@ and ends after `SetHTTPRequestRawPostBody`):
 | 19 | `bool SetCookie(c, const char *host, const char *url, const char *cookie)` | adds a cookie, as if `url` on `host` had sent `Set-Cookie: cookie` |
 | 20 | `bool SetHTTPRequestCookieContainer(h, c)` | the container the request takes its cookies from |
 | 21 | `bool SetHTTPRequestUserAgentInfo(h, const char *info)` | adds to the User-Agent (§3) |
-| 22 | `bool SetHTTPRequestRequiresVerifiedCertificate(h, bool require)` | accepted and ignored: certificates are always checked (SEC-3, §4) |
+| 22 | `bool SetHTTPRequestRequiresVerifiedCertificate(h, bool require)` | `false` makes the request without checking the server's certificate (§4) |
 | 23 | `bool SetHTTPRequestAbsoluteTimeoutMS(h, uint32 ms)` | how long the whole request may take; 0 for no limit, the default |
 | 24 | `bool GetHTTPRequestWasTimedOut(h, bool *timedOut)` | whether it failed by running out of time |
 
@@ -97,7 +103,8 @@ The shim builds what it sends:
 ## 3. What the daemon sends
 
 The daemon makes the request with ossteam's HTTP client: rustls with
-the platform verifier (SEC-3). Only `http` and `https` URLs are made,
+the platform verifier (SEC-3), unless the game asked not to check
+certificates (§4). Only `http` and `https` URLs are made,
 the first and every redirect; any other request fails.
 
 - **User-Agent:** `Valve/Steam HTTP Client 1.0 (<app>)`, where `<app>`
@@ -119,13 +126,103 @@ the first and every redirect; any other request fails.
 - **Timeouts:** the activity timeout bounds DNS, connecting, and each
   read and write; the absolute timeout bounds the whole request.
 
-A cached response, as the SDK describes for Steam's offline mode, is
-never used: ossteam has no offline mode yet, nor an HTTP cache. A
-`Cache-Control` header the game sets goes to the server as it is.
-Counter-Strike 2 logs its first relay-config request as an
-"only-if-cached" attempt; ossteam makes it like any other, and the game
-loads the config from the answer (§9). *Unverified:* what the official
-client's cache answers to such a request.
+The game's `Cache-Control` header goes to the server as it is. Its
+directives also steer the cache (§3.1), as in the official client.
+
+### 3.1 The cache
+
+The daemon keeps an HTTP cache, as the official client does, and every
+GET request goes through it, on every hop. Counter-Strike 2 relies on
+it: its networking library first asks for its relay config with
+`Cache-Control: only-if-cached, max-stale=2678400`, and when the cache
+answers 504 it asks again without it (§9).
+
+The rules are RFC 9111's, with the choices the official client's log
+messages show. A request skips the cache, and its response is not
+stored, when the game set `Range`, `If-Match`, `If-None-Match`,
+`If-Modified-Since`, `If-Unmodified-Since` or `If-Range` itself.
+
+**Directives.** The request's `Cache-Control` (`Pragma: no-cache` when
+it has none) may say `no-cache`, `no-store`, `max-age`, `min-fresh`,
+`max-stale` (with or without a value) and `only-if-cached`. The
+response's may say `max-age`, `no-cache`, `must-revalidate`, `no-store`,
+`public` and `private`; `Expires` counts too. Others are ignored.
+
+**Age and freshness.** A stored response's age is computed as RFC 9111
+§4.2.3 says, from its `Date` and `Age` and the times it was asked for and
+received. Its freshness lifetime is its `max-age`, else `Expires` minus
+`Date`, else a tenth of `Date` minus `Last-Modified`, at most a day,
+else 0. *Unverified:* whether the official client has that last,
+heuristic, rule.
+
+**Lookup.** With a stored response for the URL whose `Vary` headers
+match the request (below):
+
+1. It must be validated when it says `no-cache` or `must-revalidate`
+   (the official client validates these even while fresh), when the
+   request says `no-cache`, when its age passes the request's `max-age`,
+   or when its remaining freshness is under the request's `min-fresh`.
+2. Otherwise, while fresh, it is the answer, without the network.
+3. Stale, it is still the answer when the request says `max-stale`
+   without a value, or with a value its staleness does not pass. It then
+   carries `Warning: 100 127.0.0.1 stale`, after any `Warning` it had,
+   as in the official client.
+4. Otherwise it must be validated.
+
+Validating sends the request with `If-None-Match` (its `ETag`) and
+`If-Modified-Since` (its `Last-Modified`). A 304 answer refreshes the
+stored response's headers with the 304's (but not `Content-Length`) and
+its times, and the stored response is the answer. Any other answer
+replaces it, or is stored afresh, by the rules below. A stored response
+without `ETag` or `Last-Modified` cannot be validated: the request goes
+out as if nothing were stored.
+
+**`only-if-cached`.** Such a request never reaches the network. When
+nothing usable is stored, or what is stored must be validated, the cache
+answers itself, as the official client does: the request is successful,
+with status 504, `Content-Type: text/html` and a short HTML page naming
+the status.
+
+**An answer from the cache** looks like one from the network: its
+status, its stored headers with `Age` set to its age, `HttpHeaders` with
+the body's length, then the body in chunks (§5, §8). Its `Set-Cookie`
+headers were not stored, so it changes no cookie container.
+
+**Storing.** A GET response that came from the network is stored when:
+
+- its status is not 1xx, 206 or 304;
+- neither the request nor the response says `no-store`, and it has no
+  `Vary: *`;
+- it has explicit freshness (`max-age` or `Expires`), says `public` or
+  `private`, or has a status cacheable by default (200, 203, 204, 300,
+  301, 308, 404, 405, 410, 414, 501) and an `ETag` or `Last-Modified`;
+- its body, read whole, is at most 16 MiB.
+
+It is stored without `Set-Cookie` and without the hop-by-hop headers
+(`Connection`, `Keep-Alive`, `Proxy-Connection`, `TE`, `Trailer`,
+`Transfer-Encoding`, `Upgrade` and those `Connection` names). With
+`Vary`, the values the daemon sent for the named request headers are
+stored with it; a later request whose values differ does not match. One
+response is kept per URL: the newest replaces the one before. A stored
+301 or 308 is followed like one from the network.
+
+**Invalidation.** A PUT, POST or DELETE whose answer is 2xx or 3xx
+removes what is stored for its URL, and for its `Location` and
+`Content-Location` on the same host, as the official client removes
+cached data "due to PUT, POST, or DELETE".
+
+**On disk.** The cache lives in the daemon's cache directory (SPEC §17),
+in `http/<app>/`, one file per URL named by the SHA-1 of the URL, and it
+outlasts the daemon. It holds at most 256 MiB over all apps; past that,
+the least recently used responses go. A file that does not read back is
+removed.
+
+The official client keeps one cache for all of its requests, in
+`appcache/httpcache/`. ossteam keeps one for each app instead: games are
+untrusted (SEC-4), and with one cache a game could read, through
+`only-if-cached`, what another game fetched, private responses
+included. A game therefore never sees a response that the client itself
+or another game stored. *Unverified:* the official client's size limits.
 
 ## 4. Sending and completing
 
@@ -157,11 +254,14 @@ URL or method was not usable, a redirect went too far, a limit of §6
 was passed, or the daemon closed. `GetHTTPRequestWasTimedOut` then says
 whether a timeout ran out.
 
-A certificate is checked even after
-`SetHTTPRequestRequiresVerifiedCertificate(false)`: SEC-3 does not let
-it be turned off. A game that talks to a server with a certificate the
-platform does not trust gets an unsuccessful request where the official
-client would have made it.
+Certificates are checked with the platform verifier unless the game
+called `SetHTTPRequestRequiresVerifiedCertificate(false)`: the daemon
+then makes that request, on every hop, without checking the server's
+certificate chain or its name, as the SDK says the official client does
+(SEC-3 allows this one exception). The official client otherwise drops
+a connection whose certificate does not verify (a message in its code
+says so). *Unverified:* the official default; ossteam checks unless
+asked not to.
 
 `ReleaseHTTPRequest` on a request still running cancels it: the daemon
 stops it, and its call never completes, as the official client cancels
@@ -233,7 +333,7 @@ says.
 
 | Tag | Request | Response |
 |---|---|---|
-| 17 | `HttpSend{handle: u32, method: u32, url: string, headers: list<HttpHeader>, body: list<u8>, user_agent_info: string, activity_timeout_ms: u32, absolute_timeout_ms: u32, streaming: bool, cookies: u32}` | `HttpDone{successful: bool, status: u32, timed_out: bool}` (tag 15) |
+| 17 | `HttpSend{handle: u32, method: u32, url: string, headers: list<HttpHeader>, body: list<u8>, user_agent_info: string, activity_timeout_ms: u32, absolute_timeout_ms: u32, streaming: bool, cookies: u32, skip_certificate_check: bool}` | `HttpDone{successful: bool, status: u32, timed_out: bool}` (tag 15) |
 | 18 | `HttpCancel{handle: u32}` | `Done{}` |
 | 19 | `HttpReorder{handle: u32, first: bool}` | `Done{}` |
 | 20 | `HttpCookieContainer{handle: u32, allow_modify: bool}` | `Done{}` |
@@ -242,7 +342,8 @@ says.
 
 `HttpHeader` is `{name: string, value: list<u8>}`: a value need not be
 UTF-8. `cookies` is 0 for no container; `absolute_timeout_ms` is 0 for
-none.
+none; `skip_certificate_check` is true after
+`SetHTTPRequestRequiresVerifiedCertificate(false)` (§4).
 
 The daemon sends, as notices (`NoticeBody` tags 4 and 5), before
 `HttpDone`:
@@ -267,5 +368,8 @@ itself, but the requests go out from the daemon's process.
 | Slot layouts and callback layouts | from the SDK headers and Proton's generated layouts |
 | The official adapters pass every slot through unchanged | read from its `steamclient.so` |
 | The User-Agent | read from its `steamclient.so` |
-| Counter-Strike 2 through `ISteamHTTP` | done 2026-11-04, test account, main menu only: it fetched its relay config (`api.steampowered.com/ISteamApps/GetSDRConfig/v1`) twice, Steam's news and the HLTV event feed. Its console logged "Got SDR network config. Loaded revision … OK", then pings to 26 relays and "avail=OK". No request failed. |
+| Counter-Strike 2 through `ISteamHTTP` | done 2026-11-04, test account, main menu only: it fetched its relay config (`api.steampowered.com/ISteamApps/GetSDRConfig/v1`) twice, Steam's news and the HLTV event feed. Its console logged "Got SDR network config. Loaded revision … OK", then pings to 26 relays and "avail=OK". No request failed. That was before the cache (§3.1): ossteam made its `only-if-cached` request over the network then. |
+| Counter-Strike 2 and the cache | done 2026-11-04, test account, main menu only. First launch, nothing cached: its `only-if-cached` relay-config request got the cache's 504 at once, it logged "fetch attempt #1 failed. HTTP 504. Trying again", fetched the config from the server (stored, `max-age=228`), and its relay network came up (24 relays, "avail=OK"). Second launch: that request was answered from the cache, it logged "Got SDR network config … OK" with no retry, and measured 26 relays. |
+| Requests without certificate checks | done 2026-11-04 against `self-signed.badssl.com`: unsuccessful by default, status 200 with `skip_certificate_check` |
+| The cache's rules | read from the official client's log messages; whether its own cache answers a game's request as §3.1 says is inferred from Counter-Strike 2 relying on it |
 | The official client's limits, encoding, redirects and cookie rules | unverified |

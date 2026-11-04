@@ -221,7 +221,7 @@ fn default_path(path: &str) -> String {
 }
 
 /// RFC 6265 §5.1.1: a cookie date, as Unix seconds.
-fn parse_date(s: &str) -> Option<i64> {
+pub(super) fn parse_date(s: &str) -> Option<i64> {
     let delimiter = |c: char| {
         c == '\t'
             || (' '..='/').contains(&c)

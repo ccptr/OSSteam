@@ -2,7 +2,9 @@
 //! TLS configuration shared by every HTTPS and WSS connection (SEC-3).
 //!
 //! rustls with the ring provider and the operating system's certificate
-//! verifier. There is no switch that weakens verification.
+//! verifier. The one way to weaken verification is
+//! [`unverified_agent_config`], which SEC-3 allows only for a game's
+//! `ISteamHTTP` request that asks for it.
 
 use std::sync::{Arc, OnceLock};
 
@@ -39,6 +41,21 @@ pub fn agent_config() -> ureq::config::ConfigBuilder<ureq::typestate::AgentScope
             .provider(TlsProvider::Rustls)
             .unversioned_rustls_crypto_provider(provider())
             .root_certs(RootCerts::PlatformVerifier)
+            .build(),
+    )
+}
+
+/// An agent configuration that does not check certificates: only for a
+/// game's `ISteamHTTP` request after
+/// `SetHTTPRequestRequiresVerifiedCertificate(false)` (SEC-3,
+/// `isteamhttp.md` §4).
+pub fn unverified_agent_config() -> ureq::config::ConfigBuilder<ureq::typestate::AgentScope> {
+    use ureq::tls::{TlsConfig, TlsProvider};
+    ureq::Agent::config_builder().tls_config(
+        TlsConfig::builder()
+            .provider(TlsProvider::Rustls)
+            .unversioned_rustls_crypto_provider(provider())
+            .disable_verification(true)
             .build(),
     )
 }

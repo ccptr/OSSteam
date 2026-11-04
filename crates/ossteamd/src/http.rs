@@ -1,7 +1,9 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 //! Making a game's HTTP request (`docs/spec/steamworks/isteamhttp.md`
-//! §3): one request with its redirects and cookies, on a worker thread.
+//! §3): one request with its redirects, cookies and cache, on a worker
+//! thread.
 
+mod cache;
 mod cookies;
 
 use std::io::Read as _;
@@ -13,6 +15,8 @@ use ossteam_types::CancelToken;
 use ureq::config::AutoHeaderValue;
 use ureq::http::{self, HeaderName, HeaderValue, Method, Uri, header};
 
+pub use cache::Cache;
+use cache::{Directives, Entry, Freshness, MAX_ENTRY};
 pub use cookies::{Jar, now as cookies_now};
 
 /// The largest body of a response that is not streamed (§6).
@@ -33,6 +37,17 @@ pub fn agent() -> ureq::Agent {
         .new_agent()
 }
 
+/// The same, without certificate checks, for a game that asked for that
+/// (§4, SEC-3).
+pub fn unverified_agent() -> ureq::Agent {
+    ossteam_net::tls::unverified_agent_config()
+        .http_status_as_error(false)
+        .max_redirects(0)
+        .user_agent(AutoHeaderValue::None)
+        .build()
+        .new_agent()
+}
+
 /// A request to make.
 pub struct Job {
     /// The connection's app, for the User-Agent.
@@ -40,6 +55,7 @@ pub struct Job {
     pub request: HttpSendRequest,
     /// The cookie container, and whether responses may change it.
     pub jar: Option<Arc<Mutex<Jar>>>,
+    pub cache: Option<Arc<Cache>>,
 }
 
 /// What the request has to tell before it ends.
@@ -112,6 +128,170 @@ fn is_timeout(e: &ureq::Error) -> bool {
     }
 }
 
+/// A response, from the network or from the cache.
+struct Reply {
+    status: u16,
+    headers: http::HeaderMap,
+    body: Source,
+}
+
+enum Source {
+    Network(ureq::Body),
+    Stored(Vec<u8>),
+}
+
+impl Reply {
+    fn stored(e: Entry, now: i64, stale: bool) -> Self {
+        Self {
+            status: e.status,
+            headers: e.answer_headers(now, stale),
+            body: Source::Stored(e.body),
+        }
+    }
+}
+
+/// A response being read, to store once it is whole.
+struct Store {
+    cache: Arc<Cache>,
+    app: u32,
+    entry: Entry,
+}
+
+/// What the cache does with one hop (§3.1).
+enum Plan {
+    Answer(Reply),
+    /// Ask the network, validating this stored response when there is
+    /// one.
+    Network(Option<Entry>),
+}
+
+/// The answer the cache makes itself to `only-if-cached` (§3.1).
+fn gateway_timeout() -> Reply {
+    let body = b"<html>\n<head>\n<title>504 Gateway Timeout</title>\n</head>\n<body>\n\
+        <h1>Gateway Timeout</h1>\n</body>\n</html>"
+        .to_vec();
+    let mut headers = http::HeaderMap::new();
+    headers.insert(header::CONTENT_TYPE, HeaderValue::from_static("text/html"));
+    headers.insert(header::CONTENT_LENGTH, HeaderValue::from(body.len()));
+    Reply {
+        status: 504,
+        headers,
+        body: Source::Stored(body),
+    }
+}
+
+fn plan(cache: &Cache, app: u32, url: &str, request: &http::HeaderMap, now: i64) -> Plan {
+    let directives = Directives::of_request(request);
+    let only = directives.has("only-if-cached");
+    let Some(e) = cache.get(app, url, now).filter(|e| e.matches(request)) else {
+        if only {
+            tracing::debug!("only-if-cached and nothing cached: 504");
+            return Plan::Answer(gateway_timeout());
+        }
+        return Plan::Network(None);
+    };
+    match e.decide(&directives, now) {
+        Freshness::Fresh => {
+            tracing::debug!("answered from the cache");
+            Plan::Answer(Reply::stored(e, now, false))
+        }
+        Freshness::Stale => {
+            tracing::debug!("answered from the cache, stale as the request allows");
+            Plan::Answer(Reply::stored(e, now, true))
+        }
+        Freshness::Validate if only => {
+            tracing::debug!("only-if-cached and what is cached must be validated: 504");
+            Plan::Answer(gateway_timeout())
+        }
+        Freshness::Validate if e.validators().is_empty() => Plan::Network(None),
+        Freshness::Validate => Plan::Network(Some(e)),
+    }
+}
+
+/// A PUT, POST or DELETE went through: what is cached for its URL, its
+/// `Location` and its `Content-Location` goes (§3.1).
+fn invalidate(cache: &Cache, app: u32, uri: &Uri, headers: &http::HeaderMap) {
+    cache.remove(app, &uri.to_string());
+    for name in [header::LOCATION, header::CONTENT_LOCATION] {
+        if let Some(other) = headers
+            .get(&name)
+            .and_then(|v| v.to_str().ok())
+            .and_then(|l| resolve(uri, l))
+            .as_deref()
+            .and_then(web_uri)
+            && other.host() == uri.host()
+        {
+            cache.remove(app, &other.to_string());
+        }
+    }
+}
+
+/// One hop over the network.
+fn send(
+    agent: &ureq::Agent,
+    method: &Method,
+    uri: &Uri,
+    headers: http::HeaderMap,
+    body: &[u8],
+    activity: Option<Duration>,
+    deadline: Option<Instant>,
+) -> Result<http::Response<ureq::Body>, HttpDone> {
+    let global = match deadline {
+        Some(d) => match d.checked_duration_since(Instant::now()) {
+            Some(left) if !left.is_zero() => Some(left),
+            _ => return Err(failed(true)),
+        },
+        None => None,
+    };
+    let mut builder = http::Request::builder()
+        .method(method.clone())
+        .uri(uri.clone());
+    if let Some(h) = builder.headers_mut() {
+        *h = headers;
+    }
+    let bodiless = body.is_empty()
+        && matches!(
+            *method,
+            Method::GET | Method::HEAD | Method::DELETE | Method::OPTIONS
+        );
+    let result = if bodiless {
+        builder.body(()).map(|req| {
+            let req = agent
+                .configure_request(req)
+                .timeout_global(global)
+                .timeout_resolve(activity)
+                .timeout_connect(activity)
+                .timeout_per_read(activity)
+                .timeout_per_write(activity)
+                .build();
+            agent.run(req)
+        })
+    } else {
+        builder.body(body.to_vec()).map(|req| {
+            let req = agent
+                .configure_request(req)
+                .timeout_global(global)
+                .timeout_resolve(activity)
+                .timeout_connect(activity)
+                .timeout_per_read(activity)
+                .timeout_per_write(activity)
+                .build();
+            agent.run(req)
+        })
+    };
+    match result {
+        Ok(Ok(r)) => Ok(r),
+        Ok(Err(e)) => {
+            tracing::debug!("a game's HTTP request failed: {e}");
+            Err(failed(is_timeout(&e)))
+        }
+        Err(e) => {
+            tracing::debug!("a game's HTTP request is malformed: {e}");
+            Err(failed(false))
+        }
+    }
+}
+
 /// Makes the request. `emit` returns false when nobody listens any
 /// more, which stops the request, as `stop` does.
 pub fn run(
@@ -153,6 +333,8 @@ pub fn run(
         }
     }
     let game_cookie = headers.remove(header::COOKIE);
+    // A game's own conditional or partial request skips the cache.
+    let cache = job.cache.as_ref().filter(|_| !cache::skips(&headers));
     let mut body = r.body;
     let activity =
         Some(Duration::from_millis(u64::from(r.activity_timeout_ms))).filter(|d| !d.is_zero());
@@ -191,79 +373,104 @@ pub fn run(
         if let Some(c) = cookie {
             request_headers.insert(header::COOKIE, c);
         }
-        let global = match deadline {
-            Some(d) => match d.checked_duration_since(Instant::now()) {
-                Some(left) if !left.is_zero() => Some(left),
-                _ => return failed(true),
-            },
-            None => None,
+        let url = uri.to_string();
+        let now = cookies::now();
+        let get = method == Method::GET;
+        let plan = match cache {
+            Some(c) if get => plan(c, job.app, &url, &request_headers, now),
+            _ => Plan::Network(None),
         };
-        let mut builder = http::Request::builder()
-            .method(method.clone())
-            .uri(uri.clone());
-        if let Some(h) = builder.headers_mut() {
-            *h = request_headers;
-        }
-        let bodiless = body.is_empty()
-            && matches!(
-                method,
-                Method::GET | Method::HEAD | Method::DELETE | Method::OPTIONS
-            );
-        let result = if bodiless {
-            builder.body(()).map(|req| {
-                let req = agent
-                    .configure_request(req)
-                    .timeout_global(global)
-                    .timeout_resolve(activity)
-                    .timeout_connect(activity)
-                    .timeout_per_read(activity)
-                    .timeout_per_write(activity)
-                    .build();
-                agent.run(req)
-            })
-        } else {
-            builder.body(body.clone()).map(|req| {
-                let req = agent
-                    .configure_request(req)
-                    .timeout_global(global)
-                    .timeout_resolve(activity)
-                    .timeout_connect(activity)
-                    .timeout_per_read(activity)
-                    .timeout_per_write(activity)
-                    .build();
-                agent.run(req)
-            })
-        };
-        let response = match result {
-            Ok(Ok(r)) => r,
-            Ok(Err(e)) => {
-                tracing::debug!("a game's HTTP request failed: {e}");
-                return failed(is_timeout(&e));
-            }
-            Err(e) => {
-                tracing::debug!("a game's HTTP request is malformed: {e}");
-                return failed(false);
-            }
-        };
-        if let Some(jar) = &job.jar {
-            let mut jar = jar.lock().unwrap_or_else(|e| e.into_inner());
-            if jar.allow_modify {
-                for v in response.headers().get_all(header::SET_COOKIE) {
-                    if let Ok(v) = std::str::from_utf8(v.as_bytes()) {
-                        jar.store(&uri, v, cookies::now());
+        let (reply, store) = match plan {
+            Plan::Answer(reply) => (reply, None),
+            Plan::Network(stored) => {
+                let mut sent = request_headers.clone();
+                if let Some(e) = &stored {
+                    tracing::debug!("validating what is cached");
+                    for (n, v) in e.validators() {
+                        sent.insert(n, v);
                     }
                 }
+                let response = match send(agent, &method, &uri, sent, &body, activity, deadline) {
+                    Ok(r) => r,
+                    Err(done) => return done,
+                };
+                let response_time = cookies::now();
+                if let Some(jar) = &job.jar {
+                    let mut jar = jar.lock().unwrap_or_else(|e| e.into_inner());
+                    if jar.allow_modify {
+                        for v in response.headers().get_all(header::SET_COOKIE) {
+                            if let Ok(v) = std::str::from_utf8(v.as_bytes()) {
+                                jar.store(&uri, v, cookies::now());
+                            }
+                        }
+                    }
+                }
+                let status = response.status().as_u16();
+                let (parts, stream) = response.into_parts();
+                if let Some(c) = &job.cache
+                    && matches!(method, Method::PUT | Method::POST | Method::DELETE)
+                    && (200..400).contains(&status)
+                {
+                    invalidate(c, job.app, &uri, &parts.headers);
+                }
+                let network = |headers| Reply {
+                    status,
+                    headers,
+                    body: Source::Network(stream),
+                };
+                match (cache, stored) {
+                    (Some(c), Some(mut e)) if status == 304 => {
+                        tracing::debug!("what is cached is still good");
+                        e.refresh(&parts.headers, now, response_time);
+                        c.put(job.app, &e, response_time);
+                        (Reply::stored(e, response_time, false), None)
+                    }
+                    (Some(c), _)
+                        if get
+                            && cache::storable(
+                                status,
+                                &Directives::of_request(&request_headers),
+                                &parts.headers,
+                            ) =>
+                    {
+                        let entry = Entry::new(
+                            &url,
+                            status,
+                            &parts.headers,
+                            &request_headers,
+                            now,
+                            response_time,
+                        );
+                        let store = Store {
+                            cache: Arc::clone(c),
+                            app: job.app,
+                            entry,
+                        };
+                        (network(parts.headers), Some(store))
+                    }
+                    _ => (network(parts.headers), None),
+                }
             }
-        }
-        let status = response.status().as_u16();
-        let location = response
-            .headers()
+        };
+        let status = reply.status;
+        let redirect = matches!(status, 301 | 302 | 303 | 307 | 308);
+        let location = reply
+            .headers
             .get(header::LOCATION)
             .and_then(|l| l.to_str().ok())
             .map(str::to_owned);
-        if let (true, Some(location)) = (matches!(status, 301 | 302 | 303 | 307 | 308), location)
+        if let (true, Some(location)) = (redirect, location)
             && hop < MAX_REDIRECTS
         {
+            if let (Some(mut st), Source::Network(stream)) = (store, reply.body)
+                && let Ok(b) = stream
+                    .into_with_config()
+                    .limit(MAX_ENTRY as u64)
+                    .read_to_vec()
+            {
+                st.entry.body = b;
+                st.cache.put(st.app, &st.entry, cookies::now());
+            }
             let Some(next) = resolve(&uri, &location).as_deref().and_then(web_uri) else {
                 tracing::debug!(
                     "a game's HTTP request was redirected to a URL that is not http or https"
@@ -284,31 +491,36 @@ pub fn run(
             uri = next;
             continue;
         }
-        if matches!(status, 301 | 302 | 303 | 307 | 308) && hop == MAX_REDIRECTS {
+        if redirect && hop == MAX_REDIRECTS {
             tracing::debug!("a game's HTTP request was redirected more than {MAX_REDIRECTS} times");
             return failed(false);
         }
-        return read(r.handle, r.streaming, response, stop, &mut emit);
+        return read(r.handle, r.streaming, reply, store, stop, &mut emit);
     }
     failed(false)
 }
 
-/// Sends the response's headers and body.
+/// Sends the response's headers and body, and stores it when it is to be
+/// stored and was read whole.
 fn read(
     handle: u32,
     streaming: bool,
-    response: http::Response<ureq::Body>,
+    reply: Reply,
+    mut store: Option<Store>,
     stop: &CancelToken,
     emit: &mut impl FnMut(Event) -> bool,
 ) -> HttpDone {
-    let status = u32::from(response.status().as_u16());
-    let length = response
-        .headers()
-        .get(header::CONTENT_LENGTH)
-        .and_then(|v| v.to_str().ok())
-        .and_then(|v| v.trim().parse::<u64>().ok());
-    let headers = response
-        .headers()
+    let status = u32::from(reply.status);
+    let length = match &reply.body {
+        Source::Stored(b) => Some(b.len() as u64),
+        Source::Network(_) => reply
+            .headers
+            .get(header::CONTENT_LENGTH)
+            .and_then(|v| v.to_str().ok())
+            .and_then(|v| v.trim().parse::<u64>().ok()),
+    };
+    let headers = reply
+        .headers
         .iter()
         .map(|(n, v)| HttpHeader {
             name: n.as_str().to_owned(),
@@ -324,36 +536,59 @@ fn read(
     })) {
         return failed(false);
     }
-    let limit = if streaming { u64::MAX } else { MAX_BODY + 1 };
-    let mut reader = response
-        .into_body()
-        .into_with_config()
-        .limit(limit)
-        .reader();
-    let mut buf = vec![0u8; CHUNK];
-    let mut total = 0u64;
-    loop {
-        if stop.is_cancelled() {
-            return failed(false);
-        }
-        let n = match reader.read(&mut buf) {
-            Ok(0) => break,
-            Ok(n) => n,
-            Err(e) if e.kind() == std::io::ErrorKind::Interrupted => continue,
-            Err(e) => {
-                let e = ureq::Error::from(e);
-                tracing::debug!("reading a game's HTTP response failed: {e}");
-                return failed(is_timeout(&e));
+    match reply.body {
+        Source::Stored(data) => {
+            for chunk in data.chunks(CHUNK) {
+                if stop.is_cancelled() || !emit(Event::Data(chunk.to_vec())) {
+                    return failed(false);
+                }
             }
-        };
-        total += n as u64;
-        if !streaming && total > MAX_BODY {
-            tracing::info!("a game's HTTP response is larger than {MAX_BODY} bytes; it fails");
-            return failed(false);
         }
-        if !emit(Event::Data(buf[..n].to_vec())) {
-            return failed(false);
+        Source::Network(stream) => {
+            let limit = if streaming { u64::MAX } else { MAX_BODY + 1 };
+            let mut reader = stream.into_with_config().limit(limit).reader();
+            let mut buf = vec![0u8; CHUNK];
+            let mut total = 0u64;
+            loop {
+                if stop.is_cancelled() {
+                    return failed(false);
+                }
+                let n = match reader.read(&mut buf) {
+                    Ok(0) => break,
+                    Ok(n) => n,
+                    Err(e) if e.kind() == std::io::ErrorKind::Interrupted => continue,
+                    Err(e) => {
+                        let e = ureq::Error::from(e);
+                        tracing::debug!("reading a game's HTTP response failed: {e}");
+                        return failed(is_timeout(&e));
+                    }
+                };
+                total += n as u64;
+                if !streaming && total > MAX_BODY {
+                    tracing::info!(
+                        "a game's HTTP response is larger than {MAX_BODY} bytes; it fails"
+                    );
+                    return failed(false);
+                }
+                let too_large = store.as_mut().is_some_and(|st| {
+                    if st.entry.body.len() + n > MAX_ENTRY {
+                        true
+                    } else {
+                        st.entry.body.extend_from_slice(&buf[..n]);
+                        false
+                    }
+                });
+                if too_large {
+                    store = None;
+                }
+                if !emit(Event::Data(buf[..n].to_vec())) {
+                    return failed(false);
+                }
+            }
         }
+    }
+    if let Some(st) = store {
+        st.cache.put(st.app, &st.entry, cookies::now());
     }
     HttpDone {
         successful: true,

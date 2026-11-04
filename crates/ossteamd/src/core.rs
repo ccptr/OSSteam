@@ -164,6 +164,8 @@ pub struct Parts {
     pub pics_cache: Cache,
     pub assets: assets::Handle,
     pub assets_dir: PathBuf,
+    /// `<cache>/http`, games' HTTP cache (`isteamhttp.md` §3.1).
+    pub http_cache: PathBuf,
     pub stats: stats::Handle,
     pub content_jobs: content::Handle,
     /// `<data>/library`.
@@ -211,7 +213,7 @@ impl Core {
             tickets: auth::Tickets::default(),
             networking: networking::Networking::default(),
             update_holds: HashMap::new(),
-            http: http::Http::default(),
+            http: http::Http::new(p.http_cache),
         }
         .loaded()
     }

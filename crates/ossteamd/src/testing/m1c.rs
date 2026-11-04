@@ -1161,8 +1161,14 @@ fn http_server() -> (u16, Arc<std::sync::Mutex<Vec<String>>>) {
                     .unwrap_or(0);
                 let mut body = vec![0u8; length];
                 reader.read_exact(&mut body).unwrap();
-                kept.lock().unwrap().push(head.clone());
                 let path = head.split(' ').nth(1).unwrap_or("").to_owned();
+                // How many GETs of this path came, this one included.
+                let gets = {
+                    let mut kept = kept.lock().unwrap();
+                    kept.push(head.clone());
+                    let get = format!("GET {path} ");
+                    kept.iter().filter(|h| h.starts_with(&get)).count()
+                };
                 let respond = |stream: &mut std::net::TcpStream,
                                status: &str,
                                extra: &str,
@@ -1192,6 +1198,27 @@ fn http_server() -> (u16, Arc<std::sync::Mutex<Vec<String>>>) {
                         respond(&mut stream, "200 OK", "", c.as_bytes());
                     }
                     "/post" => respond(&mut stream, "201 Created", "", &body),
+                    "/cached" => respond(
+                        &mut stream,
+                        "200 OK",
+                        "Cache-Control: max-age=3600\r\n",
+                        format!("n={gets}").as_bytes(),
+                    ),
+                    "/nostore" => respond(
+                        &mut stream,
+                        "200 OK",
+                        "Cache-Control: max-age=3600, no-store\r\n",
+                        b"x",
+                    ),
+                    "/etag" if header("if-none-match").as_deref() == Some("\"v1\"") => {
+                        respond(&mut stream, "304 Not Modified", "ETag: \"v1\"\r\n", b"")
+                    }
+                    "/etag" => respond(
+                        &mut stream,
+                        "200 OK",
+                        "Cache-Control: no-cache\r\nETag: \"v1\"\r\n",
+                        format!("etag {gets}").as_bytes(),
+                    ),
                     "/stall" => {
                         let _ =
                             stream.write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 10\r\n\r\nabc");
@@ -1206,7 +1233,7 @@ fn http_server() -> (u16, Arc<std::sync::Mutex<Vec<String>>>) {
     (port, seen)
 }
 
-/// `isteamhttp.md` §3, §7 and §8 against a server on the loopback.
+/// `isteamhttp.md` §3, §3.1, §7 and §8 against a server on the loopback.
 #[cfg(unix)]
 #[test]
 fn games_make_http_requests() {
@@ -1339,6 +1366,70 @@ fn games_make_http_requests() {
     assert_eq!((done, body.as_str()), (ok(201), "abc"));
     let (done, status, _) = fetch(&mut g, get("/none"));
     assert_eq!((done, status), (ok(404), Some(404)));
+
+    // The cache (§3.1). only-if-cached never reaches the server: with
+    // nothing stored, the cache answers 504 itself.
+    let hits = |path: &str| {
+        let get = format!("GET {path} ");
+        seen.lock()
+            .unwrap()
+            .iter()
+            .filter(|h| h.starts_with(&get))
+            .count()
+    };
+    let only = |path: &str| HttpSendRequest {
+        headers: vec![HttpHeader {
+            name: "Cache-Control".into(),
+            value: b"only-if-cached, max-stale=2678400".to_vec(),
+        }],
+        ..get(path)
+    };
+    let (done, _, body) = fetch(&mut g, only("/cached"));
+    assert_eq!(done, ok(504));
+    assert!(body.contains("504 Gateway Timeout"), "{body}");
+    assert_eq!(hits("/cached"), 0);
+    // A fresh response is answered from the cache, streamed too.
+    let (_, _, a) = fetch(&mut g, get("/cached"));
+    let (_, _, b) = fetch(&mut g, get("/cached"));
+    let (done, _, c) = fetch(&mut g, only("/cached"));
+    let (_, status, d) = fetch(
+        &mut g,
+        HttpSendRequest {
+            streaming: true,
+            ..get("/cached")
+        },
+    );
+    assert_eq!(
+        (a.as_str(), b.as_str(), c.as_str(), d.as_str(), done, status),
+        ("n=1", "n=1", "n=1", "n=1", ok(200), Some(200))
+    );
+    assert_eq!(hits("/cached"), 1);
+    // A POST to it invalidates it.
+    let (done, _, _) = fetch(
+        &mut g,
+        HttpSendRequest {
+            method: 3,
+            body: b"x".to_vec(),
+            ..get("/cached")
+        },
+    );
+    assert_eq!(done, ok(200));
+    let (_, _, e) = fetch(&mut g, get("/cached"));
+    assert_eq!((e.as_str(), hits("/cached")), ("n=2", 2));
+    // no-cache with an ETag: validated each time; a 304 keeps the body.
+    let (_, _, a) = fetch(&mut g, get("/etag"));
+    let (done, status, b) = fetch(&mut g, get("/etag"));
+    assert_eq!((done, status, a.as_str()), (ok(200), Some(200), "etag 1"));
+    assert_eq!(b, a);
+    assert_eq!(hits("/etag"), 2);
+    let last = seen.lock().unwrap().last().unwrap().to_ascii_lowercase();
+    assert!(last.contains("if-none-match: \"v1\""), "{last}");
+    let (done, _, _) = fetch(&mut g, only("/etag"));
+    assert_eq!((done, hits("/etag")), (ok(504), 2));
+    // no-store is never stored.
+    fetch(&mut g, get("/nostore"));
+    fetch(&mut g, get("/nostore"));
+    assert_eq!(hits("/nostore"), 2);
 
     // A stalled body runs out of time; other schemes are not made.
     let (done, _, body) = fetch(

@@ -421,6 +421,8 @@ record! {
         pub streaming: bool,
         /// The cookie container; 0 for none.
         pub cookies: u32,
+        /// The game called `SetHTTPRequestRequiresVerifiedCertificate(false)`.
+        pub skip_certificate_check: bool,
     }
 }
 

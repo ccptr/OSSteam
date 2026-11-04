@@ -914,7 +914,7 @@ the shim sends `Request`s and `Report`s, and the daemon sends
 
 ### 3.4 Messages
 
-Protocol version 7.
+Protocol version 8.
 
 | Tag | Message | Direction | Fields |
 |---|---|---|---|

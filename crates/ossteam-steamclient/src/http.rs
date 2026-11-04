@@ -56,6 +56,8 @@ struct Request {
     raw_body: Option<Vec<u8>>,
     cookies: u32,
     user_agent_info: String,
+    /// `SetHTTPRequestRequiresVerifiedCertificate(false)` was called.
+    skip_certificate_check: bool,
     phase: Phase,
     streaming: bool,
     call: u64,
@@ -83,6 +85,7 @@ impl Request {
             raw_body: None,
             cookies: 0,
             user_agent_info: String::new(),
+            skip_certificate_check: false,
             phase: Phase::New,
             streaming: false,
             call: 0,
@@ -163,6 +166,7 @@ impl Request {
             absolute_timeout_ms: self.absolute_ms,
             streaming,
             cookies: self.cookies,
+            skip_certificate_check: self.skip_certificate_check,
         })
     }
 
@@ -688,13 +692,8 @@ pub fn set_http_request_user_agent_info(_: &Object, h: u32, info: *mut c_void) -
 }
 
 pub fn set_http_request_requires_verified_certificate(_: &Object, h: u32, require: bool) -> bool {
-    with_new(h, |_| {
-        if !require {
-            log!(
-                Info,
-                "HTTP request {h} asks not to check certificates; ossteam always checks them"
-            );
-        }
+    with_new(h, |r| {
+        r.skip_certificate_check = !require;
         true
     })
 }

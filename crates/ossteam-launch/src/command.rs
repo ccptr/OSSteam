@@ -32,6 +32,34 @@ pub fn under(base: &Path, relative: &str) -> Result<PathBuf, BadPath> {
     if any { Ok(path) } else { Err(bad()) }
 }
 
+/// `path`, an existing file or directory found without regard to case
+/// below `base`, as Windows and Wine find it (`launch.md` §2): each
+/// component after `base` that does not exist as written is replaced by
+/// the first entry of its directory that matches it without regard to
+/// case. `None` when a component has no match.
+pub fn find_ignoring_case(base: &Path, path: &Path) -> Option<PathBuf> {
+    let rest = path.strip_prefix(base).ok()?;
+    let mut found = base.to_path_buf();
+    for part in rest.components() {
+        let name = part.as_os_str();
+        let exact = found.join(name);
+        if exact.symlink_metadata().is_ok() {
+            found = exact;
+            continue;
+        }
+        let want = name.to_str()?.to_lowercase();
+        let mut entries: Vec<_> = std::fs::read_dir(&found)
+            .ok()?
+            .flatten()
+            .map(|e| e.file_name())
+            .filter(|n| n.to_str().is_some_and(|n| n.to_lowercase() == want))
+            .collect();
+        entries.sort();
+        found.push(entries.first()?);
+    }
+    Some(found)
+}
+
 /// The working directory: `working_dir` under the install directory, or
 /// the install directory itself (`launch.md` §3).
 pub fn working_dir(install_dir: &Path, working_dir: &str) -> Result<PathBuf, BadPath> {
@@ -114,6 +142,22 @@ fn windows_quote_into(arg: &str, out: &mut String) {
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn names_are_found_without_regard_to_case() {
+        let base = std::env::temp_dir().join(format!("ossteam-case-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        std::fs::create_dir_all(base.join("Bin")).unwrap();
+        std::fs::write(base.join("Bin/SteamworksExample.exe"), b"").unwrap();
+        let want = under(&base, "bin\\SteamWorksExample.exe").unwrap();
+        assert_eq!(
+            find_ignoring_case(&base, &want),
+            Some(base.join("Bin/SteamworksExample.exe"))
+        );
+        assert_eq!(find_ignoring_case(&base, &base.join("bin/other.exe")), None);
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
     use super::*;
 
     #[test]

@@ -90,6 +90,16 @@ and stops at the first that fails:
 | Linux: the app's compatibility tool, if it has one, runs programs of the option's platform, and the install is for that platform (`compat-tools.md` §2, §4) | `UNSUPPORTED`; `CONFLICT` when the app must be updated for its tool |
 | The game can find ossteam (`steamworks-abi.md` §1): on Linux through a private `~/.steam` (§1.1.2), or else through the real entries | `CONFLICT` when an official Steam client owns the entries and no private `~/.steam` can be made (DISC-3), with the reason and the ways out; `UNSUPPORTED` when ossteam's client library is not installed next to the daemon, or when the launch's own namespace steps fail |
 
+For an option of the `windows` platform, run through a compatibility
+tool, the executable and the working directory are looked up without
+regard to case, one path component at a time, as Windows and Wine find
+them: Spacewar's (480) option names `SteamWorksExample.exe`, while its
+depot holds `SteamworksExample.exe`. A component that exists as written
+is taken as it is; otherwise the first entry of the directory whose name
+matches it without regard to case is taken. The command line then names
+the files found. Other platforms' paths must match exactly
+(*unverified* for the official client).
+
 On Linux, the launch options that qualify are those of the platform the
 app's tool runs programs of (`windows` for Proton), or of `linux` when
 it has none. Once the checks pass, missing or outdated tools of the

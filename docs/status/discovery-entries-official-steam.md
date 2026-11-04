@@ -80,7 +80,9 @@ changed (steamworks-abi.md §1.1.8). The run needed three fixes first:
 encrypted names that span lines (content.md §4), every installed file
 executable on Unix (content.md §8, as the official client does), and a
 stale 32-bit library on the dev PC (rebuild with
-`cargo xtask build-steamclient`). Proton is not run yet.
+`cargo xtask build-steamclient`). Spacewar (480) under Proton
+Experimental connected the same day, once Windows options' paths were
+looked up without regard to case (launch.md §2).
 
 Still open in §1.1.7: games installed under
 `~/.steam`, and the Steam Linux Runtime inside the namespace. The checks

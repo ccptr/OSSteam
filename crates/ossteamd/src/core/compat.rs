@@ -34,6 +34,9 @@ fn not_found(m: impl Into<String>) -> RemoteError {
 /// Whether this build uses compatibility tools (PLAT-2).
 pub const ENABLED: bool = cfg!(target_os = "linux");
 
+/// `compat.tool.<app>` = `none`: no tool, whatever Valve maps (§2).
+pub(super) const NO_TOOL: &str = "none";
+
 impl Core {
     /// Valve's tool list, from app 891390's cached info (§1). `None` off
     /// Linux and while the info is not available.
@@ -45,13 +48,16 @@ impl Core {
     }
 
     /// The mapping that gives `app` its tool (§2), or `None` when it runs
-    /// natively.
+    /// natively, by the user's choice `none` among others.
     pub(super) fn compat_mapping<'l>(
         &self,
         list: &'l ToolList,
         app: AppId,
         info: Option<&Object>,
     ) -> Option<Mapping<'l>> {
+        if self.config.app_tool(app) == NO_TOOL {
+            return None;
+        }
         list.resolve(MappingInput {
             app,
             appinfo: info,
@@ -83,6 +89,9 @@ impl Core {
     /// non-empty value must name a tool (§8).
     pub(super) fn check_tool_setting(&self, key: &str, name: &str) -> Result<(), RemoteError> {
         if name.is_empty() || (key != config::COMPAT_DEFAULT_TOOL && key != config::COMPAT_TOOL) {
+            return Ok(());
+        }
+        if key == config::COMPAT_TOOL && name == NO_TOOL {
             return Ok(());
         }
         if !ENABLED {
@@ -292,6 +301,10 @@ impl Core {
                     name: name.to_owned(),
                     display_name: display_name.to_owned(),
                 })
+                .chain(std::iter::once(v1::CompatChoice {
+                    name: NO_TOOL.to_owned(),
+                    display_name: "No compatibility tool".to_owned(),
+                }))
                 .collect(),
             platform: self
                 .content

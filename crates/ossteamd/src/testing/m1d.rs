@@ -272,6 +272,14 @@ fn a_native_game_runs_in_its_runtime_once_it_is_installed() {
     // A tool runs as itself.
     let compat = c.get_app(SNIPER).expect("app").compat.expect("compat");
     assert!(compat.tool.is_none() && compat.chain.is_empty());
+    // `none` runs it with no tool, though Valve maps one (§2).
+    c.set_setting(&format!("compat.tool.{NATIVE}"), Some("none"))
+        .expect("none is a choice");
+    let compat = c.get_app(NATIVE).expect("app").compat.expect("compat");
+    assert!(compat.tool.is_none() && compat.chain.is_empty());
+    assert_eq!(compat.choices.last().unwrap().name, "none");
+    c.set_setting(&format!("compat.tool.{NATIVE}"), Some(""))
+        .expect("Valve's mapping again");
     let e = exited(&c, NATIVE);
     assert_eq!(
         e.status,
@@ -346,9 +354,10 @@ fn a_windows_game_gets_windows_depots_and_proton_in_the_runtime() {
     assert_eq!(compat.source(), v1::CompatSource::Default);
     assert_eq!(chain(&compat), [(SNIPER, false), (PROTON, false)]);
     assert_eq!(compat.platform, "windows");
-    // The runtime is unlisted and runs no Windows programs.
+    // The runtime is unlisted and runs no Windows programs; `none` is
+    // always last (§2).
     let choices: Vec<&str> = compat.choices.iter().map(|c| c.name.as_str()).collect();
-    assert_eq!(choices, ["proton_experimental"]);
+    assert_eq!(choices, ["proton_experimental", "none"]);
     // Its Windows option is the one that qualifies, as `Launch` chooses.
     let options = c.get_launch_options(WINDOWS).expect("options");
     assert!(options.single && options.options[0].qualifies);

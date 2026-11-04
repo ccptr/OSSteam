@@ -142,7 +142,12 @@ default on every account rather than this machine's.
 
 **The user's choice.** `compat.tool.<app id>` (one setting per app, §8)
 names a tool or a selectable alias. It replaces every other mapping of
-the app. The empty string, or no setting, means Valve's mapping.
+the app. The empty string, or no setting, means Valve's mapping. `none`
+means no tool at all: the app runs natively (below), even where Valve
+maps one, as for Counter-Strike 2 (730), which Valve maps to the Steam
+Linux Runtime 3.0. `none` is ossteam's own choice; the official client
+offers none like it (*unverified*). It is listed last among the choices
+(§8).
 
 **No tool.** An app with no mapping at all runs natively, as in
 `launch.md`. An app mapped to a tool that runs programs of another
@@ -299,7 +304,12 @@ given. Proton's `steam.exe`
 writes the parent of each path into the prefix's
 `libraryfolders.vdf`, which is therefore not a usable library listing
 for a Windows game that looks for other games; *unverified* that any
-game does.
+game does. Proton gives the game an `S:` drive, the library's parent,
+only when the app's Proton config asks for `gamedrive`, and only when
+the library path's last component is `steamapps`. ossteam's folder has
+another name, so Proton logs "unable to use parent for game drive" at
+every start, and an app that asks for `gamedrive` gets no `S:` drive
+(seen 2026-11-03 with Proton Experimental; *unverified* which apps ask).
 
 **Not set:**
 
@@ -407,7 +417,7 @@ SLR-only chains run Linux games, whose install scripts are not applied
 | Key | Kind | Default | Effect |
 |---|---|---|---|
 | `compat.default_tool` | `STRING` | `proton_experimental` | the tool for apps without a Linux version that no other mapping covers (§2); empty for none |
-| `compat.tool.<app id>` | `STRING` | empty | the user's tool for one app: a tool's name or a selectable alias; empty for Valve's mapping |
+| `compat.tool.<app id>` | `STRING` | empty | the user's tool for one app: a tool's name, a selectable alias, or `none` for no tool (§2); empty for Valve's mapping |
 
 `compat.tool.<app id>` is a family of keys: `GetSettings` lists the ones
 that have an override, and `SetSetting` accepts any decimal app id. A

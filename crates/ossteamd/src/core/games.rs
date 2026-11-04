@@ -500,16 +500,30 @@ impl Core {
         let app_dir = layout.app_dir(&installed.install_dir);
         // A path that leaves the install directory is refused like a missing
         // executable (`launch.md` §2).
-        let executable =
+        let mut executable =
             command::under(&app_dir, &option.executable).map_err(|e| not_found(e.to_string()))?;
+        // Windows and Wine find names without regard to case (`launch.md` §2).
+        let windows = platform.os == "windows";
+        if windows
+            && !executable.is_file()
+            && let Some(found) = command::find_ignoring_case(&app_dir, &executable)
+        {
+            executable = found;
+        }
         if !executable.is_file() {
             return Err(not_found(format!(
                 "{} is missing; verify app {app}",
                 executable.display()
             )));
         }
-        let working_dir = command::working_dir(&app_dir, &option.working_dir)
+        let mut working_dir = command::working_dir(&app_dir, &option.working_dir)
             .map_err(|e| invalid(e.to_string()))?;
+        if windows
+            && !working_dir.is_dir()
+            && let Some(found) = command::find_ignoring_case(&app_dir, &working_dir)
+        {
+            working_dir = found;
+        }
         match steamstub::is_protected(&executable) {
             Ok(false) => {}
             Ok(true) => {

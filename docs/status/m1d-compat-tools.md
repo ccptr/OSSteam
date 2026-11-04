@@ -20,3 +20,9 @@ Left:
 - Live runs. Nothing has run under a real Proton, SLR or container yet.
 - The `use_tool_subprocess_reaper` SIGINT stop path is untested against
   a real tool.
+- Seen 2026-11-04: an app with no `oslist` anywhere (Europa Universalis
+  III Demo, 22150) gets `proton_experimental` as a title without a Linux
+  version (§2), but its only choice is `none`, since §8's choices come
+  from the platforms of its launch options or `common/oslist`, and it
+  names none. Which platform the official client takes such an app for
+  is not in the spec; settle that before changing either rule.

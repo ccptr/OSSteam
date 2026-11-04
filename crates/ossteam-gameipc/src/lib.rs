@@ -17,7 +17,7 @@ use wire::{DecodeError, Reader, Wire};
 
 /// The protocol version (`steamworks-abi.md` §3.4). Both sides must
 /// agree exactly.
-pub const PROTOCOL: u32 = 6;
+pub const PROTOCOL: u32 = 7;
 
 /// The largest frame either side accepts.
 pub const MAX_FRAME_LEN: usize = 16 * 1024 * 1024;
@@ -344,6 +344,66 @@ mod tests {
                 tickets: vec![vec![1, 2], Vec::new(), vec![3]],
             }),
         }));
+        round_trip(Message::Request(Request {
+            id: 14,
+            body: RequestBody::HttpSend(HttpSendRequest {
+                handle: 3,
+                method: 3,
+                url: "https://example.com/a?b=c".into(),
+                headers: vec![HttpHeader {
+                    name: "X-A".into(),
+                    value: vec![0xe9, b'!'],
+                }],
+                body: vec![1, 2, 3],
+                user_agent_info: "info".into(),
+                activity_timeout_ms: 60_000,
+                absolute_timeout_ms: 0,
+                streaming: true,
+                cookies: 2,
+            }),
+        }));
+        round_trip(Message::Response(Response {
+            id: 14,
+            body: ResponseBody::HttpDone(HttpDone {
+                successful: true,
+                status: 404,
+                timed_out: false,
+            }),
+        }));
+        for body in [
+            RequestBody::HttpCancel(HttpCancelRequest { handle: 1 }),
+            RequestBody::HttpReorder(HttpReorderRequest {
+                handle: 1,
+                first: true,
+            }),
+            RequestBody::HttpCookieContainer(HttpCookieContainerRequest {
+                handle: 1,
+                allow_modify: false,
+            }),
+            RequestBody::HttpReleaseCookies(HttpReleaseCookiesRequest { handle: 1 }),
+            RequestBody::HttpSetCookie(HttpSetCookieRequest {
+                handle: 1,
+                host: "example.com".into(),
+                url: "https://example.com/".into(),
+                cookie: "a=b; Path=/".into(),
+            }),
+        ] {
+            round_trip(Message::Request(Request { id: 15, body }));
+        }
+        round_trip(Message::Notice(NoticeBody::HttpHeaders(HttpHeaders {
+            handle: 3,
+            status: 200,
+            headers: vec![HttpHeader {
+                name: "content-type".into(),
+                value: b"text/plain".to_vec(),
+            }],
+            content_length: 5,
+            has_length: true,
+        })));
+        round_trip(Message::Notice(NoticeBody::HttpData(HttpData {
+            handle: 3,
+            data: b"hello".to_vec(),
+        })));
         round_trip(Message::Report(Report {
             interfaces: vec!["SteamUser023".into()],
             unknown: vec!["SteamFoo001".into()],

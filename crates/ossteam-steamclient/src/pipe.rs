@@ -60,6 +60,8 @@ struct Callback {
 struct Done {
     callback: i32,
     data: Vec<u8>,
+    /// A shorter size the result may also be read at, as its first bytes.
+    short: Option<usize>,
     failed: bool,
     reason: i32,
 }
@@ -79,6 +81,7 @@ enum Pending {
         call: u64,
         callback: i32,
         size: usize,
+        short: Option<usize>,
         decode: Decode,
     },
     Then(Then),
@@ -357,6 +360,19 @@ impl Pipe {
     /// made from the daemon's answer by `decode`. Returns its handle, or 0
     /// (`k_uAPICallInvalid`) when the pipe is closed.
     pub fn begin_call(&self, body: RequestBody, callback: i32, size: usize, decode: Decode) -> u64 {
+        self.begin_call_short(body, callback, size, None, decode)
+    }
+
+    /// As `begin_call`, for a result that older SDKs read at the shorter
+    /// size `short`: its first bytes (`isteamhttp.md` §4).
+    pub fn begin_call_short(
+        &self,
+        body: RequestBody,
+        callback: i32,
+        size: usize,
+        short: Option<usize>,
+        decode: Decode,
+    ) -> u64 {
         if self.is_closed() {
             return 0;
         }
@@ -365,25 +381,58 @@ impl Pipe {
             call,
             callback,
             size,
+            short,
             decode,
         };
         if let Some(Pending::Call {
             call,
             callback,
             size,
+            short,
             ..
         }) = self.send_pending(body, pending)
         {
-            self.complete(call, callback, vec![0; size], FAILURE_STEAM_GONE);
+            self.complete(call, callback, vec![0; size], short, FAILURE_STEAM_GONE);
         }
         call
+    }
+
+    /// Completes a call that is still waiting for the daemon with `data`,
+    /// its result, as if the daemon had answered.
+    pub fn complete_call(&self, call: u64, data: Vec<u8>) {
+        let mut pending = lock(&self.pending);
+        let id = pending.iter().find_map(|(id, p)| {
+            matches!(p, Pending::Call { call: c, .. } if *c == call).then_some(*id)
+        });
+        let Some(Pending::Call {
+            callback,
+            size,
+            short,
+            ..
+        }) = id.and_then(|id| pending.remove(&id))
+        else {
+            return;
+        };
+        drop(pending);
+        if data.len() == size {
+            self.complete(call, callback, data, short, FAILURE_NONE);
+        } else {
+            self.complete(call, callback, vec![0; size], short, FAILURE_STEAM_GONE);
+        }
+    }
+
+    /// Forgets a call that is still waiting for the daemon: it never
+    /// completes.
+    pub fn forget_call(&self, call: u64) {
+        lock(&self.pending)
+            .retain(|_, p| !matches!(p, Pending::Call { call: c, .. } if *c == call));
     }
 
     /// Starts an API call that the shim completes itself, at once. `make`
     /// makes its result, `callback`, from the call's handle.
     pub fn local_call(&self, callback: i32, make: impl FnOnce(u64) -> Vec<u8>) -> u64 {
         let call = NEXT_CALL.fetch_add(1, Ordering::Relaxed);
-        self.complete(call, callback, make(call), FAILURE_NONE);
+        self.complete(call, callback, make(call), None, FAILURE_NONE);
         call
     }
 
@@ -412,7 +461,7 @@ impl Pipe {
     }
 
     /// Stores a call's result and queues callback 703.
-    fn complete(&self, call: u64, callback: i32, data: Vec<u8>, reason: i32) {
+    fn complete(&self, call: u64, callback: i32, data: Vec<u8>, short: Option<usize>, reason: i32) {
         let size = data.len() as u32;
         let failed = reason != FAILURE_NONE;
         lock(&self.queue).results.insert(
@@ -420,6 +469,7 @@ impl Pipe {
             Done {
                 callback,
                 data,
+                short,
                 failed,
                 reason,
             },
@@ -474,12 +524,14 @@ impl Pipe {
     ) -> Option<bool> {
         let mut q = lock(&self.queue);
         let done = q.results.get(&call)?;
-        if done.callback != expected || done.data.len() != size as usize || buf.is_null() {
+        let size = usize::try_from(size).ok()?;
+        let fits = size == done.data.len() || done.short == Some(size);
+        if done.callback != expected || !fits || buf.is_null() {
             return None;
         }
-        // SAFETY: the caller promises `size` bytes, which is the result's
-        // length.
-        unsafe { std::ptr::copy_nonoverlapping(done.data.as_ptr(), buf, done.data.len()) };
+        // SAFETY: the caller promises `size` bytes, which the result has
+        // at least.
+        unsafe { std::ptr::copy_nonoverlapping(done.data.as_ptr(), buf, size) };
         let failed = done.failed;
         q.results.remove(&call);
         Some(failed)
@@ -533,8 +585,9 @@ impl Pipe {
                     call,
                     callback,
                     size,
+                    short,
                     ..
-                } => self.complete(call, callback, vec![0; size], FAILURE_STEAM_GONE),
+                } => self.complete(call, callback, vec![0; size], short, FAILURE_STEAM_GONE),
                 Pending::Then(then) => then(self, None),
             }
         }
@@ -589,12 +642,13 @@ impl Pipe {
                 call,
                 callback,
                 size,
+                short,
                 decode,
             } => match decode(self, body) {
                 Some(data) if data.len() == size => {
-                    self.complete(call, callback, data, FAILURE_NONE)
+                    self.complete(call, callback, data, short, FAILURE_NONE)
                 }
-                _ => self.complete(call, callback, vec![0; size], FAILURE_STEAM_GONE),
+                _ => self.complete(call, callback, vec![0; size], short, FAILURE_STEAM_GONE),
             },
             Pending::Then(then) => then(self, Some(body)),
         }

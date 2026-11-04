@@ -70,6 +70,8 @@ pub fn on_notice(p: &Pipe, n: NoticeBody) {
             callbacks::validate_auth_ticket_response(v.steam_id, v.response, v.owner),
         ),
         NoticeBody::GcMessage(m) => crate::gc::on_message(p, m),
+        NoticeBody::HttpHeaders(h) => crate::http::on_headers(p, h),
+        NoticeBody::HttpData(d) => crate::http::on_data(p, d),
     }
 }
 

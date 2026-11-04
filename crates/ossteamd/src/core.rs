@@ -26,6 +26,7 @@ use crate::{assets, content, launch, library, pics, stats};
 mod compat;
 mod games;
 mod gc;
+mod http;
 mod jobs;
 mod networking;
 mod shim;
@@ -87,6 +88,8 @@ pub enum Command {
     Networking(networking::CertReply),
     /// An update hold ran out (`isteamappdisableupdate.md` §3).
     UpdateHoldOver(ossteam_types::AppId, Instant),
+    /// A game's HTTP request has news (`isteamhttp.md` §8).
+    Http(http::HttpEvent),
     /// Linux: `~/.steam` changed, or the take-over's interval passed
     /// (`steamworks-abi.md` §1.1.5).
     #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
@@ -148,6 +151,8 @@ pub struct Core {
     networking: networking::Networking,
     /// Apps whose automatic updates wait, until when.
     update_holds: HashMap<ossteam_types::AppId, Instant>,
+    /// Games' HTTP requests and cookie containers.
+    http: http::Http,
 }
 
 /// What a `Core` is made of.
@@ -206,6 +211,7 @@ impl Core {
             tickets: auth::Tickets::default(),
             networking: networking::Networking::default(),
             update_holds: HashMap::new(),
+            http: http::Http::default(),
         }
         .loaded()
     }
@@ -281,6 +287,7 @@ impl Core {
                 Command::Tickets(e) => self.on_ticket_event(e),
                 Command::Networking(r) => self.on_cert_reply(r),
                 Command::UpdateHoldOver(app, until) => self.end_update_hold(app, Some(until)),
+                Command::Http(e) => self.on_http(e),
                 Command::GameExitWait(app) => self.exit_wait_over(app),
                 Command::SteamDir => self.sync_take_over(),
             }
@@ -302,6 +309,7 @@ impl Core {
         self.stats.shutdown();
         self.tickets.stop.cancel();
         self.networking.stop.cancel();
+        self.http.stop.cancel();
         self.broadcast(
             Topic::Daemon,
             event::Kind::DaemonStopping(v1::DaemonStopping {}),

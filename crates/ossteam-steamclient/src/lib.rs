@@ -15,6 +15,7 @@ mod client;
 mod friends;
 mod gc;
 mod guard;
+mod http;
 mod images;
 mod log;
 mod networking;

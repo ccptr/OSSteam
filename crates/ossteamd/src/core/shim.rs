@@ -123,6 +123,9 @@ impl Core {
                     let answer = match r.body {
                         RequestBody::GcSend(g) => Some(self.gc_send(conn, g)),
                         RequestBody::UpdateHold(h) => Some(self.update_hold(conn, h)),
+                        body if super::http::is_http_request(&body) => {
+                            self.http_request(conn, r.id, body)
+                        }
                         body if super::networking::is_networking_request(&body) => {
                             self.networking_request(conn, r.id, body)
                         }
@@ -190,6 +193,10 @@ impl Core {
         };
         tracing::debug!(conn, pid = c.pid, "a game disconnected");
         self.ticket_game_disconnected(conn);
+        self.http_disconnected(conn);
+        if !self.shims.conns.values().any(|o| o.pid == c.pid) {
+            self.http_process_gone(c.pid);
+        }
         if let Some(p) = self.shims.processes.get_mut(&c.pid) {
             p.conns = p.conns.saturating_sub(1);
             if p.conns == 0 && !p.launched {
@@ -335,6 +342,11 @@ impl Core {
     /// The app of a game connection.
     pub(super) fn shim_app_of(&self, conn: ConnId) -> Option<AppId> {
         self.shims.conns.get(&conn).map(|c| c.app)
+    }
+
+    /// The process of a game connection.
+    pub(super) fn shim_pid_of(&self, conn: ConnId) -> Option<u32> {
+        self.shims.conns.get(&conn).map(|c| c.pid)
     }
 
     /// Marks the connection as one that talks to its app's Game

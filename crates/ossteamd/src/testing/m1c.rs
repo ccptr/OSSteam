@@ -1124,6 +1124,281 @@ impl GameConn {
     }
 }
 
+/// A plain HTTP server on the loopback for `isteamhttp.md`: one request
+/// per connection. It keeps each request's head and answers by path.
+#[cfg(unix)]
+fn http_server() -> (u16, Arc<std::sync::Mutex<Vec<String>>>) {
+    use std::io::{BufRead as _, BufReader, Read as _, Write as _};
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let seen = Arc::new(std::sync::Mutex::new(Vec::new()));
+    let kept = Arc::clone(&seen);
+    std::thread::spawn(move || {
+        for stream in listener.incoming() {
+            let Ok(mut stream) = stream else { break };
+            let kept = Arc::clone(&kept);
+            std::thread::spawn(move || {
+                let mut reader = BufReader::new(stream.try_clone().unwrap());
+                let mut head = String::new();
+                loop {
+                    let mut line = String::new();
+                    if reader.read_line(&mut line).unwrap_or(0) == 0 {
+                        return;
+                    }
+                    if line == "\r\n" {
+                        break;
+                    }
+                    head.push_str(&line);
+                }
+                let header = |name: &str| {
+                    head.lines().find_map(|l| {
+                        let (n, v) = l.split_once(':')?;
+                        n.eq_ignore_ascii_case(name).then(|| v.trim().to_owned())
+                    })
+                };
+                let length = header("content-length")
+                    .and_then(|v| v.parse().ok())
+                    .unwrap_or(0);
+                let mut body = vec![0u8; length];
+                reader.read_exact(&mut body).unwrap();
+                kept.lock().unwrap().push(head.clone());
+                let path = head.split(' ').nth(1).unwrap_or("").to_owned();
+                let respond = |stream: &mut std::net::TcpStream,
+                               status: &str,
+                               extra: &str,
+                               body: &[u8]| {
+                    let _ = write!(
+                        stream,
+                        "HTTP/1.1 {status}\r\nContent-Length: {}\r\nConnection: close\r\n{extra}\r\n",
+                        body.len()
+                    );
+                    let _ = stream.write_all(body);
+                };
+                match path.as_str() {
+                    "/redirect" => respond(
+                        &mut stream,
+                        "302 Found",
+                        "Location: /hello\r\nSet-Cookie: r=0; Path=/\r\n",
+                        b"",
+                    ),
+                    "/hello" => respond(
+                        &mut stream,
+                        "200 OK",
+                        "Content-Type: text/plain\r\nSet-Cookie: s=1; Path=/\r\n",
+                        b"hello world",
+                    ),
+                    "/cookie" => {
+                        let c = header("cookie").unwrap_or_default();
+                        respond(&mut stream, "200 OK", "", c.as_bytes());
+                    }
+                    "/post" => respond(&mut stream, "201 Created", "", &body),
+                    "/stall" => {
+                        let _ =
+                            stream.write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 10\r\n\r\nabc");
+                        std::thread::sleep(Duration::from_secs(5));
+                    }
+                    "/hang" => std::thread::sleep(Duration::from_secs(5)),
+                    _ => respond(&mut stream, "404 Not Found", "", b"no"),
+                }
+            });
+        }
+    });
+    (port, seen)
+}
+
+/// `isteamhttp.md` §3, §7 and §8 against a server on the loopback.
+#[cfg(unix)]
+#[test]
+fn games_make_http_requests() {
+    use ossteam_gameipc::{
+        Done, HttpCancelRequest, HttpCookieContainerRequest, HttpDone, HttpHeader, HttpSendRequest,
+        HttpSetCookieRequest, NoticeBody, RequestBody, ResponseBody,
+    };
+
+    let cdn = Arc::new(FakeCdn::new());
+    let (os, _) = oses();
+    let cm = steam(&cdn, &[("bin/game.sh", os)]);
+    let root = Root::new();
+    let addr = root.game_address();
+    let d = TestDaemon::start_with_cdn(&root, &cm, POLL, cdn.clone());
+    login(&d);
+    let (port, seen) = http_server();
+    let url = |path: &str| format!("http://127.0.0.1:{port}{path}");
+    let mut g = GameConn::open(&addr, GAME);
+    let mut handle = 0;
+    // Sends a request; returns how it ended, its status and body.
+    let mut fetch = |g: &mut GameConn, request: HttpSendRequest| {
+        handle += 1;
+        let request = HttpSendRequest { handle, ..request };
+        let ResponseBody::HttpDone(done) = g.ask(RequestBody::HttpSend(request)) else {
+            panic!("no HttpDone");
+        };
+        let mut status = None;
+        let mut body = Vec::new();
+        for n in std::mem::take(&mut g.notices) {
+            match n {
+                NoticeBody::HttpHeaders(h) if h.handle == handle => status = Some(h.status),
+                NoticeBody::HttpData(d) if d.handle == handle => body.extend(d.data),
+                _ => {}
+            }
+        }
+        (done, status, String::from_utf8(body).unwrap())
+    };
+    let get = |path: &str| HttpSendRequest {
+        method: 1,
+        url: url(path),
+        activity_timeout_ms: 5000,
+        ..Default::default()
+    };
+    let ok = |status| HttpDone {
+        successful: true,
+        status,
+        timed_out: false,
+    };
+
+    // A redirect is followed; the User-Agent names the app; cookies of
+    // every hop are kept in the container.
+    assert_eq!(
+        g.ask(RequestBody::HttpCookieContainer(
+            HttpCookieContainerRequest {
+                handle: 1,
+                allow_modify: true
+            }
+        )),
+        ResponseBody::Done(Done {})
+    );
+    let (done, status, body) = fetch(
+        &mut g,
+        HttpSendRequest {
+            user_agent_info: "extra".into(),
+            cookies: 1,
+            headers: vec![HttpHeader {
+                name: "X-Game".into(),
+                value: b"1".to_vec(),
+            }],
+            ..get("/redirect")
+        },
+    );
+    assert_eq!(
+        (done, status, body.as_str()),
+        (ok(200), Some(200), "hello world")
+    );
+    let heads = seen.lock().unwrap().clone();
+    assert_eq!(heads.len(), 2);
+    assert!(heads[0].starts_with("GET /redirect "), "{}", heads[0]);
+    assert!(heads[1].starts_with("GET /hello "), "{}", heads[1]);
+    assert!(
+        heads[1].contains(&format!(
+            "user-agent: Valve/Steam HTTP Client 1.0 ({GAME};extra)"
+        )) || heads[1].contains(&format!(
+            "User-Agent: Valve/Steam HTTP Client 1.0 ({GAME};extra)"
+        )),
+        "{}",
+        heads[1]
+    );
+    assert!(heads[1].to_ascii_lowercase().contains("x-game: 1"));
+    assert!(heads[1].to_ascii_lowercase().contains("cookie: r=0"));
+    let (_, _, body) = fetch(
+        &mut g,
+        HttpSendRequest {
+            cookies: 1,
+            ..get("/cookie")
+        },
+    );
+    assert_eq!(body, "r=0; s=1");
+    assert_eq!(
+        g.ask(RequestBody::HttpSetCookie(HttpSetCookieRequest {
+            handle: 1,
+            host: "127.0.0.1".into(),
+            url: String::new(),
+            cookie: "t=2; Path=/cookie".into(),
+        })),
+        ResponseBody::Done(Done {})
+    );
+    let (_, _, body) = fetch(
+        &mut g,
+        HttpSendRequest {
+            cookies: 1,
+            ..get("/cookie")
+        },
+    );
+    assert_eq!(body, "t=2; r=0; s=1");
+    // Without the container, no cookies.
+    let (_, _, body) = fetch(&mut g, get("/cookie"));
+    assert_eq!(body, "");
+
+    // A POST with a body; a status that is not 200 is still a response.
+    let (done, _, body) = fetch(
+        &mut g,
+        HttpSendRequest {
+            method: 3,
+            body: b"abc".to_vec(),
+            ..get("/post")
+        },
+    );
+    assert_eq!((done, body.as_str()), (ok(201), "abc"));
+    let (done, status, _) = fetch(&mut g, get("/none"));
+    assert_eq!((done, status), (ok(404), Some(404)));
+
+    // A stalled body runs out of time; other schemes are not made.
+    let (done, _, body) = fetch(
+        &mut g,
+        HttpSendRequest {
+            activity_timeout_ms: 300,
+            ..get("/stall")
+        },
+    );
+    assert_eq!(
+        (done.successful, done.timed_out, body.as_str()),
+        (false, true, "abc")
+    );
+    let (done, _, _) = fetch(
+        &mut g,
+        HttpSendRequest {
+            url: "file:///etc/passwd".into(),
+            ..get("")
+        },
+    );
+    assert_eq!(done, HttpDone::default());
+
+    // A cancelled request is never answered; the connection goes on.
+    use ossteam_gameipc::{Message, Request};
+    ossteam_gameipc::write_message(
+        &mut g.writer,
+        &Message::Request(Request {
+            id: 1000,
+            body: RequestBody::HttpSend(HttpSendRequest {
+                handle: 1000,
+                activity_timeout_ms: 300,
+                ..get("/hang")
+            }),
+        }),
+    )
+    .unwrap();
+    while !seen
+        .lock()
+        .unwrap()
+        .last()
+        .is_some_and(|h| h.starts_with("GET /hang"))
+    {
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    assert_eq!(
+        g.ask(RequestBody::HttpCancel(HttpCancelRequest { handle: 1000 })),
+        ResponseBody::Done(Done {})
+    );
+    std::thread::sleep(Duration::from_millis(600));
+    let (done, _, _) = fetch(&mut g, get("/hello"));
+    assert_eq!(done, ok(200));
+    while let Ok(m) = g.rx.try_recv() {
+        assert!(
+            !matches!(&m, Message::Response(r) if r.id == 1000),
+            "the cancelled request was answered"
+        );
+    }
+    g.close();
+}
+
 /// `isteamgamecoordinator.md` §1, §2 against the fake CM and its GC.
 #[cfg(unix)]
 #[test]

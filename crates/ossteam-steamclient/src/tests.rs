@@ -18,10 +18,11 @@ use std::time::{Duration, Instant};
 use ossteam_gameipc::endpoint::Address;
 use ossteam_gameipc::{
     AchievementDef, AchievementPercent, App, AppState, AuthTicket, BeginAuthSession, Dlc, Done,
-    EncryptedAppTicket, ErrorReply, GcMessage, GcSent, GlobalAchievements, Hello, Image, Message,
-    NetworkingCert, NoticeBody, RelayTickets, Report, RequestBody, Response, ResponseBody, Session,
-    StatDef, StatValue, StatsSchema, StoreStats, TicketActive, TicketValidated, Unlock,
-    UserLicense, UserStats, Welcome, read_message, write_message,
+    EncryptedAppTicket, ErrorReply, GcMessage, GcSent, GlobalAchievements, Hello, HttpData,
+    HttpDone, HttpHeader, HttpHeaders, Image, Message, NetworkingCert, NoticeBody, RelayTickets,
+    Report, RequestBody, Response, ResponseBody, Session, StatDef, StatValue, StatsSchema,
+    StoreStats, TicketActive, TicketValidated, Unlock, UserLicense, UserStats, Welcome,
+    read_message, write_message,
 };
 
 use crate::abi::{CSteamID, CallbackMsg, find_version};
@@ -120,6 +121,23 @@ fn serve(
                 let _ = reports.send(r);
             }
             Message::Request(r) => {
+                if let RequestBody::HttpSend(h) = &r.body {
+                    let _ = tx.send(Event::Request(r.body.clone()));
+                    for m in http_answer(h) {
+                        let m = match m {
+                            Message::Response(_) => Message::Response(Response {
+                                id: r.id,
+                                body: match m {
+                                    Message::Response(a) => a.body,
+                                    _ => unreachable!(),
+                                },
+                            }),
+                            other => other,
+                        };
+                        let _ = write_message(&mut writer, &m);
+                    }
+                    continue;
+                }
                 let body = match &r.body {
                     RequestBody::AppState(a) if a.app_id == 10 => {
                         ResponseBody::AppState(AppState {
@@ -159,6 +177,16 @@ fn serve(
                     RequestBody::RelayTickets(_) => ResponseBody::RelayTickets(RelayTickets {
                         tickets: relay_tickets.clone(),
                     }),
+                    RequestBody::HttpSetCookie(c) if c.cookie == "bad" => {
+                        ResponseBody::Error(ErrorReply {
+                            message: "refused".into(),
+                        })
+                    }
+                    RequestBody::HttpCancel(_)
+                    | RequestBody::HttpReorder(_)
+                    | RequestBody::HttpCookieContainer(_)
+                    | RequestBody::HttpReleaseCookies(_)
+                    | RequestBody::HttpSetCookie(_) => ResponseBody::Done(Done {}),
                     other => ticket_answer(other),
                 };
                 let notice = ticket_notice(&r.body, &body);
@@ -366,6 +394,51 @@ fn stats_answer(body: &RequestBody) -> ResponseBody {
             message: "unexpected".into(),
         }),
     }
+}
+
+/// What the fake daemon sends for an HTTP request, in order: the
+/// response's id is filled in by the caller. `/slow` gets no answer,
+/// `/fail` times out.
+fn http_answer(h: &ossteam_gameipc::HttpSendRequest) -> Vec<Message> {
+    let done = |successful, status, timed_out| {
+        Message::Response(Response {
+            id: 0,
+            body: ResponseBody::HttpDone(HttpDone {
+                successful,
+                status,
+                timed_out,
+            }),
+        })
+    };
+    if h.url.contains("/slow") {
+        return Vec::new();
+    }
+    if h.url.contains("/fail") {
+        return vec![done(false, 0, true)];
+    }
+    let chunks: &[&[u8]] = if h.streaming {
+        &[b"abc", b"de"]
+    } else {
+        &[b"hel", b"lo"]
+    };
+    let mut out = vec![Message::Notice(NoticeBody::HttpHeaders(HttpHeaders {
+        handle: h.handle,
+        status: 200,
+        headers: vec![HttpHeader {
+            name: "content-type".into(),
+            value: b"text/plain".to_vec(),
+        }],
+        content_length: 5,
+        has_length: true,
+    }))];
+    for c in chunks {
+        out.push(Message::Notice(NoticeBody::HttpData(HttpData {
+            handle: h.handle,
+            data: c.to_vec(),
+        })));
+    }
+    out.push(done(true, 200, false));
+    out
 }
 
 /// The slot of `method` in `version`'s vtable.
@@ -842,6 +915,7 @@ fn a_game_session() {
     tickets_session(&fake, client, user, pipe);
     gc_session(&fake, client, user, pipe);
     networking_session(&fake, client, user, pipe);
+    http_session(&fake, client, user, pipe);
 
     // A stub returns its failure value and is reported, with the
     // interfaces handed out.
@@ -2053,6 +2127,464 @@ fn networking_session(fake: &Fake, client: *mut c_void, user: i32, pipe: i32) {
         ),
         0
     );
+}
+
+/// `ISteamHTTP` (`isteamhttp.md`).
+fn http_session(fake: &Fake, client: *mut c_void, user: i32, pipe: i32) {
+    // The requests earlier sessions left unread were all answered.
+    while fake.events.try_recv().is_ok() {}
+    let get = |version: &CStr| {
+        call!(
+            client,
+            "SteamClient020",
+            "GetISteamHTTP",
+            fn(i32, i32, *const c_char) -> *mut c_void,
+            user,
+            pipe,
+            version.as_ptr()
+        )
+    };
+    assert!(!get(c"STEAMHTTP_INTERFACE_VERSION001").is_null());
+    let http = get(c"STEAMHTTP_INTERFACE_VERSION003");
+    assert!(!http.is_null());
+    let create = |method: u32, url: *const c_char| {
+        call!(
+            http,
+            "STEAMHTTP_INTERFACE_VERSION003",
+            "CreateHTTPRequest",
+            fn(u32, *const c_char) -> u32,
+            method,
+            url
+        )
+    };
+    let set_header = |h: u32, n: &CStr, v: &CStr| {
+        call!(
+            http,
+            "STEAMHTTP_INTERFACE_VERSION003",
+            "SetHTTPRequestHeaderValue",
+            fn(u32, *const c_char, *const c_char) -> bool,
+            h,
+            n.as_ptr(),
+            v.as_ptr()
+        )
+    };
+    let param = |h: u32, n: &CStr, v: &CStr| {
+        call!(
+            http,
+            "STEAMHTTP_INTERFACE_VERSION003",
+            "SetHTTPRequestGetOrPostParameter",
+            fn(u32, *const c_char, *const c_char) -> bool,
+            h,
+            n.as_ptr(),
+            v.as_ptr()
+        )
+    };
+    let send = |h: u32, method: &'static str, call: &mut u64| match method {
+        "SendHTTPRequest" => call!(
+            http,
+            "STEAMHTTP_INTERFACE_VERSION003",
+            "SendHTTPRequest",
+            fn(u32, *mut u64) -> bool,
+            h,
+            call
+        ),
+        _ => call!(
+            http,
+            "STEAMHTTP_INTERFACE_VERSION003",
+            "SendHTTPRequestAndStreamResponse",
+            fn(u32, *mut u64) -> bool,
+            h,
+            call
+        ),
+    };
+    let result = |call: u64, size: i32| {
+        let mut buf = vec![0u8; size as usize];
+        let mut failed = true;
+        // SAFETY: `buf` holds `size` bytes.
+        let got = unsafe {
+            crate::Steam_GetAPICallResult(
+                pipe,
+                call,
+                buf.as_mut_ptr().cast(),
+                size,
+                2101,
+                &mut failed,
+            )
+        };
+        assert!(got && !failed, "the result of call {call} at size {size}");
+        buf
+    };
+    let release = |h: u32| {
+        call!(
+            http,
+            "STEAMHTTP_INTERFACE_VERSION003",
+            "ReleaseHTTPRequest",
+            fn(u32) -> bool,
+            h
+        )
+    };
+
+    // No URL, no request.
+    assert_eq!(create(1, std::ptr::null()), 0);
+    assert_eq!(create(1, c"".as_ptr()), 0);
+
+    // A GET with parameters, headers and a context value.
+    let h = create(1, c"http://example.test/a?x=1#f".as_ptr());
+    assert_ne!(h, 0);
+    assert!(call!(
+        http,
+        "STEAMHTTP_INTERFACE_VERSION003",
+        "SetHTTPRequestContextValue",
+        fn(u32, u64) -> bool,
+        h,
+        77
+    ));
+    assert!(set_header(h, c"X-A", c"b"));
+    assert!(!set_header(h, c"a b", c"c"));
+    assert!(param(h, c"k", c"v w"));
+    assert!(call!(
+        http,
+        "STEAMHTTP_INTERFACE_VERSION003",
+        "SetHTTPRequestUserAgentInfo",
+        fn(u32, *const c_char) -> bool,
+        h,
+        c"ua".as_ptr()
+    ));
+    assert!(call!(
+        http,
+        "STEAMHTTP_INTERFACE_VERSION003",
+        "SetHTTPRequestRequiresVerifiedCertificate",
+        fn(u32, bool) -> bool,
+        h,
+        false
+    ));
+    assert!(call!(
+        http,
+        "STEAMHTTP_INTERFACE_VERSION003",
+        "SetHTTPRequestAbsoluteTimeoutMS",
+        fn(u32, u32) -> bool,
+        h,
+        5000
+    ));
+    assert!(call!(
+        http,
+        "STEAMHTTP_INTERFACE_VERSION003",
+        "SetHTTPRequestNetworkActivityTimeout",
+        fn(u32, u32) -> bool,
+        h,
+        10
+    ));
+    let mut call = 0;
+    assert!(send(h, "SendHTTPRequest", &mut call));
+    assert_ne!(call, 0);
+    let got = next_request(fake);
+    let RequestBody::HttpSend(sent) = got else {
+        panic!("not an HttpSend: {got:?}");
+    };
+    assert_eq!(
+        (sent.handle, sent.method, sent.url.as_str()),
+        (h, 1, "http://example.test/a?x=1&k=v%20w#f")
+    );
+    assert_eq!(sent.headers.len(), 1);
+    assert_eq!(
+        (sent.headers[0].name.as_str(), &sent.headers[0].value[..]),
+        ("X-A", &b"b"[..])
+    );
+    assert_eq!(sent.user_agent_info, "ua");
+    assert_eq!(
+        (sent.activity_timeout_ms, sent.absolute_timeout_ms),
+        (10_000, 5000)
+    );
+    assert!(!sent.streaming && sent.body.is_empty() && sent.cookies == 0);
+    // Sent: no second send, no more settings.
+    let mut again = 0;
+    assert!(!send(h, "SendHTTPRequest", &mut again));
+    assert!(!set_header(h, c"X-B", c"c"));
+
+    assert_eq!(wait_callback(pipe, 703)[..8], call.to_le_bytes());
+    let (size, ctx, ok) = if cfg!(windows) {
+        (32, 8, 16)
+    } else {
+        (24, 4, 12)
+    };
+    let done = result(call, size);
+    assert_eq!(u32_at(&done, 0), h);
+    assert_eq!(done[ctx..ctx + 8], 77u64.to_le_bytes());
+    assert_eq!(
+        (done[ok], u32_at(&done, ok + 4), u32_at(&done, ok + 8)),
+        (1, 200, 5)
+    );
+
+    let mut n = 0u32;
+    assert!(call!(
+        http,
+        "STEAMHTTP_INTERFACE_VERSION003",
+        "GetHTTPResponseHeaderSize",
+        fn(u32, *const c_char, *mut u32) -> bool,
+        h,
+        c"Content-Type".as_ptr(),
+        &mut n
+    ));
+    assert_eq!(n, 11);
+    let header = |cap: u32| {
+        let mut buf = vec![0u8; cap as usize];
+        let ok = call!(
+            http,
+            "STEAMHTTP_INTERFACE_VERSION003",
+            "GetHTTPResponseHeaderValue",
+            fn(u32, *const c_char, *mut u8, u32) -> bool,
+            h,
+            c"content-type".as_ptr(),
+            buf.as_mut_ptr(),
+            cap
+        );
+        (ok, buf)
+    };
+    let (found, buf) = header(11);
+    assert!(found);
+    assert_eq!(read_c(&buf), "text/plain");
+    assert!(!header(10).0);
+    assert!(!call!(
+        http,
+        "STEAMHTTP_INTERFACE_VERSION003",
+        "GetHTTPResponseHeaderSize",
+        fn(u32, *const c_char, *mut u32) -> bool,
+        h,
+        c"X-None".as_ptr(),
+        &mut n
+    ));
+    assert!(call!(
+        http,
+        "STEAMHTTP_INTERFACE_VERSION003",
+        "GetHTTPResponseBodySize",
+        fn(u32, *mut u32) -> bool,
+        h,
+        &mut n
+    ));
+    assert_eq!(n, 5);
+    let mut body = [0u8; 5];
+    assert!(!call!(
+        http,
+        "STEAMHTTP_INTERFACE_VERSION003",
+        "GetHTTPResponseBodyData",
+        fn(u32, *mut u8, u32) -> bool,
+        h,
+        body.as_mut_ptr(),
+        4
+    ));
+    assert!(call!(
+        http,
+        "STEAMHTTP_INTERFACE_VERSION003",
+        "GetHTTPResponseBodyData",
+        fn(u32, *mut u8, u32) -> bool,
+        h,
+        body.as_mut_ptr(),
+        5
+    ));
+    assert_eq!(&body, b"hello");
+    let mut pct = 0f32;
+    assert!(call!(
+        http,
+        "STEAMHTTP_INTERFACE_VERSION003",
+        "GetHTTPDownloadProgressPct",
+        fn(u32, *mut f32) -> bool,
+        h,
+        &mut pct
+    ));
+    assert_eq!(pct, 100.0);
+    let mut timed_out = 1u8;
+    assert!(call!(
+        http,
+        "STEAMHTTP_INTERFACE_VERSION003",
+        "GetHTTPRequestWasTimedOut",
+        fn(u32, *mut u8) -> bool,
+        h,
+        &mut timed_out
+    ));
+    assert_eq!(timed_out, 0);
+    assert!(release(h));
+    assert!(!release(h));
+
+    // A streamed POST with a raw body, read by an older SDK's size.
+    let h = create(3, c"http://example.test/stream".as_ptr());
+    let raw = *b"{}";
+    assert!(call!(
+        http,
+        "STEAMHTTP_INTERFACE_VERSION003",
+        "SetHTTPRequestRawPostBody",
+        fn(u32, *const c_char, *const u8, u32) -> bool,
+        h,
+        c"application/json".as_ptr(),
+        raw.as_ptr(),
+        2
+    ));
+    assert!(!param(h, c"k", c"v"));
+    let mut call = 0;
+    assert!(send(h, "SendHTTPRequestAndStreamResponse", &mut call));
+    let RequestBody::HttpSend(sent) = next_request(fake) else {
+        panic!("not an HttpSend");
+    };
+    assert!(sent.streaming);
+    assert_eq!((sent.method, &sent.body[..]), (3, &b"{}"[..]));
+    assert_eq!(sent.headers[0].name, "Content-Type");
+    let mut got = Vec::new();
+    let end = Instant::now() + Duration::from_secs(5);
+    while got.last().map(|(id, _)| *id) != Some(703) {
+        if let Some(c) = next_callback(pipe) {
+            got.push(c);
+        }
+        assert!(
+            Instant::now() < end,
+            "the streamed request did not complete"
+        );
+    }
+    let ids: Vec<i32> = got.iter().map(|(id, _)| *id).collect();
+    assert_eq!(ids, [2102, 2103, 2103, 703]);
+    let data = &got[2].1;
+    assert_eq!((u32_at(data, ctx + 8), u32_at(data, ctx + 12)), (3, 2));
+    let chunk = |offset: u32, cap: u32| {
+        let mut buf = vec![0u8; cap as usize];
+        let ok = call!(
+            http,
+            "STEAMHTTP_INTERFACE_VERSION003",
+            "GetHTTPStreamingResponseBodyData",
+            fn(u32, u32, *mut u8, u32) -> bool,
+            h,
+            offset,
+            buf.as_mut_ptr(),
+            cap
+        );
+        ok.then_some(buf)
+    };
+    assert_eq!(chunk(0, 3).as_deref(), Some(&b"abc"[..]));
+    assert_eq!(chunk(0, 3), None);
+    assert_eq!(chunk(3, 3), None);
+    assert_eq!(chunk(3, 2).as_deref(), Some(&b"de"[..]));
+    assert!(!call!(
+        http,
+        "STEAMHTTP_INTERFACE_VERSION003",
+        "GetHTTPResponseBodyData",
+        fn(u32, *mut u8, u32) -> bool,
+        h,
+        body.as_mut_ptr(),
+        5
+    ));
+    let short = if cfg!(windows) { 24 } else { 20 };
+    let done = result(call, short);
+    assert_eq!((done[ok], u32_at(&done, ok + 4)), (1, 200));
+    assert!(release(h));
+
+    // A request that times out.
+    let h = create(1, c"http://example.test/fail".as_ptr());
+    let mut call = 0;
+    assert!(send(h, "SendHTTPRequest", &mut call));
+    assert!(matches!(next_request(fake), RequestBody::HttpSend(_)));
+    wait_callback(pipe, 703);
+    let done = result(call, size);
+    assert_eq!(
+        (done[ok], u32_at(&done, ok + 4), u32_at(&done, ok + 8)),
+        (0, 0, 0)
+    );
+    assert!(call!(
+        http,
+        "STEAMHTTP_INTERFACE_VERSION003",
+        "GetHTTPRequestWasTimedOut",
+        fn(u32, *mut u8) -> bool,
+        h,
+        &mut timed_out
+    ));
+    assert_eq!(timed_out, 1);
+    assert!(release(h));
+
+    // One still running: moved in the queue, then cancelled; its call
+    // never completes.
+    let h = create(1, c"http://example.test/slow".as_ptr());
+    let defer = |h| {
+        call!(
+            http,
+            "STEAMHTTP_INTERFACE_VERSION003",
+            "DeferHTTPRequest",
+            fn(u32) -> bool,
+            h
+        )
+    };
+    assert!(!defer(h));
+    let mut call = 0;
+    assert!(send(h, "SendHTTPRequest", &mut call));
+    assert!(matches!(next_request(fake), RequestBody::HttpSend(_)));
+    assert!(defer(h));
+    assert!(matches!(next_request(fake), RequestBody::HttpReorder(r) if r.handle == h && !r.first));
+    assert!(call!(
+        http,
+        "STEAMHTTP_INTERFACE_VERSION003",
+        "PrioritizeHTTPRequest",
+        fn(u32) -> bool,
+        h
+    ));
+    assert!(matches!(next_request(fake), RequestBody::HttpReorder(r) if r.first));
+    assert!(release(h));
+    assert!(matches!(next_request(fake), RequestBody::HttpCancel(c) if c.handle == h));
+    let p = crate::pipe::get(pipe).unwrap();
+    assert_eq!(p.call_failure(call), crate::pipe::FAILURE_INVALID_HANDLE);
+
+    // Cookie containers.
+    let c = call!(
+        http,
+        "STEAMHTTP_INTERFACE_VERSION003",
+        "CreateCookieContainer",
+        fn(bool) -> u32,
+        true
+    );
+    assert_ne!(c, 0);
+    assert!(
+        matches!(next_request(fake), RequestBody::HttpCookieContainer(r) if r.handle == c && r.allow_modify)
+    );
+    let set_cookie = |c: u32, cookie: &CStr| {
+        call!(
+            http,
+            "STEAMHTTP_INTERFACE_VERSION003",
+            "SetCookie",
+            fn(u32, *const c_char, *const c_char, *const c_char) -> bool,
+            c,
+            c"example.test".as_ptr(),
+            c"http://example.test/".as_ptr(),
+            cookie.as_ptr()
+        )
+    };
+    assert!(set_cookie(c, c"a=b"));
+    assert!(matches!(next_request(fake), RequestBody::HttpSetCookie(r) if r.cookie == "a=b"));
+    assert!(!set_cookie(c, c"bad"));
+    assert!(matches!(next_request(fake), RequestBody::HttpSetCookie(_)));
+    assert!(!set_cookie(c + 1, c"a=b"));
+    let h = create(1, c"http://example.test/".as_ptr());
+    let use_cookies = |h, c| {
+        call!(
+            http,
+            "STEAMHTTP_INTERFACE_VERSION003",
+            "SetHTTPRequestCookieContainer",
+            fn(u32, u32) -> bool,
+            h,
+            c
+        )
+    };
+    assert!(!use_cookies(h, c + 1));
+    assert!(use_cookies(h, c));
+    assert!(release(h));
+    assert!(call!(
+        http,
+        "STEAMHTTP_INTERFACE_VERSION003",
+        "ReleaseCookieContainer",
+        fn(u32) -> bool,
+        c
+    ));
+    assert!(matches!(next_request(fake), RequestBody::HttpReleaseCookies(r) if r.handle == c));
+    assert!(!call!(
+        http,
+        "STEAMHTTP_INTERFACE_VERSION003",
+        "ReleaseCookieContainer",
+        fn(u32) -> bool,
+        c
+    ));
 }
 
 /// `ISteamUser`'s tickets and auth sessions (`isteamuser.md` §4).

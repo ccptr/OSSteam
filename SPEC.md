@@ -617,6 +617,7 @@ implementation of that library.
 | ISteamGameCoordinator | Messages between the game and its app's Game Coordinator, carried through the CM (`ClientToGC`, `ClientFromGC`) without being read |
 | ISteamAppDisableUpdate | `SetAppUpdateDisabledSecondsRemaining`: automatic updates of the game's app wait while it asks |
 | ISteamNetworkingSocketsSerialized | Certificates for Steam Datagram Relay (`ClientNetworkingCertRequest`) and the relay ticket cache. Peer-to-peer signalling, STUN, direct connections and FakeIP fail truthfully until M3. |
+| ISteamHTTP | HTTP and HTTPS requests that the daemon makes for the game, streamed responses and cookie containers. Certificates are always checked (SEC-3). |
 | ISteamRemoteStorage | `IsCloudEnabledFor*` returns `false` (truthful). File APIs write and read locally under the cloud root that the app's config defines, and are documented as not synced until M3. |
 
 Other interfaces, such as Networking, Matchmaking, UGC, Input and HTMLSurface,
@@ -883,7 +884,8 @@ Each library folder has this layout: `common/<installdir>`,
 - **[SEC-5]** The parsers for manifests, KeyValues, protobuf and chunks are
   fuzzed with `cargo-fuzz` in CI on a nightly schedule.
 - **[SEC-6]** ossteam sends no telemetry. The only traffic is to Valve, to
-  serve the user's own requests.
+  serve the user's own requests, and the HTTP requests a game makes
+  through `ISteamHTTP`, to wherever the game asks.
 
 ---
 

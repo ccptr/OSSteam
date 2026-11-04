@@ -231,9 +231,82 @@ pub fn networking_cert(
     out
 }
 
+/// `HTTPRequestCompleted_t` (`isteamhttp.md` §4).
+pub const HTTP_REQUEST_COMPLETED: i32 = 2101;
+/// `HTTPRequestHeadersReceived_t` (§5).
+pub const HTTP_REQUEST_HEADERS_RECEIVED: i32 = 2102;
+/// `HTTPRequestDataReceived_t`.
+pub const HTTP_REQUEST_DATA_RECEIVED: i32 = 2103;
+
+/// `{ HTTPRequestHandle m_hRequest; uint64 m_ulContextValue; }`, which
+/// the three HTTP callbacks start with.
+fn http_request(out: &mut Vec<u8>, request: u32, context: u64) {
+    out.extend_from_slice(&request.to_le_bytes());
+    pad(out, 8);
+    out.extend_from_slice(&context.to_le_bytes());
+}
+
+/// `HTTPRequestCompleted_t { ...; bool m_bRequestSuccessful;
+/// EHTTPStatusCode m_eStatusCode; uint32 m_unBodySize; }`, and the size
+/// of the older structure without `m_unBodySize`, its first bytes.
+pub fn http_request_completed(
+    request: u32,
+    context: u64,
+    successful: bool,
+    status: u32,
+    body_size: u32,
+) -> (Vec<u8>, usize) {
+    let mut out = Vec::with_capacity(32);
+    http_request(&mut out, request, context);
+    out.push(u8::from(successful));
+    pad(&mut out, 4);
+    out.extend_from_slice(&status.to_le_bytes());
+    let mut short = out.clone();
+    pad(&mut short, 8);
+    out.extend_from_slice(&body_size.to_le_bytes());
+    pad(&mut out, 8);
+    (out, short.len())
+}
+
+pub fn http_request_headers_received(request: u32, context: u64) -> Vec<u8> {
+    let mut out = Vec::with_capacity(16);
+    http_request(&mut out, request, context);
+    pad(&mut out, 8);
+    out
+}
+
+pub fn http_request_data_received(request: u32, context: u64, offset: u32, size: u32) -> Vec<u8> {
+    let mut out = Vec::with_capacity(24);
+    http_request(&mut out, request, context);
+    out.extend_from_slice(&offset.to_le_bytes());
+    out.extend_from_slice(&size.to_le_bytes());
+    pad(&mut out, 8);
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The sizes and offsets of `isteamhttp.md` §4 and §5.
+    #[test]
+    fn http_callbacks_have_the_sdk_layouts() {
+        let (done, short, headers, data, ctx, ok) = if cfg!(windows) {
+            (32, 24, 16, 24, 8, 16)
+        } else {
+            (24, 20, 12, 20, 4, 12)
+        };
+        let (b, s) = http_request_completed(7, 9, true, 404, 5);
+        assert_eq!((b.len(), s), (done, short));
+        assert_eq!(b[ctx..ctx + 8], 9u64.to_le_bytes());
+        assert_eq!(b[ok], 1);
+        assert_eq!(b[ok + 4..ok + 8], 404u32.to_le_bytes());
+        assert_eq!(b[ok + 8..ok + 12], 5u32.to_le_bytes());
+        assert_eq!(http_request_headers_received(7, 9).len(), headers);
+        let d = http_request_data_received(7, 9, 3, 4);
+        assert_eq!(d.len(), data);
+        assert_eq!(d[ctx + 8..ctx + 12], 3u32.to_le_bytes());
+    }
 
     /// The sizes of `isteamuserstats.md` §3.2.
     #[test]

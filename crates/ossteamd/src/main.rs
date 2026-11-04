@@ -7,6 +7,7 @@ mod content;
 mod core;
 mod db;
 mod gameipc;
+mod http;
 mod launch;
 mod library;
 mod logging;

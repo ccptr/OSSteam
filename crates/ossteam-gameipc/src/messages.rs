@@ -397,6 +397,100 @@ record! {
 }
 
 record! {
+    /// An HTTP header (`isteamhttp.md` §8); the value need not be UTF-8.
+    pub struct HttpHeader {
+        pub name: String,
+        pub value: Vec<u8>,
+    }
+}
+
+record! {
+    /// An HTTP request for the daemon to make (`isteamhttp.md` §8).
+    pub struct HttpSendRequest {
+        /// The shim's request handle, which the notices name.
+        pub handle: u32,
+        /// An `EHTTPMethod`.
+        pub method: u32,
+        pub url: String,
+        pub headers: Vec<HttpHeader>,
+        pub body: Vec<u8>,
+        pub user_agent_info: String,
+        pub activity_timeout_ms: u32,
+        /// 0 for no limit.
+        pub absolute_timeout_ms: u32,
+        pub streaming: bool,
+        /// The cookie container; 0 for none.
+        pub cookies: u32,
+    }
+}
+
+record! {
+    /// How an HTTP request ended.
+    pub struct HttpDone {
+        /// A response came, whatever its status.
+        pub successful: bool,
+        /// Its status, or 0.
+        pub status: u32,
+        pub timed_out: bool,
+    }
+}
+
+record! {
+    pub struct HttpCancelRequest {
+        pub handle: u32,
+    }
+}
+
+record! {
+    /// Moves a waiting request to the front, or to the back.
+    pub struct HttpReorderRequest {
+        pub handle: u32,
+        pub first: bool,
+    }
+}
+
+record! {
+    pub struct HttpCookieContainerRequest {
+        pub handle: u32,
+        pub allow_modify: bool,
+    }
+}
+
+record! {
+    pub struct HttpReleaseCookiesRequest {
+        pub handle: u32,
+    }
+}
+
+record! {
+    pub struct HttpSetCookieRequest {
+        pub handle: u32,
+        pub host: String,
+        pub url: String,
+        pub cookie: String,
+    }
+}
+
+record! {
+    /// The headers of a request's last response.
+    pub struct HttpHeaders {
+        pub handle: u32,
+        pub status: u32,
+        pub headers: Vec<HttpHeader>,
+        pub content_length: u64,
+        pub has_length: bool,
+    }
+}
+
+record! {
+    /// A chunk of a response's body.
+    pub struct HttpData {
+        pub handle: u32,
+        pub data: Vec<u8>,
+    }
+}
+
+record! {
     pub struct ErrorReply {
         pub message: String,
     }
@@ -440,6 +534,12 @@ pub enum RequestBody {
     NetworkingCert(NetworkingCertRequest),
     CacheRelayTicket(CacheRelayTicketRequest),
     RelayTickets(RelayTicketsRequest),
+    HttpSend(HttpSendRequest),
+    HttpCancel(HttpCancelRequest),
+    HttpReorder(HttpReorderRequest),
+    HttpCookieContainer(HttpCookieContainerRequest),
+    HttpReleaseCookies(HttpReleaseCookiesRequest),
+    HttpSetCookie(HttpSetCookieRequest),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -457,6 +557,7 @@ pub enum ResponseBody {
     GcSent(GcSent),
     NetworkingCert(NetworkingCert),
     RelayTickets(RelayTickets),
+    HttpDone(HttpDone),
     Error(ErrorReply),
 }
 
@@ -467,6 +568,8 @@ pub enum NoticeBody {
     TicketActive(TicketActive),
     TicketValidated(TicketValidated),
     GcMessage(GcMessage),
+    HttpHeaders(HttpHeaders),
+    HttpData(HttpData),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -522,6 +625,12 @@ impl Wire for RequestBody {
             Self::NetworkingCert(r) => tagged(out, 14, r),
             Self::CacheRelayTicket(r) => tagged(out, 15, r),
             Self::RelayTickets(r) => tagged(out, 16, r),
+            Self::HttpSend(r) => tagged(out, 17, r),
+            Self::HttpCancel(r) => tagged(out, 18, r),
+            Self::HttpReorder(r) => tagged(out, 19, r),
+            Self::HttpCookieContainer(r) => tagged(out, 20, r),
+            Self::HttpReleaseCookies(r) => tagged(out, 21, r),
+            Self::HttpSetCookie(r) => tagged(out, 22, r),
         }
     }
     fn get(r: &mut Reader<'_>) -> Result<Self, DecodeError> {
@@ -542,6 +651,12 @@ impl Wire for RequestBody {
             14 => Self::NetworkingCert(Wire::get(r)?),
             15 => Self::CacheRelayTicket(Wire::get(r)?),
             16 => Self::RelayTickets(Wire::get(r)?),
+            17 => Self::HttpSend(Wire::get(r)?),
+            18 => Self::HttpCancel(Wire::get(r)?),
+            19 => Self::HttpReorder(Wire::get(r)?),
+            20 => Self::HttpCookieContainer(Wire::get(r)?),
+            21 => Self::HttpReleaseCookies(Wire::get(r)?),
+            22 => Self::HttpSetCookie(Wire::get(r)?),
             t => return Err(unknown("request", t)),
         })
     }
@@ -563,6 +678,7 @@ impl Wire for ResponseBody {
             Self::GcSent(a) => tagged(out, 12, a),
             Self::NetworkingCert(a) => tagged(out, 13, a),
             Self::RelayTickets(a) => tagged(out, 14, a),
+            Self::HttpDone(a) => tagged(out, 15, a),
             Self::Error(e) => tagged(out, 255, e),
         }
     }
@@ -581,6 +697,7 @@ impl Wire for ResponseBody {
             12 => Self::GcSent(Wire::get(r)?),
             13 => Self::NetworkingCert(Wire::get(r)?),
             14 => Self::RelayTickets(Wire::get(r)?),
+            15 => Self::HttpDone(Wire::get(r)?),
             255 => Self::Error(Wire::get(r)?),
             t => return Err(unknown("response", t)),
         })
@@ -593,6 +710,8 @@ impl Wire for NoticeBody {
             Self::TicketActive(n) => tagged(out, 1, n),
             Self::TicketValidated(n) => tagged(out, 2, n),
             Self::GcMessage(n) => tagged(out, 3, n),
+            Self::HttpHeaders(n) => tagged(out, 4, n),
+            Self::HttpData(n) => tagged(out, 5, n),
         }
     }
     fn get(r: &mut Reader<'_>) -> Result<Self, DecodeError> {
@@ -600,6 +719,8 @@ impl Wire for NoticeBody {
             1 => Self::TicketActive(Wire::get(r)?),
             2 => Self::TicketValidated(Wire::get(r)?),
             3 => Self::GcMessage(Wire::get(r)?),
+            4 => Self::HttpHeaders(Wire::get(r)?),
+            5 => Self::HttpData(Wire::get(r)?),
             t => return Err(unknown("notice", t)),
         })
     }

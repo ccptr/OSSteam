@@ -819,9 +819,12 @@ pipe, call, buffer, size, expected_id, failed)`. When the pipe holds a
 result for `call`, its callback id is `expected_id` and its size is
 `size`, the result is copied to `buffer`, `*failed` is set when the call
 failed, the result is forgotten, and the function returns true.
-Otherwise it returns false and keeps the result. `ISteamUtils` has the
-same function (`GetAPICallResult`), together with `IsAPICallCompleted`
-and `GetAPICallFailureReason` (`steamworks/isteamutils.md`).
+Otherwise it returns false and keeps the result. The one exception is
+`HTTPRequestCompleted_t`, which older SDKs read at a shorter size: that
+size gets the result's first bytes (`steamworks/isteamhttp.md` §4).
+`ISteamUtils` has the same function (`GetAPICallResult`), together
+with `IsAPICallCompleted` and `GetAPICallFailureReason`
+(`steamworks/isteamutils.md`).
 
 When the connection closes, every call still pending completes as
 failed with `k_ESteamAPICallFailureSteamGone`. Its result structure is
@@ -911,7 +914,7 @@ the shim sends `Request`s and `Report`s, and the daemon sends
 
 ### 3.4 Messages
 
-Protocol version 6.
+Protocol version 7.
 
 | Tag | Message | Direction | Fields |
 |---|---|---|---|
@@ -923,7 +926,7 @@ Protocol version 6.
 | 6 | `SessionUpdate` | daemon → shim | `session: Session` |
 | 7 | `AppUpdate` | daemon → shim | `app: App` |
 | 8 | `Report` | shim → daemon | `interfaces: list<string>`, `unknown: list<string>`, `calls: list<Call>` (§4) |
-| 9 | `Notice` | daemon → shim | `body: NoticeBody`, which starts with its own tag: what Steam said later about a request (`steamworks/isteamuser.md` §3), or a message from the app's Game Coordinator (`steamworks/isteamgamecoordinator.md` §2) |
+| 9 | `Notice` | daemon → shim | `body: NoticeBody`, which starts with its own tag: what Steam said later about a request (`steamworks/isteamuser.md` §3), a message from the app's Game Coordinator (`steamworks/isteamgamecoordinator.md` §2), or an HTTP response's headers and body (`steamworks/isteamhttp.md` §8) |
 
 `Session`:
 
@@ -976,6 +979,7 @@ one of them is installed.
 | 12 | `GcSend` of `steamworks/isteamgamecoordinator.md` §2 | `GcSent` |
 | 13 | `UpdateHold` of `steamworks/isteamappdisableupdate.md` §2 | `Done{}` |
 | 14 to 16 | the certificate and relay ticket requests of `steamworks/isteamnetworkingsocketsserialized.md` §5 | `NetworkingCert` (tag 13), `Done{}`, `RelayTickets` (tag 14) |
+| 17 to 22 | the HTTP requests of `steamworks/isteamhttp.md` §8 | `HttpDone` (tag 15) for `HttpSend`, `Done{}` for the others |
 | 255 | — | `Error{message: string}`: the request could not be answered |
 
 `Call`: `interface: string` (a version string), `method: string`,
@@ -1013,7 +1017,11 @@ any game. The stats and ticket requests act only on the connection's
 own app id, and only for an app the account owns; so do Game Coordinator
 messages, which go only to the connection's own app's GC, update holds,
 networking certificates and relay tickets. A connection can
-cancel only the tickets and end only the auth sessions it made.
+cancel only the tickets and end only the auth sessions it made, and
+cancel and reorder only its own HTTP requests. HTTP requests act for
+no app: any connection may have the daemon make one to an `http` or
+`https` URL, as any process could itself (`steamworks/isteamhttp.md`
+§8).
 
 ### 3.7 The daemon's side
 
@@ -1086,6 +1094,7 @@ getter and fails under ABI-3.
 | `ISteamGameCoordinator` | `isteamgamecoordinator.md` | messages to and from the app's Game Coordinator |
 | `ISteamAppDisableUpdate` | `isteamappdisableupdate.md` | holding the app's automatic updates |
 | `ISteamNetworkingSocketsSerialized` | `isteamnetworkingsocketsserialized.md` | relay certificates and the relay ticket cache |
+| `ISteamHTTP` | `isteamhttp.md` | HTTP and HTTPS requests made by the daemon, streaming, cookie containers |
 
 ## 6. Verification against the official client
 

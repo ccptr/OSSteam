@@ -118,7 +118,7 @@ mod tests {
 
     #[test]
     fn paths_stay_under_the_base() {
-        let base = Path::new("/lib/common/Game");
+        let base = Path::new("/lib/apps/Game");
         assert_eq!(
             under(base, "bin\\game.exe").unwrap(),
             base.join("bin").join("game.exe")

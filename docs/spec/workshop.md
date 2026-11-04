@@ -195,7 +195,7 @@ in the data directory (`$XDG_DATA_HOME/ossteam/library`, SPEC §17):
 
 ```
 <library>/
-  common/<installdir>/                    the app
+  apps/<installdir>/                      the app
   workshop/<app>/<item>/                  an item's files
   .ossteam/staging/workshop/<app>/<item>/ files being written
 ```

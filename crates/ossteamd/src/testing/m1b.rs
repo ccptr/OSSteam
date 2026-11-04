@@ -155,7 +155,7 @@ fn install_update_verify_and_uninstall_with_dlc() {
     done(&c, c.install(ALPHA, "", "").expect("install queued"));
     let i = installed(&c, ALPHA).expect("installed");
     let dir = PathBuf::from(&i.path);
-    assert!(dir.ends_with("common/Alpha"), "{}", dir.display());
+    assert!(dir.ends_with("apps/Alpha"), "{}", dir.display());
     assert_eq!(read(&dir, "bin/game"), game);
     assert_eq!(read(&dir, "config.txt"), config);
     assert_eq!(read(&dir, "dlc/extra.pak"), extra);

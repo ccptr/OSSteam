@@ -77,7 +77,7 @@ struct Lib {
 
 fn lib(name: &str) -> Lib {
     let root = Dir::new(name);
-    let install = root.0.join("common").join("Game");
+    let install = root.0.join("apps").join("Game");
     let staging = root.0.join(".ossteam").join("staging").join("480");
     Lib {
         _root: root,

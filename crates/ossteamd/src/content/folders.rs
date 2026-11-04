@@ -114,9 +114,9 @@ impl Layout {
         Self { root: root.into() }
     }
 
-    /// `common/<installdir>`; `install_dir` must be checked first.
+    /// `apps/<installdir>`; `install_dir` must be checked first.
     pub fn app_dir(&self, install_dir: &str) -> PathBuf {
-        self.root.join("common").join(install_dir)
+        self.root.join("apps").join(install_dir)
     }
 
     pub fn manifests(&self) -> PathBuf {
@@ -171,7 +171,7 @@ mod tests {
     #[test]
     fn layout() {
         let l = Layout::new("/lib");
-        assert_eq!(l.app_dir("Spacewar"), Path::new("/lib/common/Spacewar"));
+        assert_eq!(l.app_dir("Spacewar"), Path::new("/lib/apps/Spacewar"));
         assert_eq!(
             l.manifest(DepotId(481), ManifestId(5)),
             Path::new("/lib/.ossteam/manifests/481_5.manifest")

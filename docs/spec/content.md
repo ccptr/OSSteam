@@ -320,7 +320,7 @@ A library folder (SPEC §17) holds:
 
 ```
 <library>/
-  common/<installdir>/            an app's files
+  apps/<installdir>/              an app's files
   .ossteam/library.toml           marks the folder; holds its id
   .ossteam/manifests/<depot>_<manifest>.manifest
   .ossteam/staging/<appid>/       files being written
@@ -328,9 +328,24 @@ A library folder (SPEC §17) holds:
 
 `<installdir>` is the app's `config/installdir`. An app without one cannot
 be installed. Its value must be a single path component, checked as in
-§4. Depots with `sharedinstall` go to `common/<installdir of the other
+§4. Depots with `sharedinstall` go to `apps/<installdir of the other
 app>`; that app is recorded as installed with the depot, and it is
 removed only when no installed app uses it any more.
+
+The names in the folder are ossteam's own rather than the official
+client's `steamapps/` layout (maintainer, 2026-11-03), so long as that
+does not break a game or a tool. `compatdata/` (`compat-tools.md` §6.1)
+still has the official name, pending the same change. Games and tools
+are given absolute paths (`launch.md`, `compat-tools.md` §6), so none
+depends on the names. *Unverified:* whether a game finds another one by
+a path relative to its own install directory, which the official layout
+allows (`../<other installdir>` also works here, as the apps share
+`apps/`).
+
+Folders made before 2026-11-03 hold their apps in `common/`. Before the
+first release they are not converted: such an app is found missing and
+is installed again, or the folder is moved by hand (maintainer,
+2026-11-03).
 
 **Disk space** is checked before a job writes anything: the free space on
 the folder's file system must exceed the sum of the sizes of the files
@@ -433,7 +448,7 @@ alone. The job reports how many files it repaired.
 
 ## 12. Uninstall
 
-Uninstall deletes `common/<installdir>`, the app's stored manifests and
+Uninstall deletes `apps/<installdir>`, the app's stored manifests and
 staging, and its rows in the state database. Shared-install depots are
 kept while another installed app uses them (§8). On Linux the app's
 `compatdata/<appid>` holds the user's saves and settings under Proton and

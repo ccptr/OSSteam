@@ -130,7 +130,9 @@ Valve's documentation lists the names, except `WinProgramData`,
 `SteamCloudDocuments` paths are from the community table only. The
 Windows folders come from the Known Folder API, since the user can move
 them, as Valve's documentation says. A rule whose root does not exist on
-this OS, and that no override maps, matches nothing.
+this OS, and that no override maps, matches nothing. On Linux,
+`SteamCloudDocuments` is treated so until a game is seen that uses it
+(§9 Q1).
 
 A **root override** (`rootoverrides`) maps a root to another one on one
 OS. From Valve's documentation and the community table: `root` is the
@@ -418,7 +420,9 @@ All of these need the test account logged in.
    question does not arise for the other roots, which are where the game
    writes anyway.
 
-   *Open (2026-11-03):* not answered yet.
+   *Answer (2026-11-03):* left until a game is seen that uses this
+   root. Until then, on Linux, a rule with it matches nothing, so its
+   files are not synced.
 
 2. **Writing to the test account's Steam Cloud** (§8): acceptable? A
    mistake can only lose that account's cloud files for the test titles.

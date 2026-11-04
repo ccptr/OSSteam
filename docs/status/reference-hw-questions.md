@@ -1,6 +1,6 @@
 ---
 name: reference-hw-questions
-description: reference-hw.md §5 answered 2026-11-03 - the Steam Deck will be the reference; budgets are judged on the dev PC (interim) until it is set up; the VPN and the sub-1 Gbit/s line for download runs are open
+description: reference-hw.md §5 answered 2026-11-03 - the Steam Deck will be the reference; budgets are judged on the dev PC (interim) until it is set up; download runs bypass the VPN and count when they reach a speed test of the same line
 metadata:
   type: project
 ---
@@ -15,8 +15,10 @@ reference-hw.md §5 (e604d60) was answered on 2026-11-03:
 - Q4: wired Ethernet to a line of up to 970 Mbit/s, about 800 in
   practice.
 
-**How to apply:** open: download runs need a 1 Gbit/s line with no VPN
-(§3), and this line is slower and goes through Mullvad. Proposed to the
-maintainer, not answered: count a run as saturating when it reaches what
-a speed test on the same line reaches just before. Ask before bypassing
-the VPN.
+Download runs (Q4): a run counts as saturating when it reaches what a
+speed test on the same line reaches just before, and runs bypass the VPN
+with `novpn` (§3). That is the maintainer's exception, for these runs,
+to the rule of keeping authenticated traffic on the VPN.
+
+**How to apply:** take §20 numbers on the dev PC as interim results,
+under §3's conditions.

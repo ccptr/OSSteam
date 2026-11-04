@@ -53,10 +53,12 @@ starts a new entry rather than editing the old one.
 - **Load:** a fresh login with nothing else running besides the desktop
   and a terminal; no official Steam client running, no game, no build.
 - **Network** (download throughput only): wired gigabit Ethernet with no
-  VPN or proxy in the path, `content.*` settings at their defaults. Before
-  the run, record what the link reaches to a nearby speed-test server; if
-  that is below 1 Gbit/s, the run measures the line, not the client, and
-  is not a result. Record the CDN host the daemon chose.
+  VPN or proxy in the path (on the development machine, the daemon runs
+  under `novpn`), `content.*` settings at their defaults. Just before the
+  run, record what the line reaches to a nearby speed-test server. The
+  client saturates the line when the download reaches that rate; on a
+  line below 1 Gbit/s, that stands for "saturates 1 Gbit/s". Record the
+  CDN host the daemon chose.
 - **Storage** (download throughput): the install goes to the machine's
   internal drive, in a library folder on a file system with room for the
   title twice over.
@@ -126,8 +128,9 @@ above. Its traffic goes through a VPN (§5 Q4).
    the client, sets the rate.
 
    *Answer (2026-11-03):* wired Ethernet to a line of up to 970 Mbit/s,
-   about 800 in practice. Open: that is below the 1 Gbit/s §3 asks for,
-   and whether a run may bypass the VPN.
+   about 800 in practice. A run counts when it reaches what a speed
+   test on the same line reaches just before, and runs bypass the VPN
+   (§3).
 5. Should a missed budget on a reference machine block M1 even when it
    is met everywhere else, as SPEC §21 M1e's exit says ("All §20 budgets
    are met"), or only be recorded until release?

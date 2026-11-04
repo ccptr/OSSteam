@@ -47,7 +47,7 @@ const CANDIDATES: usize = 4;
 /// One depot of a job.
 pub struct DepotWork {
     pub key: DepotKey,
-    /// `<library>/common/<installdir>`, of this app or, for a shared
+    /// `<library>/apps/<installdir>`, of this app or, for a shared
     /// install, of the app the depot is shared from.
     pub install_dir: PathBuf,
     /// What to install, checked and with names decrypted.

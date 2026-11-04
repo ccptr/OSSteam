@@ -191,7 +191,7 @@ Proton during acceptance).
 
 Tools are apps of type `Tool` and are installed through the normal
 install engine (`content.md`) into a library folder, like games, under
-`common/<installdir>`. ossteam never bundles them.
+`apps/<installdir>`. ossteam never bundles them.
 
 **The chain.** An app's chain is its tool, the tool its manifest
 requires, and so on outwards. A tool that requires itself or a tool
@@ -293,8 +293,9 @@ container shares the paths in `STEAM_COMPAT_INSTALL_PATH`,
 
 **Library paths.** The official client's paths are the `steamapps`
 directory of each library, the one that holds `common/` and
-`compatdata/`. ossteam's library folder holds those directly
-(`content.md` §8), so the folder itself is given. Proton's `steam.exe`
+`compatdata/`. ossteam's library folder holds its own `apps/` and
+`compatdata/` directly (`content.md` §8), so the folder itself is
+given. Proton's `steam.exe`
 writes the parent of each path into the prefix's
 `libraryfolders.vdf`, which is therefore not a usable library listing
 for a Windows game that looks for other games; *unverified* that any

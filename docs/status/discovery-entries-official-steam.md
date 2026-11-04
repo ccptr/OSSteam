@@ -72,6 +72,8 @@ the system allows it (`isolation::linux` tests and
 
 Not run live yet: a native game from the test account through the
 private `~/.steam` needs the real daemon running this build, which
-means restarting it. Still open in §1.1.7: games installed under
+means restarting it. Before it starts, rename the dev PC's library
+folder's `common/` to `apps/` (content.md §8 since 2026-11-03; no
+migration before release). Still open in §1.1.7: games installed under
 `~/.steam`, and the Steam Linux Runtime inside the namespace. The checks
 are in §1.1.8.

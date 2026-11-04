@@ -113,7 +113,7 @@ its children are `appid` and the sections `common`, `extended`,
 | `common/parent` | for DLC, demos and soundtracks: the app they belong to |
 | `common/oslist` | comma-separated platforms: `windows`, `macos`, `linux` |
 | `extended/listofdlc` | comma-separated DLC app ids |
-| `config/installdir` | the directory name under `common/` |
+| `config/installdir` | the directory name under the library folder's `apps/` (`content.md` §8) |
 | `config/launch/<n>` | launch options: `executable`, `arguments`, `description`, `type`, and `config/oslist`, `config/osarch`, `config/betakey` |
 | `depots/<id>` | one depot: `name`, `config/oslist`, `config/osarch`, `config/language`, `dlcappid`, `depotfromapp`, `sharedinstall`, `maxsize` |
 | `depots/branches/<name>` | one branch: `buildid`, `description`, `pwdrequired`, `timeupdated` |

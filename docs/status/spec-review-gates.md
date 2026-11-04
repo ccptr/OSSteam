@@ -12,7 +12,8 @@ maintainer has reviewed that spec page and answered its questions
 On 2026-11-03 the maintainer answered the M3 pages' questions, each
 answer written under its question:
 
-- cloud.md §9: [m3-cloud](m3-cloud.md); Q1 (`~/.SteamCloud`) open.
+- cloud.md §9: [m3-cloud](m3-cloud.md); Q1 (`~/.SteamCloud`) left until a
+  game uses that root.
 - friends.md §11: [m3-friends](m3-friends.md); all answered.
 - betas.md §9: [m3-betas](m3-betas.md); Q1, Q4 and Q5 open.
 - workshop.md §11: [m3-workshop](m3-workshop.md); all answered.

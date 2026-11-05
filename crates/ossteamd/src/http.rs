@@ -208,14 +208,26 @@ fn plan(cache: &Cache, app: u32, url: &str, request: &http::HeaderMap, now: i64)
     }
 }
 
-/// A PUT, POST or DELETE went through: what is cached for its URL, its
-/// `Location` and its `Content-Location` goes (§3.1).
-fn invalidate(cache: &Cache, app: u32, uri: &Uri, headers: &http::HeaderMap) {
+/// Whether a request with this method may change what the server holds
+/// for its URL: as in the official client, POST, PUT, DELETE and PATCH
+/// (§3.1).
+fn invalidates(method: &Method) -> bool {
+    matches!(
+        *method,
+        Method::POST | Method::PUT | Method::DELETE | Method::PATCH
+    )
+}
+
+/// Such a request was sent, whatever came of it: what is cached for its
+/// URL goes, and for the `Location` and `Content-Location` of its
+/// response, when it had one (§3.1).
+fn invalidate(cache: &Cache, app: u32, uri: &Uri, headers: Option<&http::HeaderMap>) {
     let remove = |uri: &Uri| {
         cache.remove(app, &cache_key(&Method::GET, uri));
         cache.remove(app, &cache_key(&Method::HEAD, uri));
     };
     remove(uri);
+    let Some(headers) = headers else { return };
     for name in [header::LOCATION, header::CONTENT_LOCATION] {
         if let Some(other) = headers
             .get(&name)
@@ -407,7 +419,14 @@ pub fn run(
                 }
                 let response = match send(agent, &method, &uri, sent, &body, activity, deadline) {
                     Ok(r) => r,
-                    Err(done) => return done,
+                    Err(done) => {
+                        if let Some(c) = &job.cache
+                            && invalidates(&method)
+                        {
+                            invalidate(c, job.app, &uri, None);
+                        }
+                        return done;
+                    }
                 };
                 let response_time = cookies::now();
                 if let Some(jar) = &job.jar {
@@ -423,10 +442,9 @@ pub fn run(
                 let status = response.status().as_u16();
                 let (parts, stream) = response.into_parts();
                 if let Some(c) = &job.cache
-                    && matches!(method, Method::PUT | Method::POST | Method::DELETE)
-                    && (200..400).contains(&status)
+                    && invalidates(&method)
                 {
-                    invalidate(c, job.app, &uri, &parts.headers);
+                    invalidate(c, job.app, &uri, Some(&parts.headers));
                 }
                 let network = |headers| Reply {
                     status,

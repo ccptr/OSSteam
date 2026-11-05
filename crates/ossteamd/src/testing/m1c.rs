@@ -1181,6 +1181,9 @@ fn http_server() -> (u16, Arc<std::sync::Mutex<Vec<String>>>) {
                     let _ = stream.write_all(body);
                 };
                 match path.as_str() {
+                    _ if head.starts_with("PATCH ") => {
+                        respond(&mut stream, "405 Method Not Allowed", "", b"")
+                    }
                     "/redirect" => respond(
                         &mut stream,
                         "302 Found",
@@ -1422,6 +1425,18 @@ fn games_make_http_requests() {
     assert_eq!(done, ok(200));
     let (_, _, e) = fetch(&mut g, get("/cached"));
     assert_eq!((e.as_str(), hits("/cached")), ("n=2", 2));
+    // So does a PATCH, as in the official client, though it failed.
+    let (done, _, _) = fetch(
+        &mut g,
+        HttpSendRequest {
+            method: 7,
+            body: b"x".to_vec(),
+            ..get("/cached")
+        },
+    );
+    assert_eq!(done, ok(405));
+    let (_, _, e) = fetch(&mut g, get("/cached"));
+    assert_eq!((e.as_str(), hits("/cached")), ("n=3", 3));
     // no-cache with an ETag: validated each time; a 304 keeps the body.
     let (_, _, a) = fetch(&mut g, get("/etag"));
     let (done, status, b) = fetch(&mut g, get("/etag"));
@@ -1456,7 +1471,7 @@ fn games_make_http_requests() {
     let (b, _, _) = fetch(&mut g, head("/cached"));
     assert_eq!((a, b, body.as_str(), heads()), (ok(200), ok(200), "", 1));
     let (_, _, body) = fetch(&mut g, get("/cached"));
-    assert_eq!(body, "n=2");
+    assert_eq!(body, "n=3");
 
     // A stalled body runs out of time; other schemes are not made.
     let (done, _, body) = fetch(

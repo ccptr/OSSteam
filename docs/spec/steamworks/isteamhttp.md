@@ -275,9 +275,11 @@ same URL, so that it never answers a GET; whether the official client
 keeps them apart is *unverified*. A stored
 301 or 308 is followed like one from the network.
 
-**Invalidation.** A PUT, POST or DELETE whose answer is 2xx or 3xx
-removes what is stored for its URL, GET and HEAD, and for its
-`Location` and `Content-Location` on the same host.
+**Invalidation.** A POST, PUT, DELETE or PATCH removes what is stored
+for its URL, GET and HEAD, whatever its answer, as in the official
+client: once it has an answer of any status, and also when it fails
+with none. With an answer, what is stored for the answer's `Location`
+and `Content-Location` on the same host goes too (RFC 9111 §4.4).
 
 **On disk.** The cache lives in the daemon's cache directory (SPEC §17),
 in `http/<app>/`, one file per URL named by the SHA-1 of the URL, and it
@@ -300,10 +302,10 @@ removed.
 - ossteam drops `TE`, `Trailer`, `Set-Cookie` and the headers that
   `Connection` names, which the official list does not name, and not
   `Proxy-Authenticate` or `Proxy-Authorization`.
-- ossteam invalidates only after a 2xx or 3xx, not for PATCH, and also
-  for `Location` and `Content-Location` (RFC 9111 §4.4); the official
-  client invalidates the URL for PATCH too, whatever the status, and
-  whether it removes the other two is *unverified*.
+- ossteam also invalidates `Location` and `Content-Location`; whether
+  the official client does is *unverified*. When the official client
+  invalidates a request that failed with no answer is *unverified* too;
+  ossteam does it then.
 - The 256 MiB total is ossteam's.
 
 ## 4. Sending and completing

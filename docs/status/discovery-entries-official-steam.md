@@ -83,8 +83,10 @@ setting, and the GUI's switch with a confirmation. Checked in the bench
 
 **How to apply:** left to do: run the take-over against the real
 official client on the dev PC (§1.1.8). The maintainer allowed starting
-the official client for it (2026-11-03), but it rewrites their real
-`~/.steam`, so ask before the run. The take-over's record is
+the official client for it (2026-11-03). The run rewrites their real
+`~/.steam`, and the maintainer allowed the take-over whenever it's
+needed, as long as no games they launched are running (2026-11-04).
+The take-over's record is
 `<config>/official-entries.toml` (maintainer, 2026-11-03: in the
 configuration directory, not in `<data>/steam-sdk` where every game
 would see it in its private `~/.steam`; no mount hides `<config>`).

@@ -212,10 +212,11 @@ too. Others are ignored.
 
 **Age and freshness.** A stored response's age is computed as RFC 9111
 §4.2.3 says, from its `Date` and `Age` and the times it was asked for and
-received. Its freshness lifetime is its `s-maxage`, else its `max-age`,
-as in the official client, else `Expires` minus `Date`, else a tenth of
-`Date` minus `Last-Modified`, at most a day, else 0. That last,
-heuristic, rule is ossteam's, not the official one.
+received. Its freshness lifetime is the official client's: its
+`s-maxage`, else its `max-age`, else `Expires` minus `Date`, else, from
+the time from `Last-Modified` to `Date`, 600 s when it is over a day, 60
+s when over an hour, 5 s when over a minute, else 0. That the steps
+measure that time, and that "over" is strict, is *inferred*.
 
 **Lookup.** With a stored response for the URL whose `Vary` headers
 match the request (below):
@@ -251,22 +252,26 @@ headers were not stored, so it changes no cookie container.
 **Storing.** A GET or HEAD response that came from the network is
 stored when:
 
-- its status is not 1xx, 206 or 304;
+- its status is 200, 300, 301, 308 or 410;
 - neither the request nor the response says `no-store`, and the
   response does not say `private`;
 - the request has no `Authorization`, or the response says `public`;
 - it has no `Vary`, or `Vary: Accept-Encoding` alone;
 - it has explicit freshness (`s-maxage`, `max-age` or `Expires`), says
-  `public`, or has a status cacheable by default (200, 203, 204, 300,
-  301, 308, 404, 405, 410, 414, 501) and an `ETag` or `Last-Modified`;
+  `public`, or has an `ETag` or `Last-Modified`;
 - its body, read whole, is at most 4 MiB.
 
-The `private`, `Authorization`, `Vary` and size rules, and `s-maxage`,
-are the official client's (*read*).
+The statuses, the `private`, `Authorization`, `Vary` and size rules,
+and `s-maxage`, are the official client's (*read*). A 302 or 307 is not
+stored: the official client takes another path for them, not traced.
+That it needs freshness, `public` or a validator is RFC 9111's; how the
+official client weighs these was read only in part.
 
-It is stored without `Set-Cookie` and without the hop-by-hop headers
-(`Connection`, `Keep-Alive`, `Proxy-Connection`, `TE`, `Trailer`,
-`Transfer-Encoding`, `Upgrade` and those `Connection` names). With
+It is stored, and refreshed by a 304, without the headers the official
+client drops (`Connection`, `Keep-Alive`, `Proxy-Authenticate`,
+`Proxy-Authorization`, `Trailers`, `Transfer-Encoding`, `Upgrade` and
+`Proxy-Connection`), and without `Set-Cookie` and `Set-Cookie2`, since
+an answer from the cache does not replay them. With
 `Vary: Accept-Encoding`, the value the daemon sent for that header is
 stored with it; a later request whose value differs does not match. One
 response is kept per URL and method: the newest replaces the one
@@ -294,14 +299,9 @@ removed.
   read, through `only-if-cached`, what another game fetched. A game
   therefore never sees a response that the client itself or another
   game stored. This is deliberate.
-- ossteam stores the statuses RFC 9111 allows (203, 204, 404, 405, 414
-  and 501 too, and 302 and 307 with explicit freshness), where the
-  official client stores 200, 300, 301, 308 and 410.
-- ossteam's heuristic lifetime is a tenth of the time since
-  `Last-Modified`, at most a day, not the official steps.
-- ossteam drops `TE`, `Trailer`, `Set-Cookie` and the headers that
-  `Connection` names, which the official list does not name, and not
-  `Proxy-Authenticate` or `Proxy-Authorization`.
+- ossteam stores no `Set-Cookie`; whether the official client does is
+  *unverified*. It stores no 302 or 307, which the official client
+  handles on a path not traced.
 - ossteam also invalidates `Location` and `Content-Location`; whether
   the official client does is *unverified*. When the official client
   invalidates a request that failed with no answer is *unverified* too;

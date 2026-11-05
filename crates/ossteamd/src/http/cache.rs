@@ -18,22 +18,25 @@ use super::cookies::parse_date;
 pub const MAX_ENTRY: usize = 4 * 1024 * 1024;
 /// What the cache holds over all apps.
 const MAX_TOTAL: u64 = 256 * 1024 * 1024;
-/// The longest heuristic freshness lifetime, in seconds.
-const MAX_HEURISTIC: i64 = 86_400;
+/// The official client's heuristic freshness lifetime (§3.1): seconds
+/// since `Last-Modified` past which it gives each lifetime, in seconds.
+const HEURISTIC: [(i64, i64); 3] = [(86_400, 600), (3_600, 60), (60, 5)];
 /// What a stale answer carries in `Warning`, as in the official client.
 const STALE_WARNING: &str = "100 127.0.0.1 stale";
 const MAGIC: &[u8; 8] = b"OSHCACH1";
-/// The statuses that may be stored without explicit freshness.
-const BY_DEFAULT: [u16; 11] = [200, 203, 204, 300, 301, 308, 404, 405, 410, 414, 501];
-/// Headers never stored.
-const UNSTORED: [&str; 9] = [
+/// The statuses stored, as in the official client (§3.1).
+const STORED: [u16; 5] = [200, 300, 301, 308, 410];
+/// Headers never stored: the official client's list, and `Set-Cookie`,
+/// which a stored answer does not replay (§3.1).
+const UNSTORED: [&str; 10] = [
     "connection",
     "keep-alive",
-    "proxy-connection",
-    "te",
-    "trailer",
+    "proxy-authenticate",
+    "proxy-authorization",
+    "trailers",
     "transfer-encoding",
     "upgrade",
+    "proxy-connection",
     "set-cookie",
     "set-cookie2",
 ];
@@ -164,20 +167,9 @@ fn request_value(request: &HeaderMap, name: &str) -> Option<Vec<u8>> {
 
 /// The headers of `response` that are stored.
 fn stored_headers(response: &HeaderMap) -> HeaderMap {
-    let named: Vec<String> = response
-        .get_all(header::CONNECTION)
-        .iter()
-        .flat_map(|v| {
-            String::from_utf8_lossy(v.as_bytes())
-                .split(',')
-                .map(|n| n.trim().to_ascii_lowercase())
-                .collect::<Vec<_>>()
-        })
-        .collect();
     let mut out = HeaderMap::new();
     for (name, value) in response {
-        let n = name.as_str();
-        if !UNSTORED.contains(&n) && !named.iter().any(|x| x == n) {
+        if !UNSTORED.contains(&name.as_str()) {
             out.append(name.clone(), value.clone());
         }
     }
@@ -195,16 +187,15 @@ fn vary_allowed(response: &HeaderMap) -> bool {
 }
 
 /// Whether a GET or HEAD response from the network may be stored
-/// (§3.1, Storing), with the official client's refusals of `private`,
-/// of `Authorization` without `public`, and of other `Vary` headers. The
-/// body's size is checked as it is read.
+/// (§3.1, Storing), with the official client's statuses and its refusals
+/// of `private`, of `Authorization` without `public`, and of other `Vary`
+/// headers. The body's size is checked as it is read.
 pub fn storable(status: u16, request: &HeaderMap, response: &HeaderMap) -> bool {
     let asked = Directives::of_request(request);
     let d = Directives::of(response);
     let validator =
         response.contains_key(header::ETAG) || response.contains_key(header::LAST_MODIFIED);
-    status >= 200
-        && !matches!(status, 206 | 304)
+    STORED.contains(&status)
         && !asked.has("no-store")
         && !d.has("no-store")
         && !d.has("private")
@@ -214,7 +205,7 @@ pub fn storable(status: u16, request: &HeaderMap, response: &HeaderMap) -> bool 
             || d.seconds("max-age").is_some()
             || response.contains_key(header::EXPIRES)
             || d.has("public")
-            || (BY_DEFAULT.contains(&status) && validator))
+            || validator)
 }
 
 impl Entry {
@@ -272,7 +263,7 @@ impl Entry {
     }
 
     /// RFC 9111 §4.2.1: `s-maxage` first, as in the official client;
-    /// then the heuristic of §3.1.
+    /// then its heuristic (§3.1).
     pub fn lifetime(&self) -> i64 {
         let d = Directives::of(&self.headers);
         if let Some(max_age) = d.seconds("s-maxage").or_else(|| d.seconds("max-age")) {
@@ -285,12 +276,15 @@ impl Entry {
                 .and_then(parse_date)
                 .map_or(0, |e| (e - self.date()).max(0));
         }
-        if BY_DEFAULT.contains(&self.status)
-            && let Some(modified) = text(&self.headers, &header::LAST_MODIFIED).and_then(parse_date)
-        {
-            return ((self.date() - modified) / 10).clamp(0, MAX_HEURISTIC);
-        }
-        0
+        let Some(modified) = text(&self.headers, &header::LAST_MODIFIED).and_then(parse_date)
+        else {
+            return 0;
+        };
+        let since = self.date() - modified;
+        HEURISTIC
+            .iter()
+            .find(|(past, _)| since > *past)
+            .map_or(0, |(_, lifetime)| *lifetime)
     }
 
     pub fn decide(&self, request: &Directives, now: i64) -> Freshness {
@@ -682,23 +676,15 @@ mod tests {
         );
         assert_eq!(e.lifetime(), 100);
         assert_eq!(e.age(t + 10), 40);
-        // The heuristic: a tenth of the time since it changed, at most a day.
-        let e = entry(
-            &[
-                ("date", date),
-                ("last-modified", "Wed, 21 Oct 2015 06:28:00 GMT"),
-            ],
-            t,
-        );
-        assert_eq!(e.lifetime(), 360);
-        let e = entry(
-            &[
-                ("date", date),
-                ("last-modified", "Wed, 21 Oct 2005 07:28:00 GMT"),
-            ],
-            t,
-        );
-        assert_eq!(e.lifetime(), MAX_HEURISTIC);
+        // The official heuristic: steps by the time since it changed.
+        let modified = |when| entry(&[("date", date), ("last-modified", when)], t).lifetime();
+        assert_eq!(modified("Wed, 21 Oct 2005 07:28:00 GMT"), 600);
+        assert_eq!(modified("Tue, 20 Oct 2015 07:28:00 GMT"), 60);
+        assert_eq!(modified("Wed, 21 Oct 2015 06:27:59 GMT"), 60);
+        assert_eq!(modified("Wed, 21 Oct 2015 06:28:00 GMT"), 5);
+        assert_eq!(modified("Wed, 21 Oct 2015 07:26:59 GMT"), 5);
+        assert_eq!(modified("Wed, 21 Oct 2015 07:27:00 GMT"), 0);
+        assert_eq!(modified(date), 0);
         // s-maxage comes before max-age.
         let e = entry(&[("cache-control", "max-age=10, s-maxage=20")], t);
         assert_eq!(e.lifetime(), 20);
@@ -712,15 +698,19 @@ mod tests {
         let s = |status, list: &[(&str, &str)]| storable(status, &none, &headers(list));
         assert!(s(200, &[("cache-control", "max-age=60")]));
         assert!(s(200, &[("cache-control", "s-maxage=60")]));
-        assert!(s(500, &[("cache-control", "max-age=60")]));
         assert!(s(200, &[("etag", "\"a\"")]));
         assert!(s(
-            404,
+            410,
             &[("last-modified", "Wed, 21 Oct 2015 07:28:00 GMT")]
         ));
-        assert!(!s(500, &[("etag", "\"a\"")]));
         assert!(!s(200, &[]));
-        assert!(!s(302, &[("location", "/x")]));
+        // Only the official client's statuses, even with freshness.
+        for status in [300, 301, 308] {
+            assert!(s(status, &[("cache-control", "max-age=60")]));
+        }
+        for status in [203, 204, 302, 307, 404, 500] {
+            assert!(!s(status, &[("cache-control", "max-age=60")]), "{status}");
+        }
         assert!(!s(206, &[("cache-control", "max-age=60")]));
         assert!(!s(200, &[("cache-control", "max-age=60, no-store")]));
         // As in the official client: no private responses, and Vary only
@@ -764,13 +754,17 @@ mod tests {
             ("vary", "X-A, x-b"),
             ("set-cookie", "a=1"),
             ("connection", "x-hop"),
+            ("proxy-authenticate", "Basic"),
             ("x-hop", "1"),
             ("x-kept", "2"),
         ]);
         let request = headers(&[("x-a", "1")]);
         let e = Entry::new("u", 200, &response, &request, 0, 0);
         assert!(e.headers.get("set-cookie").is_none());
-        assert!(e.headers.get("x-hop").is_none());
+        assert!(e.headers.get("connection").is_none());
+        assert!(e.headers.get("proxy-authenticate").is_none());
+        // As in the official client, what Connection names is kept.
+        assert_eq!(e.headers.get("x-hop").unwrap(), "1");
         assert_eq!(e.headers.get("x-kept").unwrap(), "2");
         assert!(e.matches(&headers(&[("x-a", "1")])));
         assert!(!e.matches(&headers(&[("x-a", "2")])));

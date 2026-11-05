@@ -224,6 +224,9 @@ behaviour; none of its code is used:
   without `steam.pipe` open, in place; it was not asked to replace one
   whose process has the pipe open.
 - The links and `steam.pid` stay when the client exits.
+- When the client exits with status 42 (to apply an update), `steam.sh`
+  runs itself again with `exec`, in the same process, and starts the
+  client again: until `steam.sh` has exited, the client may come back.
 
 Seen from outside on 2026-11-05 (inotify on `~/.steam`, a `steam
 -silent` start with no update to fetch): `steam.sh` replaced `bin32`,
@@ -234,6 +237,12 @@ created and later removed a file `starting`, remade `steam.token`, and
 rewrote `registry.vdf` by renames from `registry.vdf.<n>.tmp`. On
 `steam -shutdown` it closed `steam.pipe` and rewrote `registry.vdf`
 for 3 s, and left the links and `steam.pid` as they were.
+
+Seen on 2026-11-05 (polling `/proc` every 50 ms): about 2.3 s after
+`steam -shutdown`, the client closed `steam.pipe` and exited, and the
+shell running `steam.sh` exited, within the same 50 ms; nothing else
+run from the installation was left. That shell (`bash steam.sh ...`)
+keeps the script open, on its descriptor 255.
 
 So an official client that starts while ossteam has the real entries
 takes them over without asking, and an official client that has exited
@@ -273,13 +282,23 @@ that launches work without a private `~/.steam`. It is Linux only.
 daemon takes the entries over when all of these hold:
 
 - the entries belong to an official client (§1.1.4);
-- the official client does not run (§1.1.3);
+- the official client has closed: it does not run (§1.1.3); the process
+  `steam.pid` names, if it is alive, does not run from the official
+  installation (a client that has closed `steam.pipe` is still exiting,
+  and still writes to `~/.steam`); and no process of the user runs the
+  installation's `steam.sh` (an argument names a `steam.sh`, and the
+  process has the installation's open or the argument leads to it),
+  which can start the client again (§1.1.3). The official installation
+  is the parent of the directories the official `sdk64` and `sdk32`
+  point to;
 - no process of the user has a `steamclient.so` mapped from the
   directory that the official `sdk64` or `sdk32` points to (a game the
   official client started can outlive it, and what that game starts
   next would otherwise find ossteam);
 - nothing in `~/.steam` has been created, renamed or removed by anyone
-  but ossteam in the last 30 s (the race, below).
+  but ossteam in the last 30 s (the race, below), not counting what
+  changed before the official client last closed while the daemon
+  waited for it (below).
 
 It then records the official entries in `<config>/official-entries.toml`
 (the targets of `sdk64` and `sdk32`, and the text of `steam.pid`, each
@@ -288,11 +307,18 @@ the new one under a temporary name and renaming it over the old one,
 `steam.pid` last. The conditions are checked again just before each
 rename, and the daemon stops at the first that no longer holds, and
 hands back what it had taken. While the setting is on and an account is
-active, the daemon looks at the conditions whenever `~/.steam` changes
-and every 10 s, since the official client exiting and its games ending
-change nothing in `~/.steam`. Changes are ossteam's own when they are
-on its temporary names (`.<name>.ossteam`) or rename one into place;
-the 30 s count from when the daemon began to watch.
+active, the daemon looks at the conditions whenever `~/.steam` changes,
+every 10 s, and when a process it waits for exits. A process that keeps
+it from taking over (the client, its `steam.sh`, a game the official
+client started) is one it waits for, through a pidfd, since the
+official client exiting and its games ending change nothing in
+`~/.steam`. So the take-over follows the official client's close at
+once. When the last process the daemon waited for has exited, what
+changed in `~/.steam` until then counts as the official client's own
+(its writes as it closes), and the 30 s count only changes made after.
+Changes are ossteam's own when they are on its temporary names
+(`.<name>.ossteam`) or rename one into place; otherwise the 30 s count
+from when the daemon began to watch.
 
 **Handing back.** Where §1.5 removes the real entries (a logout, the
 daemon's exit, ossteam's own stale entries at start), and when the
@@ -323,9 +349,13 @@ the user:
   links some time before the client writes `steam.pid` and opens
   `steam.pipe`. A take-over in that window replaces the links the
   official client has just made, and the games it then starts find
-  ossteam and play under ossteam's account. The 30 s wait and the
-  checks before each rename narrow that window; nothing closes it,
-  because nothing tells ossteam that `steam.sh` has begun.
+  ossteam and play under ossteam's account. The checks before each
+  rename see a running `steam.sh`, which leaves the time between the
+  last check and the rename. What runs before `steam.sh` (a
+  distribution's `steam` launcher, which can remake `~/.steam/steam`
+  first) is not seen, and the 30 s wait covers it where it changes
+  `~/.steam`. Nothing closes the window, because nothing tells ossteam
+  that a launch of the official client has begun.
 
 The setting does not change Windows or macOS (§1.2, §1.3), where an
 official client's entries are never taken over.
@@ -428,7 +458,7 @@ take-over setting risks, wherever they would look:
 | Counter-Strike 2 in the Steam Linux Runtime 3.0 (sniper) reaches the daemon | done 2026-11-03 (64-bit), once a stale lock was removed: its single-instance lock `/tmp/source_engine_<n>.lock`, left by another user, cannot be opened with `fs.protected_regular` set, and the game then hangs after its error dialog fails (the same under the official client). It loaded `sdk64/steamclient.so` from the private `~/.steam` and connected within a second, with `userdata/` and `config/` covered inside the container, and loaded its menus. Its Game Coordinator answered it from 2026-11-04 (`steamworks/isteamgamecoordinator.md` §4). It asks for `SteamNetworkingSocketsSerialized005` and `SteamAppDisableUpdate001`, served from 2026-11-04: it accepted ossteam's relay certificate (`steamworks/isteamnetworkingsocketsserialized.md` §6) |
 | Anti-cheat (VAC, and EAC or BattlEye where the test account owns a title) accepts a native game in the namespace | to be run |
 | The check at start reports Ubuntu's AppArmor restriction | to be run on Ubuntu 24.04 |
-| The official client starting while ossteam holds the entries (§1.1.5) | built 2026-11-04 and tested against `ln -fsn`-style renames in a scratch home (`m1c::official_entries_are_taken_over_and_handed_back`); done with the real official client 2026-11-05: with no game running, the daemon took the entries over 30 s after the setting was turned on, with the record holding the official targets and `steam.pid` text. `steam -silent` then remade the links; the daemon yielded at the first one, deleted the record, sent the warning notice, and did not take over while the client ran. The client signed in as usual. After `steam -shutdown` it took over again 30 s after the client's last write, recording the client's new pid; turning the setting off, and later stopping the daemon, handed back entries identical to what the client had left |
+| The official client starting while ossteam holds the entries (§1.1.5) | built 2026-11-04 and tested against `ln -fsn`-style renames in a scratch home (`m1c::official_entries_are_taken_over_and_handed_back`); done with the real official client 2026-11-05: with no game running, the daemon took the entries over 30 s after the setting was turned on, with the record holding the official targets and `steam.pid` text. `steam -silent` then remade the links; the daemon yielded at the first one, deleted the record, sent the warning notice, and did not take over while the client ran. The client signed in as usual. After `steam -shutdown` it took over again 30 s after the client's last write, recording the client's new pid (since 2026-11-05 at once, as the client and its `steam.sh` exit, tested in `m1c::official_entries_are_taken_over_as_the_client_closes`; with the real client the same day, after the setting was turned on while it ran, the take-over followed `steam.sh`'s exit by 71 ms, and in a second round, after the daemon had yielded to `steam -silent` again, by 81 ms, with no take-over while the client ran); turning the setting off, and later stopping the daemon, handed back entries identical to what the client had left |
 | The client replaces a `steam.pid` naming a live process | done 2026-11-05 for a process without `steam.pipe` open (ossteam's daemon): written in place (§1.1.3). One with the pipe open, unverified |
 
 ### 1.2 Windows

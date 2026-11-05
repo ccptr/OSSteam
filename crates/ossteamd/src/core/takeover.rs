@@ -37,7 +37,7 @@ impl TakeOver {
 mod linux {
     use ossteam_ipc::v1::{self, Topic, event};
     use ossteam_launch::discovery;
-    use ossteam_launch::discovery::takeover::{self, TakeOverError, Watcher};
+    use ossteam_launch::discovery::takeover::{TakeOverError, Watcher};
 
     use super::super::{Command, Core};
     use crate::config;
@@ -199,19 +199,25 @@ mod linux {
             let Some(watcher) = g.take_over.watcher.as_ref() else {
                 return;
             };
+            // Taken once: the links stop being the official client's as
+            // the take-over goes on.
+            let dirs = match g.entries.official_dirs() {
+                Ok(d) => d,
+                Err(e) => {
+                    tracing::warn!("taking over ~/.steam failed: {e}");
+                    return;
+                }
+            };
             let mut conditions = || -> Result<(), String> {
-                if g.entries.official_runs().map_err(|e| e.to_string())? {
-                    return Err("the official Steam client runs".into());
+                // The official client, its steam.sh or a game it started:
+                // the watcher wakes the daemon when it exits, so the
+                // take-over follows the client's close at once.
+                if let Some(p) = g.entries.official_process(&dirs) {
+                    watcher.watch_exit(p.pid);
+                    return Err(p.to_string());
                 }
-                let dirs = g.entries.official_dirs().map_err(|e| e.to_string())?;
-                if let Some(p) = takeover::steamclient_mapped(&dirs) {
-                    return Err(format!(
-                        "process {p} has the official client's steamclient.so loaded"
-                    ));
-                }
-                // The race with `steam.sh`; and the official client
-                // exiting, or its games ending, change no file in
-                // `~/.steam`, so the watcher's ticks look again.
+                // The race with `steam.sh`. Changes the official client
+                // made before it closed don't count (`watch_exit`).
                 let quiet = watcher.quiet_for();
                 if quiet < g.settings.take_over_quiet {
                     return Err(format!("~/.steam changed {} s ago", quiet.as_secs()));

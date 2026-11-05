@@ -1,6 +1,6 @@
 ---
 name: discovery-entries-official-steam
-description: An official Steam install owns ~/.steam/sdk64 on the dev machine, so launches failed with exit 8; a private ~/.steam per launch (DISC-4 to DISC-6) accepted 2026-11-03; DISC-4 built and run live 2026-11-03 (Portal: First Slice in the Steam Linux Runtime and on the host, Spacewar under Proton; Counter-Strike 2 in sniper, reaching its Game Coordinator 2026-11-04); DISC-5 and DISC-6 built 2026-11-04; the take-over run live against the official client 2026-11-05 (take over, yield, take over again, hand back)
+description: An official Steam install owns ~/.steam/sdk64 on the dev machine, so launches failed with exit 8; a private ~/.steam per launch (DISC-4 to DISC-6) accepted 2026-11-03; DISC-4 built and run live 2026-11-03 (Portal: First Slice in the Steam Linux Runtime and on the host, Spacewar under Proton; Counter-Strike 2 in sniper, reaching its Game Coordinator 2026-11-04); DISC-5 and DISC-6 built 2026-11-04; the take-over run live against the official client 2026-11-05 (take over, yield, take over again, hand back), and since then follows the client's close at once
 metadata:
   type: project
 ---
@@ -86,7 +86,13 @@ client on 2026-11-05 (§1.1.3 and §1.1.8): it took over, yielded when
 `steam -silent` started, took over again 30 s after `steam -shutdown`,
 and handed back on the setting turned off and on the daemon's exit,
 leaving the entries as the client had left them; the setting is back at
-its default. Left: a `steam.pid` whose process has the pipe open, and a
+its default. Later on 2026-11-05, at the maintainer's request, the
+take-over follows the official client's close at once (§1.1.5): the
+daemon waits on a pidfd for the client, its `steam.sh` and any game it
+started, also waits for `steam.sh` (which restarts the client after an
+update), and the client's writes before it closed no longer start the
+30 s count. Run live the same day: the take-over came 71 ms and 81 ms
+after `steam.sh` exited. Left: a `steam.pid` whose process has the pipe open, and a
 game the official client started outliving it. The maintainer allows
 the take-over whenever it's needed, as long as no games they launched
 are running (2026-11-04).

@@ -9,9 +9,10 @@ use std::ffi::CStr;
 use std::io;
 use std::mem::MaybeUninit;
 use std::os::fd::{AsFd, OwnedFd};
+use std::os::unix::ffi::OsStrExt;
 use std::os::unix::fs::{MetadataExt, symlink};
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, mpsc};
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
@@ -186,21 +187,57 @@ impl Entries {
         if self.ours()? {
             return Ok(false);
         }
-        let Some(pid) = std::fs::read_to_string(self.pid_file())
+        Ok(self.pid_in_file().is_some_and(|pid| self.pipe_open(pid)))
+    }
+
+    /// The pid `steam.pid` names, if it holds one.
+    fn pid_in_file(&self) -> Option<u32> {
+        std::fs::read_to_string(self.pid_file())
             .ok()
             .and_then(|p| p.trim().parse::<u32>().ok())
-        else {
-            return Ok(false);
-        };
+    }
+
+    /// Whether process `pid` has `~/.steam/steam.pipe` open.
+    fn pipe_open(&self, pid: u32) -> bool {
         // The links in /proc/<pid>/fd are canonical paths.
         let dir = std::fs::canonicalize(&self.steam).unwrap_or_else(|_| self.steam.clone());
         let pipe = dir.join("steam.pipe");
-        let Ok(fds) = std::fs::read_dir(format!("/proc/{pid}/fd")) else {
-            return Ok(false);
-        };
-        Ok(fds
-            .flatten()
-            .any(|fd| std::fs::read_link(fd.path()).is_ok_and(|t| t == pipe)))
+        open_on(pid, &[pipe])
+    }
+
+    /// A process that shows the official client has not fully closed
+    /// (§1.1.5), if there is one. `dirs` are [`Entries::official_dirs`],
+    /// taken before the take-over began, since the links stop being the
+    /// official client's as it goes on; each one's parent is an official
+    /// installation.
+    pub fn official_process(&self, dirs: &[PathBuf]) -> Option<Official> {
+        let mut installs: Vec<&Path> = Vec::new();
+        for d in dirs {
+            if let Some(i) = d.parent()
+                && !installs.contains(&i)
+            {
+                installs.push(i);
+            }
+        }
+        if let Some(pid) = self.pid_in_file()
+            && pid != std::process::id()
+        {
+            if self.pipe_open(pid) {
+                return Some(Official {
+                    pid,
+                    what: OfficialKind::Runs,
+                });
+            }
+            if std::fs::read_link(format!("/proc/{pid}/exe"))
+                .is_ok_and(|exe| installs.iter().any(|i| exe.starts_with(i)))
+            {
+                return Some(Official {
+                    pid,
+                    what: OfficialKind::Exiting,
+                });
+            }
+        }
+        scan_processes(dirs, &installs)
     }
 
     /// The directories the official `sdk64` and `sdk32` point to,
@@ -307,13 +344,67 @@ impl Entries {
     }
 }
 
-/// A process of this user, other than this one, that has a
-/// `steamclient.so` mapped from one of `dirs` (canonical paths), if any:
-/// a game the official client started, which may outlive it (§1.1.5).
-pub fn steamclient_mapped(dirs: &[PathBuf]) -> Option<u32> {
+/// A process of the official client that keeps the daemon from taking
+/// over (§1.1.5). The daemon waits for it to exit ([`Watcher::watch_exit`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Official {
+    pub pid: u32,
+    pub what: OfficialKind,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum OfficialKind {
+    /// `steam.pid`'s process, with `steam.pipe` open: the client runs
+    /// (§1.1.3).
+    Runs,
+    /// `steam.pid`'s process, run from the official installation, with
+    /// the pipe closed: the client is exiting, and still writes to
+    /// `~/.steam`.
+    Exiting,
+    /// A process running the installation's `steam.sh`, which starts the
+    /// client again when it exits to update.
+    Script,
+    /// A process with the official `steamclient.so` mapped: a game the
+    /// official client started, which may outlive it.
+    Game,
+}
+
+impl std::fmt::Display for Official {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let p = self.pid;
+        match self.what {
+            OfficialKind::Runs => write!(f, "the official Steam client runs (process {p})"),
+            OfficialKind::Exiting => {
+                write!(f, "the official Steam client (process {p}) is exiting")
+            }
+            OfficialKind::Script => write!(f, "process {p} runs the official client's steam.sh"),
+            OfficialKind::Game => {
+                write!(
+                    f,
+                    "process {p} has the official client's steamclient.so loaded"
+                )
+            }
+        }
+    }
+}
+
+/// Whether process `pid` has one of `files` (canonical paths) open.
+fn open_on(pid: u32, files: &[PathBuf]) -> bool {
+    let Ok(fds) = std::fs::read_dir(format!("/proc/{pid}/fd")) else {
+        return false;
+    };
+    fds.flatten()
+        .any(|fd| std::fs::read_link(fd.path()).is_ok_and(|t| files.contains(&t)))
+}
+
+/// A process of this user, other than this one, that runs `steam.sh` from
+/// one of `installs`, or has a `steamclient.so` mapped from one of `dirs`
+/// (all canonical paths), if any.
+fn scan_processes(dirs: &[PathBuf], installs: &[&Path]) -> Option<Official> {
     if dirs.is_empty() {
         return None;
     }
+    let scripts: Vec<PathBuf> = installs.iter().map(|i| i.join("steam.sh")).collect();
     let uid = rustix::process::getuid().as_raw();
     let own = std::process::id();
     let procs = std::fs::read_dir("/proc").ok()?;
@@ -323,6 +414,12 @@ pub fn steamclient_mapped(dirs: &[PathBuf]) -> Option<u32> {
         };
         if pid == own || !p.metadata().is_ok_and(|m| m.uid() == uid) {
             continue;
+        }
+        if runs_script(pid, &p.path(), &scripts) {
+            return Some(Official {
+                pid,
+                what: OfficialKind::Script,
+            });
         }
         let Ok(maps) = std::fs::read_to_string(p.path().join("maps")) else {
             continue;
@@ -336,10 +433,38 @@ pub fn steamclient_mapped(dirs: &[PathBuf]) -> Option<u32> {
                 && path.parent().is_some_and(|d| dirs.iter().any(|o| o == d))
         });
         if mapped {
-            return Some(pid);
+            return Some(Official {
+                pid,
+                what: OfficialKind::Game,
+            });
         }
     }
     None
+}
+
+/// Whether process `pid` (`/proc/<pid>` at `proc`) runs one of `scripts`:
+/// an argument names a `steam.sh`, and the process has one of them open
+/// (a shell keeps its script open) or the argument leads to one.
+fn runs_script(pid: u32, proc: &Path, scripts: &[PathBuf]) -> bool {
+    let Ok(cmdline) = std::fs::read(proc.join("cmdline")) else {
+        return false;
+    };
+    let named: Vec<&Path> = cmdline
+        .split(|&b| b == 0)
+        .map(|a| Path::new(std::ffi::OsStr::from_bytes(a)))
+        .filter(|a| a.file_name().is_some_and(|n| n == "steam.sh"))
+        .collect();
+    if named.is_empty() {
+        return false;
+    }
+    if open_on(pid, scripts) {
+        return true;
+    }
+    named.iter().any(|a| {
+        // A relative argument is relative to the process's directory.
+        let full = proc.join("cwd").join(a);
+        std::fs::canonicalize(full).is_ok_and(|c| scripts.contains(&c))
+    })
 }
 
 /// What the [`Watcher`] reports.
@@ -347,6 +472,8 @@ pub fn steamclient_mapped(dirs: &[PathBuf]) -> Option<u32> {
 pub enum Watched {
     /// Something in `~/.steam` was created, renamed, removed or written.
     Changed,
+    /// A process given to [`Watcher::watch_exit`] exited.
+    Exited,
     /// The interval passed with no change.
     Tick,
     /// `~/.steam` itself went away or moved; the watch has ended.
@@ -354,12 +481,18 @@ pub enum Watched {
 }
 
 /// Watches `~/.steam` on a thread of its own (inotify), keeping when
-/// someone other than ossteam last changed it (§1.1.5).
+/// someone other than ossteam last changed it, and waits for processes of
+/// the official client to exit (§1.1.5).
 pub struct Watcher {
     /// Dropped to stop the thread: its other end then reads as closed.
     stop: Option<OwnedFd>,
+    /// Written to when `exits` has a new pid.
+    wake: OwnedFd,
+    exits: mpsc::Sender<u32>,
     thread: Option<JoinHandle<()>>,
-    last_foreign: Arc<Mutex<Instant>>,
+    /// When someone other than ossteam last changed `~/.steam`; `None`
+    /// once the official client has closed with no change since.
+    last_foreign: Arc<Mutex<Option<Instant>>>,
 }
 
 impl Watcher {
@@ -385,25 +518,51 @@ impl Watcher {
                 | WatchFlags::MOVE_SELF,
         )?;
         let (stop_r, stop_w) = rustix::pipe::pipe_with(rustix::pipe::PipeFlags::CLOEXEC)?;
-        let last_foreign = Arc::new(Mutex::new(Instant::now()));
+        let (wake_r, wake_w) = rustix::pipe::pipe_with(
+            rustix::pipe::PipeFlags::CLOEXEC | rustix::pipe::PipeFlags::NONBLOCK,
+        )?;
+        let (exits, exits_r) = mpsc::channel();
+        let last_foreign = Arc::new(Mutex::new(Some(Instant::now())));
         let last = last_foreign.clone();
         let thread = std::thread::Builder::new()
             .name("steam-dir-watch".into())
-            .spawn(move || watch(&fd, &stop_r, tick, &last, on))?;
+            .spawn(move || {
+                let w = Watch {
+                    fd,
+                    stop: stop_r,
+                    wake: wake_r,
+                    exits: exits_r,
+                    last_foreign: last,
+                };
+                w.run(tick, on);
+            })?;
         Ok(Self {
             stop: Some(stop_w),
+            wake: wake_w,
+            exits,
             thread: Some(thread),
             last_foreign,
         })
     }
 
     /// How long since someone other than ossteam last changed `~/.steam`,
-    /// or since the watch started.
+    /// or since the watch started; [`Duration::MAX`] when the official
+    /// client has closed since, with no change after it.
     pub fn quiet_for(&self) -> Duration {
         self.last_foreign
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .elapsed()
+            .map_or(Duration::MAX, |t| t.elapsed())
+    }
+
+    /// Reports [`Watched::Exited`] when process `pid` exits, at once if
+    /// it has already. When the last process it waits for has exited,
+    /// the changes to `~/.steam` until then count as the official
+    /// client's: [`Watcher::quiet_for`] counts from then on.
+    pub fn watch_exit(&self, pid: u32) {
+        if self.exits.send(pid).is_ok() {
+            let _ = rustix::io::write(&self.wake, &[0]);
+        }
     }
 
     /// Whether the watch has ended ([`Watched::Gone`]).
@@ -421,47 +580,100 @@ impl Drop for Watcher {
     }
 }
 
-fn watch(
-    fd: &OwnedFd,
-    stop: &OwnedFd,
-    tick: Duration,
-    last_foreign: &Mutex<Instant>,
-    mut on: impl FnMut(Watched) -> bool,
-) {
-    let timeout = Timespec::try_from(tick).unwrap_or(Timespec {
-        tv_sec: 10,
-        tv_nsec: 0,
-    });
-    // MOVED_FROM cookies of ossteam's own temporary names.
-    let mut own_moves: HashSet<u32> = HashSet::new();
-    let mut buf = [MaybeUninit::<u8>::uninit(); 4096];
-    loop {
-        let mut fds = [
-            PollFd::new(fd, PollFlags::IN),
-            PollFd::new(stop, PollFlags::IN),
-        ];
-        match poll(&mut fds, Some(&timeout)) {
-            Ok(_) => {}
-            Err(rustix::io::Errno::INTR) => continue,
-            Err(e) => {
-                tracing::warn!("watching ~/.steam failed: {e}");
+/// The watcher's thread.
+struct Watch {
+    /// The inotify instance.
+    fd: OwnedFd,
+    stop: OwnedFd,
+    wake: OwnedFd,
+    exits: mpsc::Receiver<u32>,
+    last_foreign: Arc<Mutex<Option<Instant>>>,
+}
+
+impl Watch {
+    fn run(&self, tick: Duration, mut on: impl FnMut(Watched) -> bool) {
+        let timeout = Timespec::try_from(tick).unwrap_or(Timespec {
+            tv_sec: 10,
+            tv_nsec: 0,
+        });
+        // MOVED_FROM cookies of ossteam's own temporary names.
+        let mut own_moves: HashSet<u32> = HashSet::new();
+        // The processes waited for, by pid, with their pidfds.
+        let mut waiting: Vec<(u32, OwnedFd)> = Vec::new();
+        let mut buf = [MaybeUninit::<u8>::uninit(); 4096];
+        loop {
+            let mut fds = vec![
+                PollFd::new(&self.fd, PollFlags::IN),
+                PollFd::new(&self.stop, PollFlags::IN),
+                PollFd::new(&self.wake, PollFlags::IN),
+            ];
+            fds.extend(waiting.iter().map(|(_, p)| PollFd::new(p, PollFlags::IN)));
+            match poll(&mut fds, Some(&timeout)) {
+                Ok(_) => {}
+                Err(rustix::io::Errno::INTR) => continue,
+                Err(e) => {
+                    tracing::warn!("watching ~/.steam failed: {e}");
+                    on(Watched::Gone);
+                    return;
+                }
+            }
+            if !fds[1].revents().is_empty() {
+                return;
+            }
+            let ready: Vec<bool> = fds.iter().map(|f| !f.revents().is_empty()).collect();
+            drop(fds);
+            if !ready.contains(&true) {
+                if !on(Watched::Tick) {
+                    return;
+                }
+                continue;
+            }
+
+            // The changes first: what an exiting client wrote is queued
+            // before its exit is seen.
+            let (mut changed, mut gone) = (false, false);
+            if ready[0] {
+                (changed, gone) = self.read_changes(&mut buf, &mut own_moves);
+            }
+            let mut exited = false;
+            if ready[2] {
+                exited |= self.add_waits(&mut waiting);
+            }
+            let before = waiting.len();
+            let mut i = 0;
+            waiting.retain(|_| {
+                i += 1;
+                !ready.get(2 + i).copied().unwrap_or(false)
+            });
+            exited |= waiting.len() < before;
+            if exited && waiting.is_empty() {
+                *self
+                    .last_foreign
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner) = None;
+            }
+            if gone {
                 on(Watched::Gone);
                 return;
             }
-        }
-        if !fds[1].revents().is_empty() {
-            return;
-        }
-        if fds[0].revents().is_empty() {
-            if !on(Watched::Tick) {
+            if changed && !on(Watched::Changed) {
                 return;
             }
-            continue;
+            if exited && !on(Watched::Exited) {
+                return;
+            }
         }
-        let mut changed = false;
-        let mut foreign = false;
-        let mut gone = false;
-        let mut reader = inotify::Reader::new(fd.as_fd(), &mut buf);
+    }
+
+    /// Reads the queued changes, keeping when someone else last made one.
+    /// Returns whether there were any, and whether the watch has ended.
+    fn read_changes(
+        &self,
+        buf: &mut [MaybeUninit<u8>],
+        own_moves: &mut HashSet<u32>,
+    ) -> (bool, bool) {
+        let (mut changed, mut foreign, mut gone) = (false, false, false);
+        let mut reader = inotify::Reader::new(self.fd.as_fd(), buf);
         loop {
             let e = match reader.next() {
                 Ok(e) => e,
@@ -479,7 +691,7 @@ fn watch(
                 continue;
             }
             changed = true;
-            if !is_own(&e.file_name(), flags, e.cookie(), &mut own_moves) {
+            if !is_own(&e.file_name(), flags, e.cookie(), own_moves) {
                 foreign = true;
             }
             if reader.is_buffer_empty() {
@@ -487,17 +699,37 @@ fn watch(
             }
         }
         if foreign {
-            *last_foreign
+            *self
+                .last_foreign
                 .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner) = Instant::now();
+                .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(Instant::now());
         }
-        if gone {
-            on(Watched::Gone);
-            return;
+        (changed, gone)
+    }
+
+    /// Takes the pids [`Watcher::watch_exit`] sent. Returns whether one of
+    /// them had already exited.
+    fn add_waits(&self, waiting: &mut Vec<(u32, OwnedFd)>) -> bool {
+        let mut drain = [0u8; 64];
+        while matches!(rustix::io::read(&self.wake, &mut drain), Ok(n) if n > 0) {}
+        let mut exited = false;
+        for pid in self.exits.try_iter() {
+            if waiting.iter().any(|(p, _)| *p == pid) {
+                continue;
+            }
+            let Some(raw) = i32::try_from(pid)
+                .ok()
+                .and_then(rustix::process::Pid::from_raw)
+            else {
+                continue;
+            };
+            match rustix::process::pidfd_open(raw, rustix::process::PidfdFlags::empty()) {
+                Ok(fd) => waiting.push((pid, fd)),
+                Err(rustix::io::Errno::SRCH) => exited = true,
+                Err(e) => tracing::warn!("cannot wait for process {pid} to exit: {e}"),
+            }
         }
-        if changed && !on(Watched::Changed) {
-            return;
-        }
+        exited
     }
 }
 
@@ -716,6 +948,125 @@ mod tests {
         assert!(e.official_runs().unwrap());
         drop(pipe);
         assert!(!e.official_runs().unwrap());
+    }
+
+    /// Kills and reaps a child when dropped.
+    struct Child(std::process::Child);
+
+    impl Drop for Child {
+        fn drop(&mut self) {
+            let _ = self.0.kill();
+            let _ = self.0.wait();
+        }
+    }
+
+    fn sleeper(program: &Path, stdin: std::process::Stdio) -> Child {
+        Child(
+            std::process::Command::new(program)
+                .arg("30")
+                .stdin(stdin)
+                .spawn()
+                .unwrap(),
+        )
+    }
+
+    fn sleep_program() -> PathBuf {
+        ["/usr/bin/sleep", "/bin/sleep"]
+            .iter()
+            .map(PathBuf::from)
+            .find(|p| p.exists())
+            .unwrap()
+    }
+
+    #[test]
+    fn the_official_client_has_closed_once_its_processes_have_exited() {
+        let d = dirs("closed", true);
+        let e = Entries::new(&d.home, &d.data);
+        let steam = e.steam_dir().to_owned();
+        let dirs = e.official_dirs().unwrap();
+        assert_eq!(e.official_process(&dirs), None, "pid 99 is not the client");
+
+        // The client runs: steam.pid's process has the pipe open.
+        std::fs::write(steam.join("steam.pipe"), b"").unwrap();
+        let pipe = std::fs::File::open(steam.join("steam.pipe")).unwrap();
+        let client = sleeper(&sleep_program(), pipe.into());
+        let pid = client.0.id();
+        std::fs::write(steam.join("steam.pid"), pid.to_string()).unwrap();
+        let found = |what| Some(Official { pid, what });
+        assert_eq!(e.official_process(&dirs), found(OfficialKind::Runs));
+        drop(client);
+
+        // The client has closed the pipe but runs on from the installation.
+        let exe = d.valve.join("ubuntu12_32/steam");
+        std::fs::create_dir_all(exe.parent().unwrap()).unwrap();
+        std::fs::copy(sleep_program(), &exe).unwrap();
+        let client = sleeper(&exe, std::process::Stdio::null());
+        let pid = client.0.id();
+        std::fs::write(steam.join("steam.pid"), pid.to_string()).unwrap();
+        let found = |what| Some(Official { pid, what });
+        assert_eq!(e.official_process(&dirs), found(OfficialKind::Exiting));
+        drop(client);
+        assert_eq!(e.official_process(&dirs), None);
+
+        // steam.sh runs on, to start the client again after an update.
+        let script = d.valve.join("steam.sh");
+        std::fs::write(&script, "sleep 30\n").unwrap();
+        let sh = Child(
+            std::process::Command::new("sh")
+                .arg(&script)
+                .current_dir(&d.root)
+                .spawn()
+                .unwrap(),
+        );
+        let pid = sh.0.id();
+        let found = |what| Some(Official { pid, what });
+        assert_eq!(e.official_process(&dirs), found(OfficialKind::Script));
+        drop(sh);
+        assert_eq!(e.official_process(&dirs), None);
+    }
+
+    #[test]
+    fn the_watcher_wakes_when_the_official_client_exits() {
+        let d = dirs("exit", true);
+        let e = Entries::new(&d.home, &d.data);
+        let (tx, rx) = mpsc::channel();
+        let w = Watcher::start(e.steam_dir(), Duration::from_secs(60), move |x| {
+            tx.send(x).is_ok()
+        })
+        .unwrap();
+        let wait = || rx.recv_timeout(Duration::from_secs(5)).unwrap();
+        assert!(w.quiet_for() < Duration::from_secs(5), "the start counts");
+
+        let client = sleeper(&sleep_program(), std::process::Stdio::null());
+        let script = sleeper(&sleep_program(), std::process::Stdio::null());
+        w.watch_exit(client.0.id());
+        w.watch_exit(script.0.id());
+        // The client writes as it closes, then exits.
+        std::fs::write(e.steam_dir().join("registry.vdf"), b"x").unwrap();
+        assert_eq!(wait(), Watched::Changed);
+        drop(client);
+        assert_eq!(wait(), Watched::Exited);
+        assert!(w.quiet_for() < Duration::from_secs(5), "steam.sh runs on");
+        drop(script);
+        assert_eq!(wait(), Watched::Exited);
+        assert_eq!(
+            w.quiet_for(),
+            Duration::MAX,
+            "the client's changes are forgiven"
+        );
+
+        // A change after it closed counts again.
+        std::fs::write(e.steam_dir().join("registry.vdf"), b"y").unwrap();
+        assert_eq!(wait(), Watched::Changed);
+        assert!(w.quiet_for() < Duration::from_secs(5));
+
+        // A process already gone is reported at once.
+        let gone = sleeper(&sleep_program(), std::process::Stdio::null());
+        let pid = gone.0.id();
+        drop(gone);
+        w.watch_exit(pid);
+        assert_eq!(wait(), Watched::Exited);
+        assert_eq!(w.quiet_for(), Duration::MAX);
     }
 
     #[test]

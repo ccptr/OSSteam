@@ -441,6 +441,69 @@ fn official_entries_are_taken_over_and_handed_back() {
     official_as_left();
 }
 
+/// The take-over follows the official client's close at once: not after
+/// the 30 s of quiet that its own writes to `~/.steam` would otherwise
+/// start, nor on the next look every 10 s (DISC-5, `steamworks-abi.md`
+/// §1.1.5).
+#[cfg(target_os = "linux")]
+#[test]
+fn official_entries_are_taken_over_as_the_client_closes() {
+    let cdn = Arc::new(FakeCdn::new());
+    let (os, _) = oses();
+    let cm = steam(&cdn, &[("bin/game.sh", os)]);
+    let root = Root::new();
+    root.install_client_libraries();
+    root.refuse_private_steam();
+    root.slow_take_over();
+    let steam = steam_dir(&root);
+    let valve = root.path().join("home/.local/share/Steam/linux64");
+    std::fs::create_dir_all(&valve).unwrap();
+    std::fs::create_dir_all(&steam).unwrap();
+    std::os::unix::fs::symlink(&valve, steam.join("sdk64")).unwrap();
+    // The official client runs: steam.pid names a process with
+    // steam.pipe open.
+    std::fs::write(steam.join("steam.pipe"), b"").unwrap();
+    let pipe = std::fs::File::open(steam.join("steam.pipe")).unwrap();
+    let mut client = std::process::Command::new("sleep")
+        .arg("60")
+        .stdin(pipe)
+        .spawn()
+        .expect("start a stand-in client");
+    std::fs::write(steam.join("steam.pid"), client.id().to_string()).unwrap();
+
+    let d = TestDaemon::start_with_cdn(&root, &cm, POLL, cdn.clone());
+    login(&d);
+    let c = d.subscribed(&[Topic::Notices]);
+    let isolation = |c: &Client| c.get_status().unwrap().game_isolation.unwrap();
+    wait_until("the private entries", || {
+        exists(&root.path().join("data/steam-sdk/steam.pid"))
+    });
+    c.set_setting("discovery.take_over_official", Some("true"))
+        .expect("set");
+    std::thread::sleep(Duration::from_millis(300));
+    assert!(!isolation(&c).holds_official_entries, "the client runs");
+
+    // It writes as it closes, then exits.
+    std::fs::write(steam.join("registry.vdf"), b"closing").unwrap();
+    std::thread::sleep(Duration::from_millis(100));
+    let closed = Instant::now();
+    client.kill().unwrap();
+    client.wait().unwrap();
+    wait_until("the take-over", || isolation(&c).holds_official_entries);
+    assert!(
+        closed.elapsed() < Duration::from_secs(5),
+        "{:?}",
+        closed.elapsed()
+    );
+    assert_eq!(
+        std::fs::read_link(steam.join("sdk64")).unwrap(),
+        root.path().join("data/steam-sdk/sdk64")
+    );
+    c.set_setting("discovery.take_over_official", Some("false"))
+        .expect("set");
+    assert_eq!(std::fs::read_link(steam.join("sdk64")).unwrap(), valve);
+}
+
 /// A launched game finds ossteam in its private `~/.steam` while an
 /// official client owns the real one, and sees ossteam's `userdata/` and
 /// an empty `config/` in the official installation (DISC-4,

@@ -44,6 +44,10 @@ pub struct Root(PathBuf);
 /// The marker of [`Root::refuse_private_steam`].
 const NO_PRIVATE_STEAM: &str = "no-private-steam";
 
+/// The marker of [`Root::slow_take_over`].
+#[cfg(target_os = "linux")]
+const SLOW_TAKE_OVER: &str = "slow-take-over";
+
 impl Root {
     pub fn new() -> Self {
         static NEXT: AtomicU32 = AtomicU32::new(0);
@@ -74,6 +78,14 @@ impl Root {
     /// private `~/.steam` (`steamworks-abi.md` §1.1.2).
     pub fn refuse_private_steam(&self) {
         std::fs::write(self.0.join(NO_PRIVATE_STEAM), b"").expect("write the marker");
+    }
+
+    /// Makes the next test daemon on this root wait a minute of quiet in
+    /// `~/.steam` before a take-over, and look again only every minute
+    /// (`steamworks-abi.md` §1.1.5), as a test's wait would not.
+    #[cfg(target_os = "linux")]
+    pub fn slow_take_over(&self) {
+        std::fs::write(self.0.join(SLOW_TAKE_OVER), b"").expect("write the marker");
     }
 
     /// Puts stand-ins for the client libraries where the daemon looks
@@ -247,6 +259,16 @@ impl TestDaemon {
             private_steam: !r.join(NO_PRIVATE_STEAM).exists(),
             take_over_quiet: Duration::from_millis(300),
             take_over_tick: Duration::from_millis(100),
+        };
+        #[cfg(target_os = "linux")]
+        let launch = if r.join(SLOW_TAKE_OVER).exists() {
+            crate::launch::Settings {
+                take_over_quiet: Duration::from_secs(60),
+                take_over_tick: Duration::from_secs(60),
+                ..launch
+            }
+        } else {
+            launch
         };
         let env = Env {
             paths,

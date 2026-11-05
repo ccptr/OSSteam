@@ -1,6 +1,6 @@
 ---
 name: discovery-entries-official-steam
-description: An official Steam install owns ~/.steam/sdk64 on the dev machine, so launches failed with exit 8; a private ~/.steam per launch (DISC-4 to DISC-6) accepted 2026-11-03; DISC-4 built and run live 2026-11-03 (Portal: First Slice in the Steam Linux Runtime and on the host, Spacewar under Proton; Counter-Strike 2 in sniper, reaching its Game Coordinator 2026-11-04); DISC-5 and DISC-6 built 2026-11-04; the take-over's live run with the official client left
+description: An official Steam install owns ~/.steam/sdk64 on the dev machine, so launches failed with exit 8; a private ~/.steam per launch (DISC-4 to DISC-6) accepted 2026-11-03; DISC-4 built and run live 2026-11-03 (Portal: First Slice in the Steam Linux Runtime and on the host, Spacewar under Proton; Counter-Strike 2 in sniper, reaching its Game Coordinator 2026-11-04); DISC-5 and DISC-6 built 2026-11-04; the take-over run live against the official client 2026-11-05 (take over, yield, take over again, hand back)
 metadata:
   type: project
 ---
@@ -81,11 +81,19 @@ DISC-6 parts for it too: the start and setting-on warnings, the second
 setting, and the GUI's switch with a confirmation. Checked in the bench
 (CLI and GUI) and in `m1c::official_entries_are_taken_over_and_handed_back`.
 
-**How to apply:** left to do: run the take-over against the real
-official client on the dev PC (§1.1.8). The maintainer allowed starting
-the official client for it (2026-11-03). The run rewrites their real
-`~/.steam`, and the maintainer allowed the take-over whenever it's
-needed, as long as no games they launched are running (2026-11-04).
+**How to apply:** the take-over ran live against the real official
+client on 2026-11-05 (§1.1.3 and §1.1.8): it took over, yielded when
+`steam -silent` started, took over again 30 s after `steam -shutdown`,
+and handed back on the setting turned off and on the daemon's exit,
+leaving the entries as the client had left them; the setting is back at
+its default. Left: a `steam.pid` whose process has the pipe open, and a
+game the official client started outliving it. The maintainer allows
+the take-over whenever it's needed, as long as no games they launched
+are running (2026-11-04).
+`ossteam status` prints a second `games` line, "ossteam holds the
+official Steam client's ~/.steam entries", while the daemon holds them;
+§1.1.6 asks for that line only without a private `~/.steam`, so the
+spec and the CLI disagree (for the maintainer).
 The take-over's record is
 `<config>/official-entries.toml` (maintainer, 2026-11-03: in the
 configuration directory, not in `<data>/steam-sdk` where every game

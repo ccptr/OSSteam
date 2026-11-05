@@ -219,9 +219,21 @@ behaviour; none of its code is used:
   `steam`, `root`, `bin32` and `bin64` with `ln -fsn`, replacing
   whatever was there, ossteam's links included.
 - It does not write `steam.pid`; the client does, after the script has
-  made the links. *Unverified:* that the client replaces a `steam.pid`
-  that names a live process other than itself.
+  made the links. Seen 2026-11-05 (§1.1.8): the client wrote its pid
+  into a `steam.pid` that named ossteam's daemon, a live process
+  without `steam.pipe` open, in place; it was not asked to replace one
+  whose process has the pipe open.
 - The links and `steam.pid` stay when the client exits.
+
+Seen from outside on 2026-11-05 (inotify on `~/.steam`, a `steam
+-silent` start with no update to fetch): `steam.sh` replaced `bin32`,
+`bin64`, `sdk32`, `sdk64`, `root` and `steam` in about 5 ms, each by
+making it under a random name and renaming it into place, then removed
+and remade `bin`. 2.9 s after the links the client wrote `steam.pid`,
+created and later removed a file `starting`, remade `steam.token`, and
+rewrote `registry.vdf` by renames from `registry.vdf.<n>.tmp`. On
+`steam -shutdown` it closed `steam.pipe` and rewrote `registry.vdf`
+for 3 s, and left the links and `steam.pid` as they were.
 
 So an official client that starts while ossteam has the real entries
 takes them over without asking, and an official client that has exited
@@ -416,8 +428,8 @@ take-over setting risks, wherever they would look:
 | Counter-Strike 2 in the Steam Linux Runtime 3.0 (sniper) reaches the daemon | done 2026-11-03 (64-bit), once a stale lock was removed: its single-instance lock `/tmp/source_engine_<n>.lock`, left by another user, cannot be opened with `fs.protected_regular` set, and the game then hangs after its error dialog fails (the same under the official client). It loaded `sdk64/steamclient.so` from the private `~/.steam` and connected within a second, with `userdata/` and `config/` covered inside the container, and loaded its menus. Its Game Coordinator answered it from 2026-11-04 (`steamworks/isteamgamecoordinator.md` §4). It asks for `SteamNetworkingSocketsSerialized005` and `SteamAppDisableUpdate001`, served from 2026-11-04: it accepted ossteam's relay certificate (`steamworks/isteamnetworkingsocketsserialized.md` §6) |
 | Anti-cheat (VAC, and EAC or BattlEye where the test account owns a title) accepts a native game in the namespace | to be run |
 | The check at start reports Ubuntu's AppArmor restriction | to be run on Ubuntu 24.04 |
-| The official client starting while ossteam holds the entries (§1.1.5) | built 2026-11-04 and tested against `ln -fsn`-style renames in a scratch home (`m1c::official_entries_are_taken_over_and_handed_back`); with the real official client, to be run |
-| The client replaces a `steam.pid` naming a live process | unverified |
+| The official client starting while ossteam holds the entries (§1.1.5) | built 2026-11-04 and tested against `ln -fsn`-style renames in a scratch home (`m1c::official_entries_are_taken_over_and_handed_back`); done with the real official client 2026-11-05: with no game running, the daemon took the entries over 30 s after the setting was turned on, with the record holding the official targets and `steam.pid` text. `steam -silent` then remade the links; the daemon yielded at the first one, deleted the record, sent the warning notice, and did not take over while the client ran. The client signed in as usual. After `steam -shutdown` it took over again 30 s after the client's last write, recording the client's new pid; turning the setting off, and later stopping the daemon, handed back entries identical to what the client had left |
+| The client replaces a `steam.pid` naming a live process | done 2026-11-05 for a process without `steam.pipe` open (ossteam's daemon): written in place (§1.1.3). One with the pipe open, unverified |
 
 ### 1.2 Windows
 

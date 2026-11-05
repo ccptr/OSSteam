@@ -134,8 +134,8 @@ cache (§3.1).
 
 ### 3.1 The cache
 
-The daemon keeps an HTTP cache, and every GET request goes through it,
-on every hop. Counter-Strike 2 relies on a cache: its networking library
+The daemon keeps an HTTP cache, and every GET and HEAD request goes
+through it, on every hop. Counter-Strike 2 relies on a cache: its networking library
 first asks for its relay config with
 `Cache-Control: only-if-cached, max-stale=2678400`, and when the cache
 answers 504 it asks again without it (§9).
@@ -170,6 +170,12 @@ says it, *inferred*, or *unverified*.
 - POST, PUT, DELETE and PATCH mark what is stored for the URL to be
   removed, whatever the status (*read* from its method switch; the log
   message names only PUT, POST and DELETE).
+- Its freshness lifetime is `s-maxage`, else `max-age`, else `Expires`
+  minus `Date`, else a step from `Last-Modified`: 600 s, 60 s, 5 s or
+  none, past one day, one hour and one minute (*read*; that the steps
+  measure the time since `Last-Modified` is *inferred*, the subtraction
+  was not fully traced). It logs "Computed freshness lifetime for %s is
+  %lld".
 - At lookup: the request's `max-age`, `min-fresh`, `max-stale` (with or
   without a value) and `only-if-cached`, and the stored response's
   `no-cache` and `must-revalidate`, steer the decision; validation sends
@@ -181,13 +187,18 @@ says it, *inferred*, or *unverified*.
   validation even while fresh is *inferred* from where the message sits.
 - It keeps its files on disk in `appcache/httpcache/`, and a
   least-recently-used list (*read*).
-- *Unverified:* whether it has a heuristic freshness rule; whether it
-  stores `Set-Cookie`; how it handles several variants of one URL (its
+- The headers it drops, when storing or refreshing (*read*; which of
+  the two was not traced): `Connection`, `Keep-Alive`,
+  `Proxy-Authenticate`, `Proxy-Authorization`, `Trailers`,
+  `Transfer-Encoding`, `Upgrade` and `Proxy-Connection`.
+- *Unverified:* whether it stores `Set-Cookie`; whether a stored GET
+  answers a HEAD; how it handles several variants of one URL (its
   file names hold a second hash whose input is not known); whether it
   honours `Pragma: no-cache`.
 
-**What ossteam does.** The rules are RFC 9111's, with the official
-choices above where they were read or logged. A request skips the
+**What ossteam does.** The rules are RFC 9111's for a cache shared by
+the client's requests, with the official choices above where they were
+read or logged. A request skips the
 cache, and its response is not stored, when the game set `Range`,
 `If-Match`, `If-None-Match`, `If-Modified-Since`, `If-Unmodified-Since`
 or `If-Range` itself.
@@ -195,15 +206,16 @@ or `If-Range` itself.
 **Directives.** The request's `Cache-Control` (`Pragma: no-cache` when
 it has none) may say `no-cache`, `no-store`, `max-age`, `min-fresh`,
 `max-stale` (with or without a value) and `only-if-cached`. The
-response's may say `max-age`, `no-cache`, `must-revalidate`, `no-store`,
-`public` and `private`; `Expires` counts too. Others, `s-maxage`
-included, are ignored.
+response's may say `s-maxage`, `max-age`, `no-cache`,
+`must-revalidate`, `no-store`, `public` and `private`; `Expires` counts
+too. Others are ignored.
 
 **Age and freshness.** A stored response's age is computed as RFC 9111
 §4.2.3 says, from its `Date` and `Age` and the times it was asked for and
-received. Its freshness lifetime is its `max-age`, else `Expires` minus
-`Date`, else a tenth of `Date` minus `Last-Modified`, at most a day,
-else 0. That last, heuristic, rule is ossteam's.
+received. Its freshness lifetime is its `s-maxage`, else its `max-age`,
+as in the official client, else `Expires` minus `Date`, else a tenth of
+`Date` minus `Last-Modified`, at most a day, else 0. That last,
+heuristic, rule is ossteam's, not the official one.
 
 **Lookup.** With a stored response for the URL whose `Vary` headers
 match the request (below):
@@ -236,27 +248,36 @@ status, its stored headers with `Age` set to its age, `HttpHeaders` with
 the body's length, then the body in chunks (§5, §8). Its `Set-Cookie`
 headers were not stored, so it changes no cookie container.
 
-**Storing.** A GET response that came from the network is stored when:
+**Storing.** A GET or HEAD response that came from the network is
+stored when:
 
 - its status is not 1xx, 206 or 304;
-- neither the request nor the response says `no-store`, and it has no
-  `Vary: *`;
-- it has explicit freshness (`max-age` or `Expires`), says `public` or
-  `private`, or has a status cacheable by default (200, 203, 204, 300,
+- neither the request nor the response says `no-store`, and the
+  response does not say `private`;
+- the request has no `Authorization`, or the response says `public`;
+- it has no `Vary`, or `Vary: Accept-Encoding` alone;
+- it has explicit freshness (`s-maxage`, `max-age` or `Expires`), says
+  `public`, or has a status cacheable by default (200, 203, 204, 300,
   301, 308, 404, 405, 410, 414, 501) and an `ETag` or `Last-Modified`;
-- its body, read whole, is at most 16 MiB.
+- its body, read whole, is at most 4 MiB.
+
+The `private`, `Authorization`, `Vary` and size rules, and `s-maxage`,
+are the official client's (*read*).
 
 It is stored without `Set-Cookie` and without the hop-by-hop headers
 (`Connection`, `Keep-Alive`, `Proxy-Connection`, `TE`, `Trailer`,
 `Transfer-Encoding`, `Upgrade` and those `Connection` names). With
-`Vary`, the values the daemon sent for the named request headers are
-stored with it; a later request whose values differ does not match. One
-response is kept per URL: the newest replaces the one before. A stored
+`Vary: Accept-Encoding`, the value the daemon sent for that header is
+stored with it; a later request whose value differs does not match. One
+response is kept per URL and method: the newest replaces the one
+before. A HEAD response is stored apart from the GET response of the
+same URL, so that it never answers a GET; whether the official client
+keeps them apart is *unverified*. A stored
 301 or 308 is followed like one from the network.
 
 **Invalidation.** A PUT, POST or DELETE whose answer is 2xx or 3xx
-removes what is stored for its URL, and for its `Location` and
-`Content-Location` on the same host.
+removes what is stored for its URL, GET and HEAD, and for its
+`Location` and `Content-Location` on the same host.
 
 **On disk.** The cache lives in the daemon's cache directory (SPEC §17),
 in `http/<app>/`, one file per URL named by the SHA-1 of the URL, and it
@@ -271,17 +292,19 @@ removed.
   read, through `only-if-cached`, what another game fetched. A game
   therefore never sees a response that the client itself or another
   game stored. This is deliberate.
-- ossteam stores `private` responses and responses to requests with
-  `Authorization`, which the official client refuses; it accepts any
-  `Vary` but `*`, where the official client accepts only
-  `Accept-Encoding`; it stores bodies up to 16 MiB, not 4 MiB; it stores
-  the statuses RFC 9111 allows (203, 204, 404, 405, 414 and 501 too, and
-  302 and 307 with explicit freshness); it ignores `s-maxage`.
-- HEAD requests skip ossteam's cache; the official client's cache takes
-  them.
-- ossteam invalidates only after a 2xx or 3xx and not for PATCH; the
-  official client invalidates for PATCH too, whatever the status.
-- The 256 MiB total and the heuristic freshness rule are ossteam's.
+- ossteam stores the statuses RFC 9111 allows (203, 204, 404, 405, 414
+  and 501 too, and 302 and 307 with explicit freshness), where the
+  official client stores 200, 300, 301, 308 and 410.
+- ossteam's heuristic lifetime is a tenth of the time since
+  `Last-Modified`, at most a day, not the official steps.
+- ossteam drops `TE`, `Trailer`, `Set-Cookie` and the headers that
+  `Connection` names, which the official list does not name, and not
+  `Proxy-Authenticate` or `Proxy-Authorization`.
+- ossteam invalidates only after a 2xx or 3xx, not for PATCH, and also
+  for `Location` and `Content-Location` (RFC 9111 §4.4); the official
+  client invalidates the URL for PATCH too, whatever the status, and
+  whether it removes the other two is *unverified*.
+- The 256 MiB total is ossteam's.
 
 ## 4. Sending and completing
 

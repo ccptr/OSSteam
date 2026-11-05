@@ -14,8 +14,8 @@ use ureq::http::{HeaderMap, HeaderName, HeaderValue, header};
 
 use super::cookies::parse_date;
 
-/// The largest body stored (§3.1).
-pub const MAX_ENTRY: usize = 16 * 1024 * 1024;
+/// The largest body stored, as in the official client (§3.1).
+pub const MAX_ENTRY: usize = 4 * 1024 * 1024;
 /// What the cache holds over all apps.
 const MAX_TOTAL: u64 = 256 * 1024 * 1024;
 /// The longest heuristic freshness lifetime, in seconds.
@@ -184,21 +184,36 @@ fn stored_headers(response: &HeaderMap) -> HeaderMap {
     out
 }
 
-/// Whether a GET response from the network may be stored (§3.1,
-/// Storing); the body's size is checked as it is read.
-pub fn storable(status: u16, request: &Directives, response: &HeaderMap) -> bool {
+/// Whether `Vary` is absent or names `Accept-Encoding` alone, the only
+/// one the official client stores.
+fn vary_allowed(response: &HeaderMap) -> bool {
+    response.get_all(header::VARY).iter().all(|v| {
+        String::from_utf8_lossy(v.as_bytes())
+            .trim()
+            .eq_ignore_ascii_case("accept-encoding")
+    })
+}
+
+/// Whether a GET or HEAD response from the network may be stored
+/// (§3.1, Storing), with the official client's refusals of `private`,
+/// of `Authorization` without `public`, and of other `Vary` headers. The
+/// body's size is checked as it is read.
+pub fn storable(status: u16, request: &HeaderMap, response: &HeaderMap) -> bool {
+    let asked = Directives::of_request(request);
     let d = Directives::of(response);
     let validator =
         response.contains_key(header::ETAG) || response.contains_key(header::LAST_MODIFIED);
     status >= 200
         && !matches!(status, 206 | 304)
-        && !request.has("no-store")
+        && !asked.has("no-store")
         && !d.has("no-store")
-        && vary_names(response).is_some()
-        && (d.seconds("max-age").is_some()
+        && !d.has("private")
+        && (!request.contains_key(header::AUTHORIZATION) || d.has("public"))
+        && vary_allowed(response)
+        && (d.seconds("s-maxage").is_some()
+            || d.seconds("max-age").is_some()
             || response.contains_key(header::EXPIRES)
             || d.has("public")
-            || d.has("private")
             || (BY_DEFAULT.contains(&status) && validator))
 }
 
@@ -256,10 +271,11 @@ impl Entry {
         initial.saturating_add((now - self.response_time).max(0))
     }
 
-    /// RFC 9111 §4.2.1, and the heuristic of §3.1.
+    /// RFC 9111 §4.2.1: `s-maxage` first, as in the official client;
+    /// then the heuristic of §3.1.
     pub fn lifetime(&self) -> i64 {
         let d = Directives::of(&self.headers);
-        if let Some(max_age) = d.seconds("max-age") {
+        if let Some(max_age) = d.seconds("s-maxage").or_else(|| d.seconds("max-age")) {
             return max_age.unwrap_or(0);
         }
         if let Some(expires) = self.headers.get(header::EXPIRES) {
@@ -683,15 +699,19 @@ mod tests {
             t,
         );
         assert_eq!(e.lifetime(), MAX_HEURISTIC);
+        // s-maxage comes before max-age.
+        let e = entry(&[("cache-control", "max-age=10, s-maxage=20")], t);
+        assert_eq!(e.lifetime(), 20);
         // A bad Expires is already stale.
         assert_eq!(entry(&[("expires", "0")], t).lifetime(), 0);
     }
 
     #[test]
     fn only_some_responses_are_stored() {
-        let none = Directives::default();
+        let none = HeaderMap::new();
         let s = |status, list: &[(&str, &str)]| storable(status, &none, &headers(list));
         assert!(s(200, &[("cache-control", "max-age=60")]));
+        assert!(s(200, &[("cache-control", "s-maxage=60")]));
         assert!(s(500, &[("cache-control", "max-age=60")]));
         assert!(s(200, &[("etag", "\"a\"")]));
         assert!(s(
@@ -703,16 +723,43 @@ mod tests {
         assert!(!s(302, &[("location", "/x")]));
         assert!(!s(206, &[("cache-control", "max-age=60")]));
         assert!(!s(200, &[("cache-control", "max-age=60, no-store")]));
-        assert!(!s(200, &[("cache-control", "max-age=60"), ("vary", "*")]));
-        assert!(!storable(
+        // As in the official client: no private responses, and Vary only
+        // for Accept-Encoding.
+        assert!(!s(200, &[("cache-control", "max-age=60, private")]));
+        assert!(s(
             200,
-            &req("no-store"),
-            &headers(&[("cache-control", "max-age=60")])
+            &[("cache-control", "max-age=60"), ("vary", "accept-encoding")]
+        ));
+        assert!(!s(200, &[("cache-control", "max-age=60"), ("vary", "*")]));
+        assert!(!s(200, &[("cache-control", "max-age=60"), ("vary", "X-A")]));
+        assert!(!s(
+            200,
+            &[
+                ("cache-control", "max-age=60"),
+                ("vary", "Accept-Encoding, X-A")
+            ]
+        ));
+        let asked = |list: &[(&str, &str)], response: &[(&str, &str)]| {
+            storable(200, &headers(list), &headers(response))
+        };
+        assert!(!asked(
+            &[("cache-control", "no-store")],
+            &[("cache-control", "max-age=60")]
+        ));
+        // With Authorization, only a public response.
+        assert!(!asked(
+            &[("authorization", "x")],
+            &[("cache-control", "max-age=60")]
+        ));
+        assert!(asked(
+            &[("authorization", "x")],
+            &[("cache-control", "max-age=60, public")]
         ));
     }
 
     #[test]
     fn vary_and_stored_headers() {
+        // Matching compares every header that Vary names.
         let response = headers(&[
             ("vary", "X-A, x-b"),
             ("set-cookie", "a=1"),

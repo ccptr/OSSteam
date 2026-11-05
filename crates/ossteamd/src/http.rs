@@ -211,7 +211,11 @@ fn plan(cache: &Cache, app: u32, url: &str, request: &http::HeaderMap, now: i64)
 /// A PUT, POST or DELETE went through: what is cached for its URL, its
 /// `Location` and its `Content-Location` goes (§3.1).
 fn invalidate(cache: &Cache, app: u32, uri: &Uri, headers: &http::HeaderMap) {
-    cache.remove(app, &uri.to_string());
+    let remove = |uri: &Uri| {
+        cache.remove(app, &cache_key(&Method::GET, uri));
+        cache.remove(app, &cache_key(&Method::HEAD, uri));
+    };
+    remove(uri);
     for name in [header::LOCATION, header::CONTENT_LOCATION] {
         if let Some(other) = headers
             .get(&name)
@@ -221,8 +225,18 @@ fn invalidate(cache: &Cache, app: u32, uri: &Uri, headers: &http::HeaderMap) {
             .and_then(web_uri)
             && other.host() == uri.host()
         {
-            cache.remove(app, &other.to_string());
+            remove(&other);
         }
+    }
+}
+
+/// What a response is stored under: its URL for a GET, and apart from
+/// it for a HEAD, so that a HEAD never answers a GET (§3.1).
+fn cache_key(method: &Method, uri: &Uri) -> String {
+    if *method == Method::HEAD {
+        format!("HEAD {uri}")
+    } else {
+        uri.to_string()
     }
 }
 
@@ -373,11 +387,12 @@ pub fn run(
         if let Some(c) = cookie {
             request_headers.insert(header::COOKIE, c);
         }
-        let url = uri.to_string();
+        let url = cache_key(&method, &uri);
         let now = cookies::now();
-        let get = method == Method::GET;
+        // GET and HEAD use the cache, as in the official client.
+        let cacheable = matches!(method, Method::GET | Method::HEAD);
         let plan = match cache {
-            Some(c) if get => plan(c, job.app, &url, &request_headers, now),
+            Some(c) if cacheable => plan(c, job.app, &url, &request_headers, now),
             _ => Plan::Network(None),
         };
         let (reply, store) = match plan {
@@ -426,12 +441,8 @@ pub fn run(
                         (Reply::stored(e, response_time, false), None)
                     }
                     (Some(c), _)
-                        if get
-                            && cache::storable(
-                                status,
-                                &Directives::of_request(&request_headers),
-                                &parts.headers,
-                            ) =>
+                        if cacheable
+                            && cache::storable(status, &request_headers, &parts.headers) =>
                     {
                         let entry = Entry::new(
                             &url,
@@ -495,7 +506,8 @@ pub fn run(
             tracing::debug!("a game's HTTP request was redirected more than {MAX_REDIRECTS} times");
             return failed(false);
         }
-        return read(r.handle, r.streaming, reply, store, stop, &mut emit);
+        let head = method == Method::HEAD;
+        return read(r.handle, r.streaming, head, reply, store, stop, &mut emit);
     }
     failed(false)
 }
@@ -505,19 +517,24 @@ pub fn run(
 fn read(
     handle: u32,
     streaming: bool,
+    head: bool,
     reply: Reply,
     mut store: Option<Store>,
     stop: &CancelToken,
     emit: &mut impl FnMut(Event) -> bool,
 ) -> HttpDone {
     let status = u32::from(reply.status);
-    let length = match &reply.body {
-        Source::Stored(b) => Some(b.len() as u64),
-        Source::Network(_) => reply
+    let header_length = || {
+        reply
             .headers
             .get(header::CONTENT_LENGTH)
             .and_then(|v| v.to_str().ok())
-            .and_then(|v| v.trim().parse::<u64>().ok()),
+            .and_then(|v| v.trim().parse::<u64>().ok())
+    };
+    // A stored HEAD answer has no body: its length is the header's.
+    let length = match &reply.body {
+        Source::Stored(b) if !head => Some(b.len() as u64),
+        _ => header_length(),
     };
     let headers = reply
         .headers

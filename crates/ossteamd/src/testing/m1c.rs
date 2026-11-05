@@ -1204,6 +1204,12 @@ fn http_server() -> (u16, Arc<std::sync::Mutex<Vec<String>>>) {
                         "Cache-Control: max-age=3600\r\n",
                         format!("n={gets}").as_bytes(),
                     ),
+                    "/private" => respond(
+                        &mut stream,
+                        "200 OK",
+                        "Cache-Control: max-age=3600, private\r\n",
+                        b"p",
+                    ),
                     "/nostore" => respond(
                         &mut stream,
                         "200 OK",
@@ -1430,6 +1436,27 @@ fn games_make_http_requests() {
     fetch(&mut g, get("/nostore"));
     fetch(&mut g, get("/nostore"));
     assert_eq!(hits("/nostore"), 2);
+    // As in the official client: a private response is not stored, and
+    // HEAD uses the cache, apart from GET.
+    fetch(&mut g, get("/private"));
+    fetch(&mut g, get("/private"));
+    assert_eq!(hits("/private"), 2);
+    let head = |path: &str| HttpSendRequest {
+        method: 2,
+        ..get(path)
+    };
+    let heads = || {
+        seen.lock()
+            .unwrap()
+            .iter()
+            .filter(|h| h.starts_with("HEAD /cached "))
+            .count()
+    };
+    let (a, _, body) = fetch(&mut g, head("/cached"));
+    let (b, _, _) = fetch(&mut g, head("/cached"));
+    assert_eq!((a, b, body.as_str(), heads()), (ok(200), ok(200), "", 1));
+    let (_, _, body) = fetch(&mut g, get("/cached"));
+    assert_eq!(body, "n=2");
 
     // A stalled body runs out of time; other schemes are not made.
     let (done, _, body) = fetch(

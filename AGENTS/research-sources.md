@@ -15,3 +15,9 @@ needed, outside it:
 - SteamKit2, node-steam-user, DepotDownloader.
 - SteamCloudFileManager's ROOT_PATH_MAPPING.md (community root-number
   table): facts only.
+- SDL 3 (zlib): device ids, controller types and the
+  `SteamVirtualGamepadInfo` file, for Steam Input. Facts only for its
+  Valve device drivers (`SDL_hidapi_steam*.c`, `hidapi/steam/`), which
+  carry code from Valve.
+- The `steam-devices` udev rules (as distributions package them): facts
+  only, for the device permissions Steam Input needs.

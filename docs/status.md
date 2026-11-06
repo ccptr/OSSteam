@@ -14,6 +14,7 @@ Almost all remaining work needs one of these.
 - [Own GUI toolkit](status/gui-toolkit-adr-0004.md) — ADR 0004 and its SPEC changes accepted 2026-11-03; spike done but for the maintainer's checks; toolkit (step 3) and the port (step 4) done, the previous framework removed, live checks passed 2026-11-03; the portal through our own D-Bus client (ADR amended); `main` since 2026-11-03 (the old `main` is the branch `gpui`), pushed; open: font fallback can map every font (a decision for the maintainer)
 - [reference-hw.md §5](status/reference-hw-questions.md) — answered 2026-11-03: budgets judged on the dev PC (interim) until the Steam Deck is set up; download runs bypass the VPN and count against a speed test of the line
 - [Spec review gates](status/spec-review-gates.md) — M3 pages reviewed 2026-11-03 with some questions left open (betas Q1/Q4/Q5, offline Q3); DRM and VAC not reviewed; friends needs a second test account
+- [Steam Input spec](status/later-steam-input.md) — `docs/spec/input.md` drafted 2026-11-05; its §13 questions (SDL 3, Windows virtual gamepad, focus, own templates and glyphs, budgets) are for the maintainer
 - [A Mac and real Windows](status/hardware-mac-windows.md) — for macOS acceptance and what Wine can't show; waits until closer to release (2026-11-03)
 
 ## Decisions the maintainer hasn't confirmed
@@ -45,4 +46,4 @@ When one is confirmed, write it into the spec and delete the note.
 - [M3: Betas](status/m3-betas.md) — betas.md drafted; needs a published beta code
 - [M3: Workshop](status/m3-workshop.md) — workshop.md drafted; subscribing is visible, ask first
 - [M3: Offline](status/m3-offline.md) — offline.md drafted; offline daemon has an empty library today
-- [Later: Steam Input](status/later-steam-input.md) — a goal since 2026-11-05, as the embeddable LGPL library `ossteam-input`; no spec page or milestone yet
+- [Later: Steam Input](status/later-steam-input.md) — a goal since 2026-11-05, as the embeddable LGPL library `ossteam-input`; `input.md` drafted 2026-11-05, awaiting review (nine questions); no milestone or code yet

@@ -244,6 +244,20 @@ shell running `steam.sh` exited, within the same 50 ms; nothing else
 run from the installation was left. That shell (`bash steam.sh ...`)
 keeps the script open, on its descriptor 255.
 
+Games, seen on 2026-11-05 with Counter-Strike 2 (730) launched from the
+official client by `steam://rungameid/730`: the client starts each game
+under `<installation>/ubuntu12_32/reaper SteamLaunch AppId=<id> --
+<command>`, its own child, and the game's whole tree runs under it (here
+the Steam Linux Runtime 3.0's `_v2-entry-point`, `srt-bwrap`,
+`pv-adverb`, `cs2.sh` and `cs2`). Seen from the host, `cs2` has
+`<installation>/linux64/steamclient.so` mapped, by that path, although
+it runs in a container. When the client was killed (`SIGKILL`),
+`steam.sh` exited at once and the reaper was re-parented to `init`;
+`cs2` lost the client, failed an assertion and exited 1.4 s later, but
+its crash handler, still under the reaper, wrote dumps for another
+39 s, and the reaper exited only when that had ended. In that time no
+process had `steamclient.so` mapped.
+
 So an official client that starts while ossteam has the real entries
 takes them over without asking, and an official client that has exited
 still owns them. ossteam uses the same test to tell whether the
@@ -291,10 +305,13 @@ daemon takes the entries over when all of these hold:
   which can start the client again (§1.1.3). The official installation
   is the parent of the directories the official `sdk64` and `sdk32`
   point to;
-- no process of the user has a `steamclient.so` mapped from the
-  directory that the official `sdk64` or `sdk32` points to (a game the
-  official client started can outlive it, and what that game starts
-  next would otherwise find ossteam);
+- no game the official client started runs, since it can outlive the
+  client, and what it starts next would otherwise find ossteam: no
+  process of the user runs a `reaper` from the official installation
+  (the client starts each game under it, and it lasts as long as the
+  game's processes do, those without `steamclient.so` loaded included,
+  §1.1.3), and none has a `steamclient.so` mapped from the directory
+  that the official `sdk64` or `sdk32` points to;
 - nothing in `~/.steam` has been created, renamed or removed by anyone
   but ossteam in the last 30 s (the race, below), not counting what
   changed before the official client last closed while the daemon
@@ -309,8 +326,8 @@ rename, and the daemon stops at the first that no longer holds, and
 hands back what it had taken. While the setting is on and an account is
 active, the daemon looks at the conditions whenever `~/.steam` changes,
 every 10 s, and when a process it waits for exits. A process that keeps
-it from taking over (the client, its `steam.sh`, a game the official
-client started) is one it waits for, through a pidfd, since the
+it from taking over (the client, its `steam.sh`, a game's reaper or a
+game) is one it waits for, through a pidfd, since the
 official client exiting and its games ending change nothing in
 `~/.steam`. So the take-over follows the official client's close at
 once. When the last process the daemon waited for has exited, what
@@ -459,6 +476,7 @@ take-over setting risks, wherever they would look:
 | Anti-cheat (VAC, and EAC or BattlEye where the test account owns a title) accepts a native game in the namespace | to be run |
 | The check at start reports Ubuntu's AppArmor restriction | to be run on Ubuntu 24.04 |
 | The official client starting while ossteam holds the entries (§1.1.5) | built 2026-11-04 and tested against `ln -fsn`-style renames in a scratch home (`m1c::official_entries_are_taken_over_and_handed_back`); done with the real official client 2026-11-05: with no game running, the daemon took the entries over 30 s after the setting was turned on, with the record holding the official targets and `steam.pid` text. `steam -silent` then remade the links; the daemon yielded at the first one, deleted the record, sent the warning notice, and did not take over while the client ran. The client signed in as usual. After `steam -shutdown` it took over again 30 s after the client's last write, recording the client's new pid (since 2026-11-05 at once, as the client and its `steam.sh` exit, tested in `m1c::official_entries_are_taken_over_as_the_client_closes`; with the real client the same day, after the setting was turned on while it ran, the take-over followed `steam.sh`'s exit by 71 ms, and in a second round, after the daemon had yielded to `steam -silent` again, by 81 ms, with no take-over while the client ran); turning the setting off, and later stopping the daemon, handed back entries identical to what the client had left |
+| A game the official client started outlives it (§1.1.5) | done 2026-11-05 with Counter-Strike 2 and the client killed while it ran, the setting on: the daemon did not take over while the reaper ran, 39 s after the game itself had exited, and took over 91 ms after the reaper exited. Turning the setting off handed back what the client had left |
 | The client replaces a `steam.pid` naming a live process | done 2026-11-05 for a process without `steam.pipe` open (ossteam's daemon): written in place (§1.1.3). One with the pipe open, unverified |
 
 ### 1.2 Windows

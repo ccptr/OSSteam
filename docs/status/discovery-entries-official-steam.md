@@ -92,8 +92,12 @@ daemon waits on a pidfd for the client, its `steam.sh` and any game it
 started, also waits for `steam.sh` (which restarts the client after an
 update), and the client's writes before it closed no longer start the
 30 s count. Run live the same day: the take-over came 71 ms and 81 ms
-after `steam.sh` exited. Left: a `steam.pid` whose process has the pipe open, and a
-game the official client started outliving it. The maintainer allows
+after `steam.sh` exited. The same day, also at the maintainer's request,
+the take-over waits for the official client's `reaper` of each game it
+started, which outlives the game's last process with `steamclient.so`
+loaded (a crash handler, a launcher): run live with Counter-Strike 2
+and the client killed, it took over 91 ms after the reaper exited, 39 s
+after the game. Left: a `steam.pid` whose process has the pipe open. The maintainer allows
 the take-over whenever it's needed, as long as no games they launched
 are running (2026-11-04).
 `ossteam status` prints a second `games` line, "ossteam holds the

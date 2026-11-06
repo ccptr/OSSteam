@@ -364,6 +364,12 @@ pub enum OfficialKind {
     /// A process running the installation's `steam.sh`, which starts the
     /// client again when it exits to update.
     Script,
+    /// The installation's `reaper`, which the official client starts each
+    /// game under (`reaper SteamLaunch AppId=<id> -- <command>`). It lives
+    /// as long as the game's processes do, so it covers those that have
+    /// no `steamclient.so` loaded: a launcher before the game, a script,
+    /// a crash handler.
+    Reaper,
     /// A process with the official `steamclient.so` mapped: a game the
     /// official client started, which may outlive it.
     Game,
@@ -378,6 +384,10 @@ impl std::fmt::Display for Official {
                 write!(f, "the official Steam client (process {p}) is exiting")
             }
             OfficialKind::Script => write!(f, "process {p} runs the official client's steam.sh"),
+            OfficialKind::Reaper => write!(
+                f,
+                "process {p} is the official client's reaper of a game it started"
+            ),
             OfficialKind::Game => {
                 write!(
                     f,
@@ -397,9 +407,9 @@ fn open_on(pid: u32, files: &[PathBuf]) -> bool {
         .any(|fd| std::fs::read_link(fd.path()).is_ok_and(|t| files.contains(&t)))
 }
 
-/// A process of this user, other than this one, that runs `steam.sh` from
-/// one of `installs`, or has a `steamclient.so` mapped from one of `dirs`
-/// (all canonical paths), if any.
+/// A process of this user, other than this one, that runs `steam.sh` or
+/// `reaper` from one of `installs`, or has a `steamclient.so` mapped from
+/// one of `dirs` (all canonical paths), if any.
 fn scan_processes(dirs: &[PathBuf], installs: &[&Path]) -> Option<Official> {
     if dirs.is_empty() {
         return None;
@@ -419,6 +429,15 @@ fn scan_processes(dirs: &[PathBuf], installs: &[&Path]) -> Option<Official> {
             return Some(Official {
                 pid,
                 what: OfficialKind::Script,
+            });
+        }
+        if std::fs::read_link(p.path().join("exe")).is_ok_and(|exe| {
+            exe.file_name().is_some_and(|n| n == "reaper")
+                && installs.iter().any(|i| exe.starts_with(i))
+        }) {
+            return Some(Official {
+                pid,
+                what: OfficialKind::Reaper,
             });
         }
         let Ok(maps) = std::fs::read_to_string(p.path().join("maps")) else {
@@ -1022,6 +1041,16 @@ mod tests {
         let found = |what| Some(Official { pid, what });
         assert_eq!(e.official_process(&dirs), found(OfficialKind::Script));
         drop(sh);
+        assert_eq!(e.official_process(&dirs), None);
+
+        // The reaper of a game the official client started runs on.
+        let exe = d.valve.join("ubuntu12_32/reaper");
+        std::fs::copy(sleep_program(), &exe).unwrap();
+        let reaper = sleeper(&exe, std::process::Stdio::null());
+        let pid = reaper.0.id();
+        let found = |what| Some(Official { pid, what });
+        assert_eq!(e.official_process(&dirs), found(OfficialKind::Reaper));
+        drop(reaper);
         assert_eq!(e.official_process(&dirs), None);
     }
 

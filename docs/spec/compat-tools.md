@@ -4,7 +4,7 @@
 |---|---|
 | Status | Draft for M1d. §1 to §4 observed in the official Linux client's app-info cache and logs; §5 and §6 follow Valve's published compat-tool interface; the rest is ossteam's design, partly unverified |
 | Requirements | SPEC §11.2 (COMPAT-1 to COMPAT-3), PLAT-2, LAUNCH-4, LAUNCH-5, FAITH-1, DIRS-1, RE-2 |
-| Code | tool list, mappings, manifests and chains in `crates/ossteam-launch/src/compat/`; the daemon's side in `crates/ossteamd/src/core/compat.rs` |
+| Code | tool list, mappings, manifests and chains in `crates/ossteam-launch/src/compat/` (the prefix's `steamclient.dll` in `client_dll.rs`); the daemon's side in `crates/ossteamd/src/core/compat.rs` |
 
 A compatibility tool is a program that ossteam puts in front of a game's
 command line. Valve ships two kinds as Steam apps: the Steam Linux Runtime
@@ -370,20 +370,79 @@ Proton reads `STEAM_COMPAT_CLIENT_INSTALL_PATH` when it builds a prefix:
 - it copies `legacycompat/steamclient.dll`, `steamclient64.dll`,
   `Steam.dll`, `SteamService.exe` (as `steam.exe`) and
   `GameOverlayRenderer64.dll` into the prefix's
-  `C:\Program Files (x86)\Steam\` when they exist;
+  `C:\Program Files (x86)\Steam\` when they exist, at every start,
+  replacing the copies already there;
 - it puts `ubuntu12_64/video/` and `ubuntu12_32/video/` on the library
   path;
 - its `steam.exe` lists the directory as a library in the prefix's
   `libraryfolders.vdf`.
 
-None of these files is required: Proton's own `lsteamclient` registers
-itself as the Steam client in the prefix's registry and loads the Linux
-client library through `~/.steam/sdk64/steamclient.so` (or `sdk32`).
-They are Valve's binaries, which ossteam does not have and must not
-ship (RE-2). The generated directory is therefore
-`<data>/compat-client/`, with an empty `legacycompat/` and nothing else.
-*Unverified:* whether some Windows game needs Valve's
-`steamclient.dll` in the prefix itself.
+The generated directory is `<data>/compat-client/`. Its `legacycompat/`
+holds ossteam's own `steamclient.dll` and `steamclient64.dll` (§6.3) and
+nothing else. `Steam.dll`, `SteamService.exe` and
+`GameOverlayRenderer64.dll` are Valve's binaries, which ossteam does not
+have and must not ship (RE-2). *Unverified:* whether some Windows game
+needs one of them.
+
+### 6.3 `steamclient.dll` in the prefix
+
+**What Proton needs.** Proton's `steam.exe` points the prefix's
+`HKCU\Software\Valve\Steam\ActiveProcess` values `SteamClientDll` and
+`SteamClientDll64` at `C:\Program Files (x86)\Steam\steamclient.dll`
+and `steamclient64.dll`, and a Windows game's `steam_api` loads the
+client library from there. Proton's Wine (its `ntdll` loader, read for
+facts) then:
+
+1. maps the file as an ordinary DLL; without the file the load fails
+   with `STATUS_DLL_NOT_FOUND`;
+2. when the file's base name is `steamclient` or `steamclient64`
+   (also `gameoverlayrenderer` and `gameoverlayrenderer64`), loads
+   Proton's `lsteamclient.dll`;
+3. for every name the file exports that `lsteamclient` exports too,
+   writes over the start of the file's function a jump to
+   `lsteamclient`'s (`mov` of the address into `eax`/`rax`, then
+   `jmp`: 12 bytes on x86_64, 7 on x86). It does the same for the entry
+   point. Names that `lsteamclient` lacks keep the file's own code;
+4. for the 32-bit file, resolves no imports; for the 64-bit file, calls
+   no entry point.
+
+`lsteamclient` then loads the Linux client library, ossteam's
+`steamclient.so` (§9). The file must exist, but none of its code runs
+while Proton's redirection is on (`PROTON_DISABLE_LSTEAMCLIENT` unset).
+Without it `SteamAPI_Init` fails: Spacewar (480, a 32-bit game) under
+Proton Experimental 11.0-100 showed "Steam must be running to play this
+game (SteamAPI_Init() failed)" until 2026-11-05. Proton's own
+`steam.exe` loads `lsteamclient` directly, so it reached ossteam either
+way.
+
+**ossteam's files.** The daemon generates both files itself; they hold
+no Valve code. Each is a DLL of a few kilobytes:
+
+| | `steamclient.dll` | `steamclient64.dll` |
+|---|---|---|
+| Format | PE32, i386 | PE32+, x86_64 |
+| Image base | `0x38000000` | `0x180000000` |
+
+- It exports the 41 names that the official client's `steamclient.dll`
+  and `steamclient64.dll` export (build 1793740892): `CreateInterface`,
+  the `Steam_*` functions and the `Breakpad_*` functions. All of them
+  but `Breakpad_SteamSendMiniDump` are exports of Proton's
+  `lsteamclient` too.
+- Each export is 16 bytes of code that return 0 (`xor eax, eax; ret`,
+  padded with `int3`): room for the jump, and an honest failure for a
+  name that is not redirected, or when the redirection is off (FAITH-1).
+- The entry point returns TRUE (`ret 12` on i386).
+- It has no imports. Its relocation directory has one block and no
+  fixups: the code uses no absolute addresses, so the DLL loads at any
+  base.
+
+Before each launch through a chain (§5), the daemon writes the files
+into `legacycompat/` when their content differs from what it would
+write, by renaming a new file over the old one. A file left unchanged
+keeps its modification time, which Proton's prefix check compares.
+
+*Unverified:* Proton versions other than Experimental 11.0-100 (older
+ones load `lsteamclient` differently), and 64-bit games.
 
 The container runtime compares `STEAM_COMPAT_CLIENT_INSTALL_PATH` with
 the target of `~/.steam/root` and reports a difference as a
@@ -562,4 +621,5 @@ timeout.
 | Environment values (§5.2) | names from the official client's library and Valve's document; values unverified until a capture |
 | `app_compat_configs` handling (§5.3) | `config` from Proton's script; `environment` unverified |
 | Install scripts in the prefix (§7) | ossteam's design |
+| `steamclient.dll` in the prefix (§6.3) | Proton's loader read for facts; ossteam's files run live 2026-11-05 with Spacewar (32-bit) under Proton Experimental 11.0-100; 64-bit games and other Proton versions unverified |
 | The shim inside a container (§9) | from the `pressure-vessel-wrap` manual; to be run in acceptance |

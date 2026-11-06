@@ -30,7 +30,7 @@ These come from the maintainer. Don't trade them away for convenience.
 - [Cross-platform](AGENTS/rules/cross-platform.md) — Linux, Windows and macOS are first-class; keep every platform compiling
 - [Faithful, never faked](AGENTS/rules/faithful-never-faked.md) — answers come from the real session or server; unimplemented features fail honestly
 - [VAC and Steam DRM](AGENTS/rules/vac-drm-goals.md) — goals, implemented faithfully in M2, never bypassed
-- [Steam Input](AGENTS/rules/steam-input-goal.md) — a goal, as `ossteam-input`, a library other programs can embed, on SDL 3 and our own Steam Controller driver; spec first
+- [Steam Input](AGENTS/rules/steam-input-goal.md) — a goal, as `ossteam-input`, a library other programs can embed, on SDL 3 and our own driver for the Steam Controllers and the Deck's controls; spec first
 - [Big Picture and Game Mode](AGENTS/rules/game-mode-goal.md) — goals; Game Mode on Linux only; the compositor (gamescope, our own, or similar) is open; spec first
 - [LGPL libraries](AGENTS/rules/lgpl-libraries.md) — `ossteam-vdf`, `ossteam-ui`, `ossteam-dbus`, `ossteam-input`, `ossteam-steamcontroller`: LGPL headers, no GPL workspace dependencies
 - [Platform-standard directories](AGENTS/rules/platform-directories.md) — only those, except the ABI discovery entries

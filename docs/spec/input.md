@@ -598,8 +598,8 @@ The library holds everything that does not need Steam:
   maintainer, 2026-11-06). The library uses SDL's joystick, gamepad,
   sensor and HID APIs only, never its windows or events loop for the
   embedding program; SDL runs on the library's own device thread.
-  Valve's Steam Controllers (2015 and 2026) are not: they have a driver
-  of ossteam's own, `ossteam-steamcontroller` (§6.5; the maintainer,
+  Valve's Steam Controllers (2015 and 2026) and the Steam Deck's
+  built-in controls are not: they have a driver of ossteam's own, `ossteam-steamcontroller` (§6.5; the maintainer,
   2026-11-06), and SDL is told to leave them alone, as the official
   client's HIDAPI hints suggest it does (§2.2). How SDL is built and shipped
   is settled with the library's code; the proposal is a pinned build
@@ -663,8 +663,9 @@ daemon's IPC, not the library.
 
 ### 6.5 `ossteam-steamcontroller`
 
-A driver for Valve's Steam Controllers, the 2015 controller and the 2026
-controller with its receiver, that any program can use: a game engine,
+A driver for Valve's Steam Controllers (the 2015 controller, the 2026
+controller with its receiver, and the Steam Deck's built-in controls;
+the maintainer, 2026-11-06) that any program can use: a game engine,
 a remapper, a tool for firmware settings, with or without
 `ossteam-input`. It is LGPL-2.1-or-later (LIC-9), pure Rust, and
 depends on no workspace crate (WS-1). It has two layers:
@@ -681,9 +682,14 @@ depends on no workspace crate (WS-1). It has two layers:
 
 Each controller's protocol is written up from facts in a page of its
 own (`docs/spec/input/steam-controller-2015.md`,
-`…/steam-controller-2026.md`) before its code (§11 item 7). The
-development computer has a 2026 controller with its receiver; the 2015
-controller needs one to test with (§13).
+`…/steam-controller-2026.md`, `…/steam-deck.md`) before its code (§11
+item 7). The Deck's controls are a USB device inside the Deck, with no
+receiver or Bluetooth. SDL's driver keeps their lizard mode off by
+sending a command again on a timer, which suggests the device turns it
+back on by itself (*unverified*; §11, §13 Q8). The development computer
+has a 2026 controller with its receiver; the 2015 controller needs one
+to test with (§13), and the Deck's controls the Deck that is to be the
+Linux reference (`docs/acceptance/reference-hw.md`).
 
 On Linux, the kernel's `hid-steam` driver also takes these controllers,
 and is reported to stop its own input when a program opens the
@@ -771,8 +777,9 @@ goal 4), not here.
    emulates a gamepad, and whether the overlay is needed for it.
 7. Whether SDL 3 gives everything a configuration needs for each
    other maker's family (touchpads, haptics, gyro); and the protocols of
-   the 2015 and 2026 Steam Controllers, written up from facts in a page
-   each before `ossteam-steamcontroller` is written (§6.5), with how
+   the 2015 and 2026 Steam Controllers and the Steam Deck's controls,
+   written up from facts in a page each before `ossteam-steamcontroller`
+   is written (§6.5), with how
    the kernel's `hid-steam` driver and the official client share the
    devices.
 
@@ -793,12 +800,9 @@ read by the other unchanged.
 1. **Device access.** *Answered 2026-11-06*: SDL 3 for other makers'
    controllers (§6.1), and a driver of ossteam's own for the Steam
    Controllers, reusable by other projects (`ossteam-steamcontroller`,
-   §6.5). Still open: does the Steam Deck's built-in controller belong
-   in it too? The official client opens it through `hidraw` like the
-   others, and its protocol is close to the 2015 controller's
-   (*unverified*), and Game Mode, a goal since 2026-11-06 (SPEC §1.1),
-   needs it.
-   And who lends a 2015 controller for testing?
+   §6.5). The Steam Deck's built-in controls go in it too (the
+   maintainer, 2026-11-06). Still open: who lends a 2015 controller for
+   testing?
 2. **The virtual gamepad on Windows and macOS** (§4.2). Options: none
    (keyboard and mouse only, and API games), until an overlay ADR
    (VAC-4) allows hooking the game's controller APIs; a signed
@@ -834,6 +838,11 @@ read by the other unchanged.
    comes from device events, not polling), and a new budget is added
    for the time from a controller report to the game's `RunFrame` and
    to `uinput` output, set once §11 has measured the official client.
+   The Deck's controls are always connected, so on a Deck the idle
+   budget cannot rest on there being no controller; and keeping their
+   lizard mode off adds a timer (§6.5). Should ossteam leave lizard mode
+   on, and stop reading them, while nothing needs them (no game, no Big
+   Picture or Game Mode, no desktop configuration of its own)?
 9. **SPEC.** Should Steam Input get requirement ids (`INPUT-n`) and a
    milestone once this page is accepted, and should the SPEC add
    `controller_mappings` compatibility (§3.1) and the permissions of §9

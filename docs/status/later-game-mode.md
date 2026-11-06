@@ -14,8 +14,8 @@ all three platforms, after `ossteam-input`; then the Game Mode session.
 Open, for the maintainer: the compositor Game Mode runs under
 (gamescope, our own on DRM/KMS, or similar; SPEC §24 Q5). The spec page
 is not written yet. `input.md` points there for what the Steam and Quick
-Access buttons do, and Q1 there (the Steam Deck's controls) now leans
-on Game Mode needing them.
+Access buttons do; the Deck's controls go in `ossteam-steamcontroller`
+(2026-11-06).
 
 Until Big Picture exists, `ISteamUtils::IsSteamInBigPictureMode` stays
 false, which is true (`docs/spec/steamworks/isteamutils.md`).

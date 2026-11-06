@@ -16,9 +16,9 @@ the same day. Steam Input is listed under §21 Later, with no milestone.
 maintainer's review: its §13 has nine questions. Question 1 was
 answered on 2026-11-06: other makers' controllers through SDL 3, the
 Steam Controllers (2015, 2026) through our own reusable driver,
-`ossteam-steamcontroller` (SPEC §5.3, LIC-9, WS-1; `input.md` §6.5).
-Still open in it: the Steam Deck's controls, and a 2015 controller to
-test with. The rest:
+`ossteam-steamcontroller` (SPEC §5.3, LIC-9, WS-1; `input.md` §6.5),
+and the Steam Deck's controls in it too (same day). Still open in it:
+a 2015 controller to test with. The rest:
 the virtual gamepad on Windows and macOS, focus under Wayland, templates
 and glyph art of our own, reading the user's server-side choice before
 M3, reports to Valve, `Init` with no controllers, budgets, SPEC ids).

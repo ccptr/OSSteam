@@ -1,6 +1,6 @@
 ---
 name: m1c-play
-description: M1c status - launch layer, shim, user stats, remote storage, tickets and install scripts at the start committed (scripts 2026-11-05); live runs and real Windows left
+description: M1c status - launch layer, shim, user stats, remote storage, tickets and install scripts at the start committed (scripts 2026-11-05); Spacewar under Proton stops at ISteamController::Init; live runs and real Windows left
 metadata:
   type: project
 ---
@@ -37,8 +37,15 @@ order (00dca80), ISteamUserStats (b4b2808), RemoteStorage local files
 - Spacewar (480) on Linux: on 2026-11-03 `launch` first refused it
   ("… is missing"), since its option names `SteamWorksExample.exe` and
   the depot holds `SteamworksExample.exe`; since 3838c1d Windows paths
-  are looked up without regard to case, and it runs under Proton
-  Experimental.
+  are looked up without regard to case. Until 2026-11-05 only Proton's
+  own `steam.exe` reached the daemon: the game (32-bit) showed
+  "Steam must be running to play this game (SteamAPI_Init() failed)",
+  since its `steam_api` found no `steamclient.dll` in the prefix. Since
+  then the daemon writes its own (`compat-tools.md` §6.3), and Spacewar
+  gets past `SteamAPI_Init` and asks for 22 interfaces. It then stops
+  at "SteamController()->Init failed.": `ISteamController` is not
+  implemented, and Steam Input is a non-goal (SPEC §1). Whether
+  `Init` should succeed with no controllers is for the maintainer.
 - Install scripts at the start (`install-scripts.md` §3.1), f8543d4,
   2026-11-05: planned and run by a thread per launch, announced as
   `LaunchStep`, recorded with the install; on Windows through the

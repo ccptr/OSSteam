@@ -23,7 +23,12 @@ Left:
   verify and uninstall still leave the prefix alone). Unverified: how
   Proton's `steam.exe` runs a `.cmd` entry and whether `run` returns its
   exit code; Spacewar had no entry due.
-- Live runs: Proton Experimental runs Spacewar, and Counter-Strike 2
+- `steamclient.dll` in the prefix (compat-tools §6.3): ossteam's own
+  DLLs since 2026-11-05, run live with Spacewar (32-bit); before that
+  no Windows game under Proton got past `SteamAPI_Init`. 64-bit games
+  and other Proton versions are unverified.
+- Live runs: Spacewar starts under Proton Experimental (it stops at
+  `ISteamController::Init`, [m1c-play](m1c-play.md)), and Counter-Strike 2
   runs in sniper ([discovery-entries-official-steam](discovery-entries-official-steam.md));
   the rows in `m1d.md` marked ⏳ are left.
 - The `use_tool_subprocess_reaper` SIGINT stop path is untested against

@@ -1,6 +1,6 @@
 ---
 name: discovery-entries-official-steam
-description: An official Steam install owns ~/.steam/sdk64 on the dev machine, so launches failed with exit 8; a private ~/.steam per launch (DISC-4 to DISC-6) accepted 2026-11-03; DISC-4 built and run live 2026-11-03 (Portal: First Slice in the Steam Linux Runtime and on the host, Spacewar under Proton; Counter-Strike 2 in sniper, reaching its Game Coordinator 2026-11-04); DISC-5 and DISC-6 built 2026-11-04; the take-over run live against the official client 2026-11-05 (take over, yield, take over again, hand back), and since then follows the client's close at once
+description: An official Steam install owns ~/.steam/sdk64 on the dev machine, so launches failed with exit 8; a private ~/.steam per launch (DISC-4 to DISC-6) accepted 2026-11-03; DISC-4 built and run live 2026-11-03 (Portal: First Slice in the Steam Linux Runtime and on the host, Proton's `steam.exe` under Proton; Counter-Strike 2 in sniper, reaching its Game Coordinator 2026-11-04); DISC-5 and DISC-6 built 2026-11-04; the take-over run live against the official client 2026-11-05 (take over, yield, take over again, hand back), and since then follows the client's close at once
 metadata:
   type: project
 ---
@@ -119,9 +119,11 @@ changed (steamworks-abi.md §1.1.8). The run needed three fixes first:
 encrypted names that span lines (content.md §4), every installed file
 executable on Unix (content.md §8, as the official client does), and a
 stale 32-bit library on the dev PC (rebuild with
-`cargo xtask build-steamclient`). Spacewar (480) under Proton
-Experimental connected the same day, once Windows options' paths were
-looked up without regard to case (launch.md §2).
+`cargo xtask build-steamclient`). Under Proton Experimental only
+Proton's own `steam.exe` connected that day, once Windows options'
+paths were looked up without regard to case (launch.md §2); Spacewar
+(480) itself first got past `SteamAPI_Init` on 2026-11-05
+([m1c-play](m1c-play.md)).
 
 Later the same day Portal: First Slice ran with no container, through
 `legacysteamruntime` (4690330, scout's libraries on `LD_LIBRARY_PATH`),

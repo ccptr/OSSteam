@@ -57,7 +57,7 @@ cargo fmt --all --check
 cargo clippy --workspace --all-targets -- -D warnings
 cargo test --workspace
 cargo xtask check-layering   # crate dependency rules (SPEC §5.2)
-cargo xtask check-spdx       # license headers (SPEC LIC-1)
+cargo xtask check-spdx       # license headers (SPEC LIC-1, LIC-9)
 cargo deny check             # dependency licenses and sources (SPEC LIC-3)
 ```
 
@@ -66,10 +66,17 @@ cargo deny check             # dependency licenses and sources (SPEC LIC-3)
 ossteam's source code is licensed under the GNU General Public License,
 version 2 or (at your option) any later version. See [COPYING](COPYING).
 
+The libraries other programs may embed are licensed under the GNU Lesser
+General Public License, version 2.1 or (at your option) any later version:
+`ossteam-ui`, `ossteam-dbus` and, once it is written, the Steam Input
+library `ossteam-input`. See [COPYING.LESSER](COPYING.LESSER) (SPEC
+LIC-9). Linked with Apache-2.0 crates, they are conveyed under the terms
+of LGPL-3.0-or-later.
+
 Built binaries link crates licensed under Apache-2.0, which
 is compatible with GPLv3 but not with GPLv2. **Binaries are therefore
 conveyed under the terms of GPL-3.0-or-later**, while the source stays
 GPL-2.0-or-later (SPEC LIC-4).
 
-Contributions are accepted under the same license, with a DCO
+Contributions are accepted under the license of the crate they change, with a DCO
 `Signed-off-by` line (SPEC LIC-2).

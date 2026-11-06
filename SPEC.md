@@ -30,10 +30,20 @@ refer to them.
    ossteam provides exactly what Valve's protection systems expect from a
    client and never bypasses, weakens, spoofs or modifies their intended
    behaviour (§13, §14). Neither is in M1.
-3. Linux, Windows and macOS are all first-class platforms (§2.4).
-4. One daemon and many thin clients: anything the GUI can do, the CLI can do,
+3. **Steam Input is an explicit goal.** ossteam supports controllers as the
+   official client does: the devices it supports, their configurations and
+   action sets, remapping to keyboard, mouse and a virtual gamepad for games
+   that don't use the API, and the `ISteamInput` and `ISteamController`
+   interfaces for games that do (§12.3). It is built as a modular library,
+   `ossteam-input`, that other programs can embed without the daemon, the
+   Steam session or the rest of ossteam, and it is licensed
+   LGPL-2.1-or-later so that they may (LIC-9). It has no milestone yet
+   (§21, Later).
+4. Linux, Windows and macOS are all first-class platforms (§2.4).
+5. One daemon and many thin clients: anything the GUI can do, the CLI can do,
    and so can any third-party client that speaks the IPC protocol (§8).
-5. Free software: GPL-2.0-or-later, with a clean-room-style reverse
+6. Free software: GPL-2.0-or-later, and LGPL-2.1-or-later for the libraries
+   other programs may embed (LIC-9), with a clean-room-style reverse
    engineering process (§3).
 
 ### 1.2 Non-goals
@@ -43,7 +53,7 @@ adds them:
 
 - Store purchasing, wallet and gifting. Store and community pages open in the
   system browser.
-- Remote Play, broadcasting, Big Picture mode and Steam Input remapping.
+- Remote Play, broadcasting and Big Picture mode.
 - Acting as a Steam Guard mobile authenticator.
 - Anything that misrepresents what happened. That includes playtime or "idle"
   sessions with no real game process, setting achievements or stats from
@@ -134,12 +144,22 @@ even if it works.
 
 ### 3.1 License
 
-- **[LIC-1]** All ossteam code is licensed GPL-2.0-or-later. Every crate sets
-  `license = "GPL-2.0-or-later"`, and every source file starts with
+- **[LIC-1]** All ossteam code is licensed GPL-2.0-or-later, except the
+  libraries in LIC-9. Every other crate sets
+  `license = "GPL-2.0-or-later"`, and every source file in it starts with
   `// SPDX-License-Identifier: GPL-2.0-or-later`. The repository root holds
   `COPYING` with the GPLv2 text.
-- **[LIC-2]** Contributions are accepted under the same license (inbound =
-  outbound) with a DCO `Signed-off-by`. There is no CLA.
+- **[LIC-9]** The libraries that other programs may embed are licensed
+  LGPL-2.1-or-later: `ossteam-input` (§1.1), `ossteam-ui`, and
+  `ossteam-dbus`, which `ossteam-ui` depends on. Each sets
+  `license = "LGPL-2.1-or-later"`, and every source file in it starts with
+  `// SPDX-License-Identifier: LGPL-2.1-or-later`. The repository root
+  holds `COPYING.LESSER` with the LGPLv2.1 text. Such a library depends on
+  no GPL workspace crate; if it needs one, that crate is relicensed first,
+  which is a SPEC change.
+- **[LIC-2]** Contributions are accepted under the license of the crate
+  they change (inbound = outbound) with a DCO `Signed-off-by`. There is no
+  CLA.
 
 ### 3.2 Dependency licenses
 
@@ -151,8 +171,10 @@ even if it works.
 - **[LIC-4]** winit and much of the Rust ecosystem are licensed Apache-2.0.
   Apache-2.0 is compatible with GPLv3 but not with GPLv2. Our source is still
   GPL-2.0-or-later. Binaries that link Apache-2.0 code are therefore conveyed
-  under the terms of GPL-3.0-or-later. `README` and the release notes say this
-  plainly.
+  under the terms of GPL-3.0-or-later. The same holds for the LGPL
+  libraries (LIC-9): their source is LGPL-2.1-or-later, and linked with
+  Apache-2.0 code they are conveyed under LGPL-3.0-or-later. `README` and
+  the release notes say this plainly.
 
 ### 3.3 Steam protocol definitions
 
@@ -240,8 +262,9 @@ crates/
   ossteam-ipc/             client IPC protocol + blocking client library
   ossteamd/                daemon binary
   ossteam-cli/             binary `ossteam` (clap)
-  ossteam-dbus/            a minimal blocking D-Bus client, for the desktop portal (ADR 0004)
-  ossteam-ui/              our GUI toolkit: window, layout, text, Vulkan and software renderers, focus (ADR 0004)
+  ossteam-input/           Steam Input: devices, configurations, action sets, remapping; embeddable (§1.1, LGPL, LIC-9)
+  ossteam-dbus/            a minimal blocking D-Bus client, for the desktop portal (ADR 0004; LGPL, LIC-9)
+  ossteam-ui/              our GUI toolkit: window, layout, text, Vulkan and software renderers, focus (ADR 0004; LGPL, LIC-9)
   ossteam-gui/             binary `ossteam-gui` (ossteam-ui); src/widgets/
 xtask/                     codegen, packaging, license and layering checks
 docs/spec/                 subsystem specs (RE notes in our own words)
@@ -255,7 +278,9 @@ docs/acceptance/           per-milestone acceptance corpora and checklists
   → auth/pics/content/stats/launch → ossteamd`. Leaf clients depend only on
   `ossteam-ipc` and `ossteam-types`, and the GUI also on `ossteam-ui`.
   `ossteam-ui` depends only on `ossteam-dbus`, which depends on no other
-  workspace crate.
+  workspace crate. `ossteam-input` depends on no other workspace crate, so
+  that it can be embedded on its own (§1.1, LIC-9). Which ossteam crates
+  use it is for `docs/spec/input.md` to say.
 - **[WS-2]** `ossteam-steamclient` depends only on `ossteam-gameipc` and
   `ossteam-types`, plus `std`, and keeps third-party dependencies to a
   minimum. It is built for i686 and x86_64 on Linux and Windows, and as a
@@ -622,6 +647,8 @@ implementation of that library.
 
 Other interfaces, such as Networking, Matchmaking, UGC, Input and HTMLSurface,
 are reachable through their getters and fail truthfully under ABI-3.
+`ISteamInput` and `ISteamController` do so until Steam Input is built
+(§1.1, §21 Later).
 
 ### 12.4 Game IPC
 
@@ -1070,6 +1097,14 @@ offline reporting to games, Workshop (UGC), and password-protected betas.
 The overlay (needs a VAC-impact ADR, VAC-4), `steam://` URL handling (opt-in,
 so it never hijacks an official install), Family Sharing, and additional
 Steamworks interfaces driven by ShimReport data.
+
+Steam Input (§1.1), in this order: `docs/spec/input.md`, written from what
+the official client does and reviewed by the maintainer; the
+`ossteam-input` library, with its own API and tests and usable without the
+rest of ossteam; then the daemon's use of it, `ISteamInput` and
+`ISteamController` in the shim, and controller settings in the CLI and the
+GUI. Configurations shared through the Workshop or synced through Steam
+Cloud wait for those parts of M3.
 
 ---
 

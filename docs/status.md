@@ -45,3 +45,4 @@ When one is confirmed, write it into the spec and delete the note.
 - [M3: Betas](status/m3-betas.md) — betas.md drafted; needs a published beta code
 - [M3: Workshop](status/m3-workshop.md) — workshop.md drafted; subscribing is visible, ask first
 - [M3: Offline](status/m3-offline.md) — offline.md drafted; offline daemon has an empty library today
+- [Later: Steam Input](status/later-steam-input.md) — a goal since 2026-11-05, as the embeddable LGPL library `ossteam-input`; no spec page or milestone yet

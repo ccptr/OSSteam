@@ -44,7 +44,8 @@ order (00dca80), ISteamUserStats (b4b2808), RemoteStorage local files
   then the daemon writes its own (`compat-tools.md` §6.3), and Spacewar
   gets past `SteamAPI_Init` and asks for 22 interfaces. It then stops
   at "SteamController()->Init failed.": `ISteamController` is not
-  implemented, and Steam Input is a non-goal (SPEC §1). Whether
+  implemented: Steam Input is a goal since 2026-11-05 but has no
+  milestone yet ([later-steam-input](later-steam-input.md)). Whether
   `Init` should succeed with no controllers is for the maintainer.
 - Install scripts at the start (`install-scripts.md` §3.1), f8543d4,
   2026-11-05: planned and run by a thread per launch, announced as

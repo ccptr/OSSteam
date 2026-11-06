@@ -43,7 +43,7 @@ game (VAC-4).
 |---|---|
 | `ENABLE_VK_LAYER_VALVE_steam_overlay_1`, `LD_PRELOAD` of `gameoverlayrenderer.so`, `STEAM_OVERLAY_*` | ossteam has no overlay |
 | `ENABLE_VK_LAYER_VALVE_steam_fossilize_1`, `STEAM_FOSSILIZE_*` | no shader pre-caching |
-| `SDL_GAMECONTROLLERCONFIG`, `SDL_GAMECONTROLLER_ALLOW_STEAM_VIRTUAL_GAMEPAD`, `SDL_GAMECONTROLLER_IGNORE_DEVICES`, `SDL_ENABLE_STEAM_SCREEN_KEYBOARD` | no Steam Input |
+| `SDL_GAMECONTROLLERCONFIG`, `SDL_GAMECONTROLLER_ALLOW_STEAM_VIRTUAL_GAMEPAD`, `SDL_GAMECONTROLLER_IGNORE_DEVICES`, `SDL_ENABLE_STEAM_SCREEN_KEYBOARD` | no Steam Input yet (SPEC §1.1) |
 | `SteamStreaming*` | no Remote Play |
 | `SteamDeck`, `SteamOS`, `STEAM_GAMESCOPE_*`, `STEAM_MANGOAPP_*` | ossteam is not the Steam Deck's session |
 | `STEAM_COMPAT_*` | set only for a launch through a compatibility tool (`compat-tools.md` §5.2) |

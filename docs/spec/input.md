@@ -3,7 +3,7 @@
 | | |
 |---|---|
 | Status | Draft; awaiting review. Nothing has been built, and §11 lists what must be observed first |
-| Requirements | SPEC §1.1 (goal 3), §12.3, §20, §21 Later, ABI-3, LIC-9, WS-1, SYNC-1, DIRS-1, FAITH-1 to FAITH-4, GIPC-1, GIPC-2, VAC-4 |
+| Requirements | SPEC §1.1 (goals 3 and 4), §12.3, §20, §21 Later, ABI-3, LIC-9, WS-1, SYNC-1, DIRS-1, FAITH-1 to FAITH-4, GIPC-1, GIPC-2, VAC-4 |
 | Code | none yet. `ISteamInput` and `ISteamController` are reachable through their getters and fail under ABI-3 (SPEC §12.3) |
 
 Steam Input is the part of the official client that reads game
@@ -456,6 +456,9 @@ Only one configuration drives a controller at a time:
   to it, the game's configuration;
 - otherwise, the desktop configuration (keyboard and mouse), so that a
   Steam Controller works as a mouse;
+- in Big Picture and Game Mode (SPEC §1.1, goal 4) while no game runs,
+  the Big Picture configuration (*unverified*: what its name suggests,
+  §3.2);
 - and while the Guide button is held, the chord configuration.
 
 The official client switches with the focused window: when the user
@@ -734,14 +737,15 @@ Under the daemon's data directory (DIRS-1):
 
 Steam Link and Remote Play (the streaming client's configurations, the
 phone touch configurations, `GetRemotePlaySessionID`), VR controllers
-(`controllervr`), the Steam Deck's own system controls (ossteam does
-not run as the Deck's shell), the screen reader and magnifier
+(`controllervr`), the screen reader and magnifier
 controller actions (`sr_*`, `toggle_magnifier`), game recording
 (`gr_*`), and pairing the 2026 controller's receiver
 (`PairDongleTritonConnected` and the related messages), which the
 receiver keeps by itself once paired. Controller registration
 (`AccountHardware.RegisterSteamController`) is left out until a reason
-for it appears.
+for it appears. What the Steam and Quick Access buttons do in Big
+Picture and Game Mode belongs to `docs/spec/game-mode.md` (SPEC §1.1,
+goal 4), not here.
 
 ## 11. Investigation before code
 
@@ -792,7 +796,8 @@ read by the other unchanged.
    §6.5). Still open: does the Steam Deck's built-in controller belong
    in it too? The official client opens it through `hidraw` like the
    others, and its protocol is close to the 2015 controller's
-   (*unverified*), but ossteam does not run as the Deck's shell (§10).
+   (*unverified*), and Game Mode, a goal since 2026-11-06 (SPEC §1.1),
+   needs it.
    And who lends a 2015 controller for testing?
 2. **The virtual gamepad on Windows and macOS** (§4.2). Options: none
    (keyboard and mouse only, and API games), until an overlay ADR

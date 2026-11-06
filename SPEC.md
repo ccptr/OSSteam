@@ -39,10 +39,23 @@ refer to them.
    Steam session or the rest of ossteam, and it is licensed
    LGPL-2.1-or-later so that they may (LIC-9). It has no milestone yet
    (§21, Later).
-4. Linux, Windows and macOS are all first-class platforms (§2.4).
-5. One daemon and many thin clients: anything the GUI can do, the CLI can do,
+4. **Big Picture and Game Mode are explicit goals.** Big Picture is a
+   full-screen interface made for a television and a controller, run as
+   an app on the desktop on all three platforms. Game Mode is the same
+   interface as the whole session a device starts into, as on SteamOS:
+   there is no desktop, and ossteam is the shell. That covers the library
+   and launching, the Quick Access menu, notifications, the on-screen
+   keyboard, power and system settings, and switching to the desktop
+   session. Game Mode is Linux-only (PLAT-2). Both are built on
+   `ossteam-ui` (GUI-1) and driven by controllers through `ossteam-input`
+   (goal 3). The compositor Game Mode runs under is open: gamescope,
+   Valve's compositor, one of ossteam's own that draws through DRM/KMS,
+   or something similar (§24, Q5). The overlay inside games still needs
+   its ADR (VAC-4). Neither has a milestone yet (§21, Later).
+5. Linux, Windows and macOS are all first-class platforms (§2.4).
+6. One daemon and many thin clients: anything the GUI can do, the CLI can do,
    and so can any third-party client that speaks the IPC protocol (§8).
-6. Free software: GPL-2.0-or-later, and LGPL-2.1-or-later for the libraries
+7. Free software: GPL-2.0-or-later, and LGPL-2.1-or-later for the libraries
    other programs may embed (LIC-9), with a clean-room-style reverse
    engineering process (§3).
 
@@ -53,7 +66,7 @@ adds them:
 
 - Store purchasing, wallet and gifting. Store and community pages open in the
   system browser.
-- Remote Play, broadcasting and Big Picture mode.
+- Remote Play and broadcasting.
 - Acting as a Steam Guard mobile authenticator.
 - Anything that misrepresents what happened. That includes playtime or "idle"
   sessions with no real game process, setting achievements or stats from
@@ -113,8 +126,8 @@ even if it works.
   Windows (x86_64) and macOS (aarch64, x86_64) in CI. Platform-specific code
   sits behind `cfg(target_os)` modules that share one interface.
 - **[PLAT-2]** Compatibility tools, meaning Proton and the Steam Linux
-  Runtime, exist only on Linux. That is the only intentionally
-  platform-exclusive feature.
+  Runtime, and Game Mode (§1.1) exist only on Linux. Those are the only
+  intentionally platform-exclusive features.
 
 ### 2.5 Platform-standard directories
 
@@ -1113,6 +1126,13 @@ rest of ossteam; then the daemon's use of it, `ISteamInput` and
 GUI. Configurations shared through the Workshop or synced through Steam
 Cloud wait for those parts of M3.
 
+Big Picture and Game Mode (§1.1), in this order: `docs/spec/game-mode.md`,
+written from what the official client does in Big Picture and in
+SteamOS's Game Mode and reviewed by the maintainer, which also settles
+the compositor (§24, Q5); Big Picture on all three platforms, after
+`ossteam-input`, which drives it; then the Game Mode session on Linux.
+The overlay inside games waits for its ADR (VAC-4).
+
 ---
 
 ## 22. Definition of done (any change)
@@ -1137,6 +1157,7 @@ Cloud wait for those parts of M3.
 | Vulkan is not everywhere: macOS needs MoltenVK, and some Windows machines have no driver | Ship MoltenVK in the macOS bundle; draw with our own software renderer when no Vulkan device can be created (ADR 0004) |
 | The Steamworks interface versions in use are a large surface | Expand interfaces based on ShimReport data. Fail honestly in the meantime. |
 | The name "ossteam" contains "steam" | State non-affiliation clearly (LIC-8). Revisit the name before a 1.0 release (Q3). |
+| Game Mode is a whole session, not an app: the compositor, power, sleep and system settings | Write the spec page first, from what SteamOS's Game Mode does; build Big Picture before the session; choose the compositor deliberately (§24, Q5) |
 | Coexisting with an official Steam install | DISC-3 conflict handling; on Linux a private `~/.steam` for launched games (DISC-4), and Valve's entries taken over only by the user's choice, with its risks stated (DISC-5). Never silently overwrite Valve's entries. |
 
 ---
@@ -1151,3 +1172,16 @@ Cloud wait for those parts of M3.
 3. **Project name.** Keep "ossteam" or rename before 1.0 (see §23).
 4. **Windows VAC privileges.** Does faithful VAC hosting on Windows require
    an elevated service? To be decided in `vac.md` (M2).
+5. **Game Mode's compositor.** Game Mode needs a compositor that shows
+   ossteam's interface and the running game full screen and moves
+   between them (§1.1). The options:
+   - gamescope, Valve's compositor (BSD-2-Clause), run as a separate
+     program as SteamOS runs it, with ossteam's interface talking to it
+     as the official client does, written up from facts first (RE-2);
+   - a compositor of ossteam's own that draws through DRM/KMS with
+     `ossteam-ui`'s renderers and hosts games through Wayland and
+     Xwayland;
+   - or something similar, such as an existing Wayland compositor run
+     as a kiosk.
+
+   To be decided in `docs/spec/game-mode.md`, or in an ADR.

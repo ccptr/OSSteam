@@ -15,6 +15,7 @@ Almost all remaining work needs one of these.
 - [reference-hw.md §5](status/reference-hw-questions.md) — answered 2026-11-03: budgets judged on the dev PC (interim) until the Steam Deck is set up; download runs bypass the VPN and count against a speed test of the line
 - [Spec review gates](status/spec-review-gates.md) — M3 pages reviewed 2026-11-03 with some questions left open (betas Q1/Q4/Q5, offline Q3); DRM and VAC not reviewed; friends needs a second test account
 - [Steam Input spec](status/later-steam-input.md) — `docs/spec/input.md` drafted 2026-11-05; SDL 3 and our own Steam Controller driver chosen 2026-11-06; open: the Deck's controls, the Windows virtual gamepad, focus, own templates and glyphs, budgets
+- [Big Picture and Game Mode](status/later-game-mode.md) — goals since 2026-11-06; open: the compositor Game Mode runs under (SPEC §24 Q5); `docs/spec/game-mode.md` not written yet
 - [A Mac and real Windows](status/hardware-mac-windows.md) — for macOS acceptance and what Wine can't show; waits until closer to release (2026-11-03)
 
 ## Decisions the maintainer hasn't confirmed
@@ -47,3 +48,4 @@ When one is confirmed, write it into the spec and delete the note.
 - [M3: Workshop](status/m3-workshop.md) — workshop.md drafted; subscribing is visible, ask first
 - [M3: Offline](status/m3-offline.md) — offline.md drafted; offline daemon has an empty library today
 - [Later: Steam Input](status/later-steam-input.md) — a goal since 2026-11-05, as the embeddable LGPL library `ossteam-input`; `input.md` drafted 2026-11-05, awaiting review (nine questions); no milestone or code yet
+- [Later: Big Picture and Game Mode](status/later-game-mode.md) — goals since 2026-11-06 (SPEC §1.1 goal 4); no spec page, milestone or code yet

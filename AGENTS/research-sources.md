@@ -21,3 +21,5 @@ needed, outside it:
   carry code from Valve.
 - The `steam-devices` udev rules (as distributions package them): facts
   only, for the device permissions Steam Input needs.
+- gamescope (BSD-2-Clause, Valve's compositor): facts only, for how the
+  official client works with it in Game Mode (SPEC §24, Q5).

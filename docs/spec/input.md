@@ -590,7 +590,19 @@ The library holds everything that does not need Steam:
 
 - **devices**: finding, opening and reading controllers on each
   platform, with their permissions, hot plugging, lizard mode, haptics,
-  lights and gyro calibration;
+  lights and gyro calibration. Other makers' controllers are read
+  through SDL 3 (zlib), as the official client reads them (§2.2; the
+  maintainer, 2026-11-06). The library uses SDL's joystick, gamepad,
+  sensor and HID APIs only, never its windows or events loop for the
+  embedding program; SDL runs on the library's own device thread.
+  Valve's Steam Controllers (2015 and 2026) are not: they have a driver
+  of ossteam's own, `ossteam-steamcontroller` (§6.5; the maintainer,
+  2026-11-06), and SDL is told to leave them alone, as the official
+  client's HIDAPI hints suggest it does (§2.2). How SDL is built and shipped
+  is settled with the library's code; the proposal is a pinned build
+  from source, as `rusqlite` bundles SQLite, so that every platform
+  gets the same version and the official client's install is never
+  used;
 - **configurations**: reading and writing `controller_mappings` (§3.1)
   and action manifests (§3.3) with `ossteam-vdf`, and checking them;
 - **the mapping engine**: from a controller's state and a configuration
@@ -599,8 +611,9 @@ The library holds everything that does not need Steam:
   tested with recorded input;
 - **outputs**: `uinput`, `SendInput` and `CGEventPost` for keyboard and
   mouse, and the virtual gamepad where the platform allows (§4.2);
-- **action state**: the state that `ISteamInput` reads, in a form the
-  library defines and the shim reads (§6.3).
+- **action state**: per controller, the digital and analog action
+  data, the active set and layers, and motion, which the daemon copies
+  into what the shim reads (§6.3).
 
 Its API uses its own types only: no app ids, accounts, IPC messages or
 other ossteam types (SPEC WS-1). An embedding program gives it the
@@ -625,9 +638,11 @@ few milliseconds, so it does not travel as game IPC messages: the daemon
 writes each game's state into memory shared with that game, and wakes
 it with an event, as the SDK says the official client does (a "data
 drop" and an "IPC event"). Setup, manifest paths, action set changes and
-haptics go over game IPC, as their rate is low. The shim links the
-library only for the shared-memory layout. The game can only read its
-own app's state (GIPC-1).
+haptics go over game IPC, as their rate is low. The shared memory's
+layout belongs to the game IPC (`ossteam-gameipc`), not to the library:
+the shim depends on nothing else (WS-2), and the library stays free of
+ossteam's protocol (WS-1). The game can only read its own app's state
+(GIPC-1).
 
 *Unverified*: the latency the official client achieves between a
 controller report and `RunFrame`; §11 measures it. SPEC §20 has no
@@ -635,9 +650,41 @@ budget for it yet (§13).
 
 ### 6.4 Which crates use it
 
-`ossteamd` (all of it), `ossteam-steamclient` (the shared state only)
-and `ossteam-gui` (configurations, for the editor). `ossteam-cli` uses
-the daemon's IPC, not the library.
+`ossteamd` (all of it). `ossteam-gui` edits configurations through the
+daemon's IPC, since WS-1 lets it depend only on `ossteam-ipc`,
+`ossteam-types` and `ossteam-ui`; if the editor turns out to need the
+library's configuration model directly, WS-1 changes first (§13).
+`ossteam-steamclient` does not (WS-2): it reads what the daemon
+writes in the layout of `ossteam-gameipc` (§6.3). `ossteam-cli` uses the
+daemon's IPC, not the library.
+
+### 6.5 `ossteam-steamcontroller`
+
+A driver for Valve's Steam Controllers, the 2015 controller and the 2026
+controller with its receiver, that any program can use: a game engine,
+a remapper, a tool for firmware settings, with or without
+`ossteam-input`. It is LGPL-2.1-or-later (LIC-9), pure Rust, and
+depends on no workspace crate (WS-1). It has two layers:
+
+- **protocol**: pure functions from report bytes to the controller's
+  state (buttons, sticks, trigger, trackpads, gyro, battery) and from
+  requests (lizard mode off and on, settings, haptic pulses, rumble,
+  lights) to report bytes. No I/O, so it can be tested with recorded
+  reports and used over any transport an embedder has;
+- **transport**: opening the devices and moving reports, per platform
+  (`hidraw` on Linux, the HID API on Windows, IOKit on macOS), with
+  hot plugging, behind a feature so that an embedder with its own HID
+  access can leave it out.
+
+Each controller's protocol is written up from facts in a page of its
+own (`docs/spec/input/steam-controller-2015.md`,
+`…/steam-controller-2026.md`) before its code (§11 item 7). The
+development computer has a 2026 controller with its receiver; the 2015
+controller needs one to test with (§13).
+
+On Linux, the kernel's `hid-steam` driver also takes these controllers,
+and is reported to stop its own input when a program opens the
+`hidraw` device (*unverified*; §11).
 
 ## 7. IPC, CLI and GUI
 
@@ -718,9 +765,12 @@ for it appears.
 6. On real Windows and a Mac (`hardware-mac-windows` status note): how
    the client reads devices, sends keyboard and mouse input, and
    emulates a gamepad, and whether the overlay is needed for it.
-7. The device protocols ossteam must drive itself (Valve's controllers
-   at least: lizard mode, trackpads, haptics, gyro), written up from
-   facts in a page per family before the drivers are written.
+7. Whether SDL 3 gives everything a configuration needs for each
+   other maker's family (touchpads, haptics, gyro); and the protocols of
+   the 2015 and 2026 Steam Controllers, written up from facts in a page
+   each before `ossteam-steamcontroller` is written (§6.5), with how
+   the kernel's `hid-steam` driver and the official client share the
+   devices.
 
 The controller on the development computer is a 2026 Steam Controller
 with its USB receiver, which serves items 1 to 3 and 7 for that family.
@@ -736,15 +786,14 @@ read by the other unchanged.
 
 ## 13. Questions for review
 
-1. **Device access.** The official client reads other makers'
-   controllers through its own build of SDL 3 on Linux (§2.2; Windows
-   and macOS unverified). Should `ossteam-input` do the same,
-   with SDL 3 (zlib) as a C dependency, or have its own drivers for
-   every family? SDL is the faithful choice and covers 619 devices on
-   all three platforms; its drivers are what games already use. Own
-   drivers keep the library pure Rust and small. Recommendation: SDL 3
-   for other makers' controllers, own drivers for Valve's (as the
-   official client does), written from facts per item 7 of §11.
+1. **Device access.** *Answered 2026-11-06*: SDL 3 for other makers'
+   controllers (§6.1), and a driver of ossteam's own for the Steam
+   Controllers, reusable by other projects (`ossteam-steamcontroller`,
+   §6.5). Still open: does the Steam Deck's built-in controller belong
+   in it too? The official client opens it through `hidraw` like the
+   others, and its protocol is close to the 2015 controller's
+   (*unverified*), but ossteam does not run as the Deck's shell (§10).
+   And who lends a 2015 controller for testing?
 2. **The virtual gamepad on Windows and macOS** (§4.2). Options: none
    (keyboard and mouse only, and API games), until an overlay ADR
    (VAC-4) allows hooking the game's controller APIs; a signed
@@ -783,4 +832,6 @@ read by the other unchanged.
 9. **SPEC.** Should Steam Input get requirement ids (`INPUT-n`) and a
    milestone once this page is accepted, and should the SPEC add
    `controller_mappings` compatibility (§3.1) and the permissions of §9
-   as rules?
+   as rules? And should WS-1 let the GUI use `ossteam-input`'s
+   configuration model for the editor (§6.4), or should it go through
+   the daemon?

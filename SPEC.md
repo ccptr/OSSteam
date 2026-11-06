@@ -150,7 +150,8 @@ even if it works.
   `// SPDX-License-Identifier: GPL-2.0-or-later`. The repository root holds
   `COPYING` with the GPLv2 text.
 - **[LIC-9]** The libraries that other programs may embed are licensed
-  LGPL-2.1-or-later: `ossteam-input` (§1.1), `ossteam-vdf`, the
+  LGPL-2.1-or-later: `ossteam-input` (§1.1), `ossteam-steamcontroller`,
+  its driver for Valve's Steam Controllers, `ossteam-vdf`, the
   KeyValues library, which `ossteam-input` may use for configuration
   files, `ossteam-ui`, and `ossteam-dbus`, which `ossteam-ui` depends on.
   Each sets
@@ -265,6 +266,7 @@ crates/
   ossteamd/                daemon binary
   ossteam-cli/             binary `ossteam` (clap)
   ossteam-input/           Steam Input: devices, configurations, action sets, remapping; embeddable (§1.1, LGPL, LIC-9)
+  ossteam-steamcontroller/ Steam Controller (2015, 2026) driver: protocol and HID access; embeddable (LGPL, LIC-9)
   ossteam-dbus/            a minimal blocking D-Bus client, for the desktop portal (ADR 0004; LGPL, LIC-9)
   ossteam-ui/              our GUI toolkit: window, layout, text, Vulkan and software renderers, focus (ADR 0004; LGPL, LIC-9)
   ossteam-gui/             binary `ossteam-gui` (ossteam-ui); src/widgets/
@@ -281,8 +283,9 @@ docs/acceptance/           per-milestone acceptance corpora and checklists
   `ossteam-ipc` and `ossteam-types`, and the GUI also on `ossteam-ui`.
   `ossteam-ui` depends only on `ossteam-dbus`, which depends on no other
   workspace crate. `ossteam-vdf` depends on no other workspace crate, and
-  `ossteam-input` on none but `ossteam-vdf`, so that each can be embedded
-  on its own (§1.1, LIC-9). Which ossteam crates use `ossteam-input` is
+  `ossteam-input` on none but `ossteam-vdf` and `ossteam-steamcontroller`,
+  which depends on none, so that each can be embedded on its own (§1.1,
+  LIC-9). Which ossteam crates use `ossteam-input` is
   for `docs/spec/input.md` to say.
 - **[WS-2]** `ossteam-steamclient` depends only on `ossteam-gameipc` and
   `ossteam-types`, plus `std`, and keeps third-party dependencies to a
@@ -296,6 +299,7 @@ docs/acceptance/           per-milestone acceptance corpora and checklists
 |---|---|---|
 | Toolchain | Pinned in `rust-toolchain.toml` | Currently 1.98.1; bumped deliberately, as a change of its own |
 | GUI | `ossteam-ui`, ours (ADR 0004), on `winit`, `ash` (Vulkan; MoltenVK on macOS), `taffy`, `cosmic-text` and `swash`; our own software renderer, presented with `softbuffer` | No third-party GUI framework or widget kit |
+| Controllers | SDL 3 (zlib), in `ossteam-input`; Valve's Steam Controllers through `ossteam-steamcontroller`, ours | As the official client reads them (`docs/spec/input.md` §2.2); SDL's joystick, gamepad, sensor and HID APIs only |
 | CLI | `clap` v4 (derive), `clap_complete` | |
 | Protobuf | `prost`, `prost-build` | Used for both Steam messages and our IPC |
 | WebSocket | `tungstenite` (non-blocking, ADR 0001) + `rustls` | rustls uses the `ring` provider and `rustls-platform-verifier` (SEC-3) |

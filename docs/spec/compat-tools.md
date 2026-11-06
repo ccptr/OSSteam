@@ -399,27 +399,66 @@ interface document: not the game's directory). ossteam waits for it to
 end before the next step.
 
 Install scripts (`install-scripts.md`) of an app launched through Proton
-apply to the prefix, not to the host:
+apply to the prefix, not to the host. They are planned as on Windows
+(`install-scripts.md` §3.1), against the prefix's registry:
 
-- **Registry.** The script's values are written into a `REGEDIT4` file
-  in the prefix directory and imported with Wine's own `regedit /S`,
-  started as a setup command. The daemon then reads the values back from
-  the prefix's registry files (`pfx/system.reg`, `pfx/user.reg`) after
-  the setup command has ended, and records what is there (`install-scripts.md`
-  §5).
-- **Run Process.** Each entry that is due runs as a setup command, with
-  its command line as `install-scripts.md` §2.2 gives it. Its `HasRunKey`
-  is checked and set in the prefix's registry.
-- **Firewall.** Wine has no Windows firewall. The step is reported as
-  not applicable and does not run.
+- **Reading.** The daemon reads the prefix's registry from Wine's files:
+  `pfx/system.reg` for `HKEY_LOCAL_MACHINE` (keys relative to
+  `REGISTRY\Machine`) and `pfx/user.reg` for `HKEY_CURRENT_USER`. Key
+  and value names are matched without regard to case.
+- **Views.** When `system.reg` says `#arch=win64`, as Proton's prefixes
+  do, a key under `HKEY_LOCAL_MACHINE\Software` is read and written at
+  `Software\Wow6432Node` instead, where a 32-bit program's writes land
+  (`install-scripts.md` §2.1). Proton's own records of redistributables
+  are there (§2.2 of that page). `HKEY_CURRENT_USER` is not redirected.
+- **Paths.** Variables (`install-scripts.md` §2.5) give the paths as
+  programs in the prefix see them. A host path is written on the drive
+  whose `pfx/dosdevices/<letter>:` links to `/` (`Z:` in Proton's
+  prefixes), with `\` between components: `%INSTALLDIR%` and
+  `%ROOTDRIVE%` so. `%WinDir%` is `C:\windows`; `%APPDATA%`,
+  `%LOCALAPPDATA%` and `%USER_MYDOCS%` are under
+  `C:\users\<user>`, the one directory under `pfx/drive_c/users` that is
+  not `Public` (`steamuser`); `%COMMON_MYDOCS%` is
+  `C:\users\Public\Documents`; `%STEAMPATH%` is `InstallPath` under
+  `Software\Wow6432Node\Valve\Steam` in the prefix, which Proton sets
+  (`C:\Program Files (x86)\Steam`). *Unverified:* which drive the
+  official client's evaluator names the install directory with; Proton
+  also maps the library folder as `S:`.
+- **A new prefix.** Proton makes the prefix at the first verb it runs.
+  When `pfx/system.reg` does not exist yet, the first setup command
+  imports an empty registry file, so the prefix, with Proton's records,
+  is there before anything is planned.
+- **Registry.** The values a start writes go into one file,
+  `<compatdata>/ossteam-script.reg`, in the form Windows' `regedit`
+  exports (`Windows Registry Editor Version 5.00`, UTF-16LE with a byte
+  order mark, so any character survives), and are imported with Wine's
+  own `regedit /S <file>`, as one setup command. Wine's server writes the
+  registry files only once its last process has gone, not when `regedit`
+  exits, so the daemon cannot read the values back at once. It records
+  the values given to a `regedit` that exits with 0 (`install-scripts.md`
+  §5), and the next start, verify or uninstall reads what is really there:
+  a recorded value that is missing is not deleted again.
+- **Run Process.** Each entry that is due runs as a setup command:
+  the program's path, quoted, and its arguments as written. When it exits
+  with 0, its `HasRunKey` value is set to 1 by a further `regedit`
+  import. *Unverified:* that Proton's `steam.exe` starts `.cmd` and
+  `.bat` files, and that `run` returns the program's exit code.
+- **Firewall.** Wine has no Windows firewall. The step is not planned,
+  and the log says so.
+
+A setup command's output goes to the game's log (`launch.md` §3),
+before the game's own.
 
 There is no elevation inside a prefix: `HKEY_LOCAL_MACHINE` is the
-prefix's own and belongs to this one app. *Open:* whether a script
-without a usable `kvsignatures` check may write it (`install-scripts.md`
-§2.6); until that is decided, the prefix gets the same rule as native
-Windows. The official client runs its own Windows interpreter
-(`iscriptevaluator.exe`) through the tool instead; that program is
-Valve's.
+prefix's own and belongs to this one app, so no step asks. A script
+without a `kvsignatures` block gets no `HKEY_LOCAL_MACHINE` writes, as
+on native Windows (`install-scripts.md` §2.6). The official client runs
+its own Windows interpreter (`iscriptevaluator.exe`) through the tool
+instead; that program is Valve's.
+
+Verify and uninstall take the same removal in the prefix (one `regedit`
+import of deletions), once the app's tool is installed; uninstall with
+`--remove-compat-data` deletes the prefix instead.
 
 SLR-only chains run Linux games, whose install scripts are not applied
 (`install-scripts.md` §3).

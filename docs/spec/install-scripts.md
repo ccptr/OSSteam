@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| Status | Draft for M1b; nothing yet tried against the official client |
+| Status | Draft; verify and uninstall built in M1b, the start in M1c; nothing yet tried against the official client |
 | Requirements | SPEC §10 (CONT-8), SEC-3, §19.3 |
 | Code | parsing and planning in `crates/ossteam-content/src/script.rs`; running them on Windows in `crates/ossteamd/src/content/script/` |
 
@@ -111,13 +111,27 @@ and in which order. The documentation and the scripts seen so far use
 only `1`.
 
 `Requirement_OS` holds `Is64BitWindows` (`1` or `0`: only on 64-bit, or
-only on 32-bit Windows) and `OSType` (a Windows version name such as
-`WinXP` or `Win7`). An entry whose conditions do not hold is skipped.
-*Unverified:* the full list of `OSType` names and whether a version
-matches later versions too.
+only on 32-bit Windows) and `OSType` (a Windows version name). An entry
+whose conditions do not hold is skipped. The .NET 4.7 script of the
+Steamworks Common Redistributables (depot 229006) writes `OSType` as
+`Windows XP`, where this page first assumed `WinXP`. ossteam compares
+the names without spaces and case, with a leading `Windows` read as
+`Win`, so both forms match its `WinXP`. *Unverified:* the full list of `OSType` names and
+whether a version matches later versions too.
+
+Two entries may have the same name: that .NET script has two `4.7.2`
+entries with the same `HasRunKey`, the first only for Windows XP (it
+runs `noop.cmd`), the second for every Windows. Each is an entry of its
+own, taken in the order of the file.
 
 An entry runs when it has no `HasRunKey`, or when the value under that key
-is missing or below `MinimumHasRunValue`. The client calls `CreateProcess`
+is missing or below `MinimumHasRunValue`. Proton's prefixes come with
+such records for the redistributables Wine provides itself, in the
+form ossteam reads: under
+`HKEY_LOCAL_MACHINE\Software\Wow6432Node\Valve\Steam\Apps\CommonRedist\.NET\4.7.2`
+the `REG_DWORD` value `4.7.2` = 1, and likewise for the other .NET
+versions and XNA 4.0 (a fact from Proton's prefix, not from the official
+client). The client calls `CreateProcess`
 with the process and its arguments, and falls back to `ShellExecuteEx` if
 that fails. An exit code of 0 counts as success, and then the value under
 `HasRunKey` is set to 1. Any other exit code leaves it unset, so the entry
@@ -129,6 +143,13 @@ Each key under `Firewall` names a program and its value is the program's
 path. The client adds an inbound exception for it in Windows Firewall, so
 the user is not asked when the game first listens. *Unverified:* the
 profile and protocol of the rule the official client makes.
+
+ossteam adds the rule with Windows' own `netsh`:
+`netsh advfirewall firewall add rule name="<name>" dir=in action=allow
+program="<path>" enable=yes`, for every profile and protocol. A rule of
+that name for that program is looked for first (`netsh advfirewall
+firewall show rule name="<name>" verbose`); when there is one, the step
+is not planned.
 
 ### 2.4 Run Process On Uninstall
 
@@ -180,7 +201,7 @@ signature as well.
 | Event | What happens |
 |---|---|
 | Install or update finishes | Nothing runs yet. The app's scripts are recorded with the install (§1) |
-| The game starts (M1c) | Before the game process is created: Registry, then Firewall, then each Run Process entry that is due. The launch waits for them, and shows the step under way |
+| The game starts (M1c) | Before the game process is created: Registry, then Firewall, then each Run Process entry that is due (§3.1). The launch waits for them, and shows the step under way |
 | Verify | After the files are repaired: registry values the scripts wrote and the `HasRunKey` values (unless `NoCleanUp`) are removed, so everything runs again at the next start |
 | Uninstall | Run Process On Uninstall entries that are due run, then the same removal as verify, then the files are deleted. A failed entry or a declined prompt does not stop the uninstall |
 
@@ -198,6 +219,37 @@ the official client shows or does in that case.
 
 Scripts are applied on native Windows, and on Linux to the prefix of an
 app launched through Proton (`compat-tools.md` §7).
+
+### 3.1 At the start
+
+Once the launch's checks have passed and its tools are installed
+(`launch.md` §2), the daemon reads the app's scripts (§1) and plans:
+
+1. **Registry.** Every value of every script, in order. A value under
+   `HKEY_LOCAL_MACHINE` is left out when its script has no
+   `kvsignatures` block (§2.6). A value that already holds what the
+   script writes (the same type and data) is left out.
+2. **Firewall.** Every rule that is not there yet (§2.3).
+3. **Run Process.** Every entry whose conditions hold and that is due
+   (§2.2).
+
+The steps then run as §4 says. The values written are recorded with the
+install (§5), whether the launch then goes on or not. Nothing in the plan
+stops the launch: a step that fails, or one the user declines, is logged
+and runs again at the next start, and the game starts after the last
+step.
+
+A script that does not match the installed manifest stops the launch
+with `NOT_FOUND` and a message that the app needs a verify, as a missing
+executable does (`launch.md` §2). One that does not parse is logged and
+left out (§6).
+
+While the steps run, the launch is under way, as one waiting for its
+tools is: its reply waits, and a second `Launch` of the app is refused
+with `CONFLICT`. Each step that starts is announced on `GAMES` as
+`LaunchStep` (`launch.md` §8). `Shutdown` with `force` does not wait for
+them: the launch fails with `CONFLICT`, and a program under way runs on,
+unwatched.
 
 ## 4. Elevation
 
@@ -243,9 +295,9 @@ redistributable it already installed is not installed again.
 | Case | Behaviour |
 |---|---|
 | The script does not parse | Not run; logged with the depot and path |
-| The file does not match the manifest | Not run; the launch reports that the app needs a verify |
+| The file does not match the manifest | Not run; the launch stops with `NOT_FOUND` and says that the app needs a verify (§3.1); verify and uninstall go on without it |
 | An unknown action key | Ignored and logged |
-| A Run Process program is missing | That entry fails; the others run |
+| A Run Process program is missing | That entry fails; the others run, and the launch goes on |
 | The user declines UAC | The elevated steps do not run; the launch continues |
 
 ## 7. Verification against the official client
@@ -254,12 +306,14 @@ redistributable it already installed is not installed again.
 |---|---|
 | Section and key names, case handling | from the documentation |
 | `process N` beyond 1 | unverified |
-| `OSType` names | unverified |
+| `OSType` names | `Windows XP` seen in depot 229006; the rest unverified |
 | Variables beyond those listed | unverified |
 | Registry and Firewall at every start | unverified |
 | Order of scripts | unverified |
-| Firewall rule shape | unverified |
+| Firewall rule shape | unverified; ossteam's in §2.3 |
 | Signature algorithm | unknown; not checked (§2.6) |
+| The value name under `HasRunKey` | the entry's name in Proton's prefixes (§2.2); the official client's own writes unverified |
+| Entries with the same name | seen in depot 229006; each taken on its own |
 | Whether `HasRunKey` applies to Run Process On Uninstall entries | unverified; ossteam applies it |
 | Text encodings of script files | unverified; ossteam reads UTF-8 and UTF-16LE with a byte order mark |
 | `OSType` of Windows 8.1 and 11 | unverified; ossteam uses `Win81` and `Win11` |

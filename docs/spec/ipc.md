@@ -123,7 +123,7 @@ is left unchanged. Events always have `id = 0`.
 | `SESSION` | `SessionChanged`, `LoginPrompt`, `LoginEnded` (§5.2) |
 | `LIBRARY` | `AppChanged{app_ids, complete}` (§5.3) |
 | `JOBS` | `JobStateChanged{job}`, `JobProgress{job_id, progress}` (§5.6) |
-| `GAMES` | `GameStarted{game}`, `GameExited{app_id, exit_code \| signal, seconds}`, `ShimReport{app_id, pid, launched, interfaces, unknown_versions, unimplemented}` (§5.7) |
+| `GAMES` | `LaunchStep{app_id, step, text}`, `GameStarted{game}`, `GameExited{app_id, exit_code \| signal, seconds}`, `ShimReport{app_id, pid, launched, interfaces, unknown_versions, unimplemented}` (§5.7) |
 
 ## 5. Methods
 

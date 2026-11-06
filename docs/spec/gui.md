@@ -220,7 +220,10 @@ game from the store:
 
 - **Launch options.** When more than one option qualifies, Play opens a
   chooser of them, with their descriptions; when none does, Play
-  launches and shows `Launch`'s error, which says why. An
+  launches and shows `Launch`'s error, which says why. While the launch
+  is under way, the text of its last `LaunchStep` (`launch.md` §8) shows
+  beside Play, such as "Running install scripts: Registry values of
+  depot 481". An
   "Arguments" field adds `extra_args`, split like a shell would split
   them, without expansion.
 - **Details:** install path, folder, branch, build, size and depots.

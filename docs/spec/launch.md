@@ -105,13 +105,20 @@ app's tool runs programs of (`windows` for Proton), or of `linux` when
 it has none. Once the checks pass, missing or outdated tools of the
 chain are installed before the game starts (`compat-tools.md` §4).
 
+Then, for an option of the `windows` platform (on Windows, or through a
+tool on Linux), the app's install scripts are applied
+(`install-scripts.md` §3.1, `compat-tools.md` §7). A script that does not
+match its manifest stops the launch with `NOT_FOUND`; nothing else in
+them does. The game's process is created after the last step.
+
 The account need not be logged on at that moment. A game started while
 the connection is down runs, and its play session is reported once the
 session is back (§6). The game's `steam_api` sees the client as logged
 off until then (NET-4).
 
 *Unverified:* the official client also synchronises cloud files and
-stats, shows notices and runs install scripts in this phase. Its log
+stats, and shows notices, in this phase; it runs install scripts in it
+too. Its log
 names the steps `UpdatingAppInfo`, `RunningInstallScript`,
 `SynchronizingCloud`, `SynchronizingStats`, `ShowInterstitials`,
 `SiteLicenseSeatCheckout` and `CreatingProcess`. Cloud is M3. Install
@@ -147,7 +154,8 @@ its example (`compat-tools.md` §5.1).
 
 **Standard streams.** Standard input is the null device. Standard output
 and standard error go to `<state>/logs/games/<app id>.log`, which is
-replaced at each launch. The official client sends them to its own
+replaced at each launch. The launch's setup commands (`compat-tools.md`
+§7) write to it first, and the game's output follows theirs. The official client sends them to its own
 output.
 
 **User launch options.** The official client lets the user set launch
@@ -285,7 +293,7 @@ shim does not answer, and it fails under ABI-3.
 | Method | Behaviour |
 |---|---|
 | `GetLaunchOptions{app_id}` | The app's options as §1 reads them, each with `qualifies` set for the platform the app runs as (its tool's on Linux, §2), the branch and the account, and `required` set when exactly one qualifies. `NOT_FOUND` when the app is not in the library. |
-| `Launch{app_id, option, extra_args, allow_stale}` | Runs the checks in §2, starts the game and replies with the running game. `option` unset means the only qualifying option. When compatibility tools must be installed first (`compat-tools.md` §4) the reply waits for their jobs, however long they take; the client library waits for this reply without a timeout. |
+| `Launch{app_id, option, extra_args, allow_stale}` | Runs the checks in §2, starts the game and replies with the running game. `option` unset means the only qualifying option. When compatibility tools must be installed first (`compat-tools.md` §4) the reply waits for their jobs, however long they take, and then for the install scripts (`install-scripts.md` §3.1); the client library waits for this reply without a timeout. |
 | `ListRunning` | The games the daemon launched that are still running. |
 | `StopGame{app_id}` | §5 |
 
@@ -293,7 +301,13 @@ A running game carries its app id, the option index, the pid the daemon
 started, the time it started (Unix seconds) and the path of its log
 file.
 
-Events on `GAMES`: `GameStarted{game}` after the process is created,
+Events on `GAMES`: `LaunchStep{app_id, step, text}` as each step of a
+launch under way starts, before the game's process exists. `step` is
+`INSTALL_SCRIPT` while install scripts run (`RunningInstallScript` in
+the official client's log), and `text` says which in words, such as
+"Registry values of depot 481" or "Running Microsoft .NET Framework
+4.7.2.cmd". `ossteam launch` prints each on standard error
+(`running install scripts: <text>`), unless `--quiet`. `GameStarted{game}` after the process is created,
 and `GameExited{app_id, exit_code | signal, seconds}` after the last
 process of the game is gone and its connections to the game endpoint
 have closed, at most 2 s later (`steamworks-abi.md` §3.5). Just before

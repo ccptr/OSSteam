@@ -31,7 +31,7 @@ date and the build.
 | `ISteamRemoteStorage`: local files only, nothing synced (`isteamremotestorage.md`) | built 2026-10-18; unit tests |
 | `ISteamUser` tickets, auth sessions and encrypted app tickets | built 2026-10-18; daemon test against the fake CM; message layout from SteamKit2 and node-steam-user, unverified |
 | CLI: `launch`, `running`, `stop` | built 2026-10-17 |
-| Install scripts before the first start (`install-scripts.md` §3) | ⏳ waits on the §2.6 decision |
+| Install scripts at the start (`install-scripts.md` §3.1) | built 2026-11-05 (f8543d4): planning, grouping and recording against the fake system; registry values through the Windows API under Wine (HKCU only). UAC, the elevated helper, HKLM and `netsh` firewall rules never run on real Windows |
 | The 32-bit client library built and installed as `lib32/` (`cargo xtask build-steamclient`) | built 2026-10-18; Linux i686 and Windows i686 (cross, mingw) libraries export the entry points; never loaded by a game |
 | §20 shim callback-pump overhead (`ossteam-steamclient/tests/pump.rs`) | built 2026-10-18; on the development machine, not the reference hardware: about 30 ns per empty `Steam_BGetCallback` optimised, on x86_64 and i686 Linux; Windows not run (the test needs a Unix socket) |
 | Captures of the official client's play-session and ticket messages | ⏳ needs a capture setup |

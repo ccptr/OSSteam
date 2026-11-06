@@ -26,7 +26,7 @@ build.
 | `uninstall --remove-compat-data` (§6.1) | built 2026-10-18; daemon test |
 | The shim in a container: library copies, the abstract socket (§9) | built 2026-10-18; daemon test of the abstract socket; never run in a real container |
 | Stopping through `use_tool_subprocess_reaper` (§10) | built 2026-10-18; not tested against a real tool |
-| Install scripts in the prefix (§7) | ⏳ waits on the `install-scripts.md` §2.6 decision, as M1c's launch-time steps do |
+| Install scripts in the prefix (§7) | built 2026-11-05 (f8543d4): Wine's registry files, the 32-bit view, `regedit` imports and Run Process entries as setup commands; daemon test with a fake Proton (`m1d::install_scripts_apply_to_the_prefix_before_the_game_starts`). Not built: their removal at verify and uninstall |
 
 ## Setup
 
@@ -61,4 +61,4 @@ build.
 | A tool update published while installed is installed before the next launch | ⏳ |
 | `uninstall` keeps `compatdata/<app>`; `uninstall --remove-compat-data` deletes it | ⏳ |
 | With the data directory outside the home directory, the shim still loads (`STEAM_COMPAT_MOUNTS`) | ⏳ |
-| A Windows-only title with an install script: its registry values land in the prefix (after §2.6) | ⏳ |
+| A Windows-only title with an install script: its registry values land in the prefix | ✅ 2026-11-05, Spacewar (480) under Proton Experimental in the Steam Linux Runtime 4: `launch` printed "running install scripts: Writing 2 registry values", one `proton run regedit /S` exited 0, and the game started 6.7 s after the call; `Exe_Path` (its `Z:` path) and `PatchVersion` = 42 appeared under `Software\Wow6432Node\Valve\Spacewar` in `system.reg` once Wine's server saved it, and were recorded with the install. .NET 4.7.2 (depot 229006) was not run: Proton's prefix records it. A second launch planned nothing and started in 0.57 s. No Run Process entry was due, so `.cmd` files and exit codes through Proton's `steam.exe` are still unverified |

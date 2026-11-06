@@ -1,6 +1,6 @@
 ---
 name: m1d-compat-tools
-description: M1d status - compat tool list, mappings, chain launch committed; prefix install scripts and real Proton runs left
+description: M1d status - compat tool list, mappings, chain launch and install scripts in the prefix committed (scripts run live 2026-11-05); their removal at verify/uninstall and the remaining live rows left
 metadata:
   type: project
 ---
@@ -15,9 +15,17 @@ launch with a deferred Launch reply while tool jobs run (e46bba8); GetApp
 (3b87938). Daemon tests: `crates/ossteamd/src/testing/m1d.rs`.
 
 Left:
-- Install scripts in the prefix (compat-tools §7), blocked on
-  [install-scripts-2-6](install-scripts-2-6.md).
-- Live runs. Nothing has run under a real Proton, SLR or container yet.
+- Install scripts in the prefix (compat-tools §7): built 2026-11-05
+  (f8543d4) and run live with Spacewar the same day
+  ([m1d](../acceptance/m1d.md)): its two registry values landed under
+  `Wow6432Node`, and a second start planned nothing. Not built: removing
+  their values at verify and uninstall, which §7 describes (on Linux
+  verify and uninstall still leave the prefix alone). Unverified: how
+  Proton's `steam.exe` runs a `.cmd` entry and whether `run` returns its
+  exit code; Spacewar had no entry due.
+- Live runs: Proton Experimental runs Spacewar, and Counter-Strike 2
+  runs in sniper ([discovery-entries-official-steam](discovery-entries-official-steam.md));
+  the rows in `m1d.md` marked ⏳ are left.
 - The `use_tool_subprocess_reaper` SIGINT stop path is untested against
   a real tool.
 - Seen 2026-11-04: an app with no `oslist` anywhere (Europa Universalis

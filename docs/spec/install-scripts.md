@@ -4,7 +4,7 @@
 |---|---|
 | Status | Draft; verify and uninstall built in M1b, the start in M1c; nothing yet tried against the official client |
 | Requirements | SPEC §10 (CONT-8), SEC-3, §19.3 |
-| Code | parsing and planning in `crates/ossteam-content/src/script.rs`; running them on Windows in `crates/ossteamd/src/content/script/` |
+| Code | parsing in `crates/ossteam-content/src/script.rs`; planning and running them in `crates/ossteamd/src/content/script/` (Windows in `windows.rs`, a Proton prefix in `prefix.rs`), at the start in `crates/ossteamd/src/core/scripts.rs` |
 
 A depot can carry **install scripts**: KeyValues files that ask the client
 to write registry values, add firewall exceptions and run installers

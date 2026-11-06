@@ -34,9 +34,9 @@ When one is confirmed, write it into the spec and delete the note.
 - [M0: Foundations](status/m0-foundations.md) — acceptance items closed; startup flash and DPI fixed
 - [M1a: Session and library](status/m1a-session-library.md) — idle wakeups fixed; live runs left
 - [M1b: Content](status/m1b-content.md) — committed; most Linux live rows run 2026-11-04; CS2 matches the official tree once optional DLC is left out; a shared DLC depot, delta and Windows left; a question on cancelled first installs
-- [M1c: Play (native)](status/m1c-play.md) — shim, stats, storage, tickets committed; script steps and live runs left
+- [M1c: Play (native)](status/m1c-play.md) — shim, stats, storage, tickets and install scripts at the start committed (scripts 2026-11-05, run live through Proton); live runs and real Windows left
 - [Discovery entries](status/discovery-entries-official-steam.md) — official Steam owns `~/.steam/sdk64`; a private `~/.steam` per launch (DISC-4 to DISC-6) accepted 2026-11-03; DISC-4 built and run live 2026-11-03 (scout, legacy scout, Proton, CS2 in sniper); CS2 reaches its Game Coordinator 2026-11-04, and its relay network comes up with ossteam's certificate (`SteamNetworkingSocketsSerialized005`, `SteamAppDisableUpdate001` and `ISteamHTTP` with its cache added the same day); DISC-5 and DISC-6 built 2026-11-04; the take-over run live against the official client 2026-11-05, and follows the client's close at once since the same day
-- [M1d: Compat tools](status/m1d-compat-tools.md) — committed; prefix scripts and real Proton runs left
+- [M1d: Compat tools](status/m1d-compat-tools.md) — committed; install scripts in the prefix run live with Spacewar 2026-11-05; their removal at verify/uninstall and the remaining live rows left
 - [M1e: GUI and macOS](status/m1e-gui-macos.md) — committed; logged-in checks, macOS runs and §20 rows left
 - [M2: Steam DRM](status/m2-drm.md) — drm.md drafted, not reviewed
 - [M2: VAC](status/m2-vac.md) — vac.md drafted, not reviewed

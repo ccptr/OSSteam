@@ -19,7 +19,7 @@ Left:
   `--script-helper` via runas) passes under Wine but has never run on
   real Windows.
 - Launch-time script steps (registry writes, firewall, run process)
-  belong to M1c ([install-scripts-2-6](install-scripts-2-6.md)).
+  were built in M1c on 2026-11-05 ([m1c-play](m1c-play.md)).
 - Live on Linux, 2026-11-04 (m1b.md): info, a SIGKILL mid-download,
   verify, uninstall, a second folder, job controls, the bandwidth limit,
   two jobs at once and a beta branch. Counter-Strike 2's tree matched

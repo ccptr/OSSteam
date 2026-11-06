@@ -1,6 +1,6 @@
 ---
 name: m1c-play
-description: M1c status - launch layer, shim, user stats, remote storage and tickets committed; script steps and live runs left
+description: M1c status - launch layer, shim, user stats, remote storage, tickets and install scripts at the start committed (scripts 2026-11-05); live runs and real Windows left
 metadata:
   type: project
 ---
@@ -34,16 +34,20 @@ order (00dca80), ISteamUserStats (b4b2808), RemoteStorage local files
 - The C++ ABI test: [abi-test](../../AGENTS/steamworks/abi-test.md).
 - Windows job-object, registry and named-pipe code passes under Wine
   only.
-- Spacewar (480) on Linux, live 2026-11-03: its one launch option is
-  `SteamWorksExample.exe` with no `oslist`, its depot 481 holds Windows
-  files only, and the file is `SteamworksExample.exe`. `launch` and the
-  GUI's Play both refuse with "… is missing; verify app 480" (exit 5),
-  since the daemon matches the name with case and picks Steam Linux
-  Runtime 1.0 ("it has a Linux version") rather than Proton. How the
-  official client resolves the name's case, and which tool it runs
-  Spacewar with on Linux, is not in `launch.md`; spec it before
-  changing either.
+- Spacewar (480) on Linux: on 2026-11-03 `launch` first refused it
+  ("… is missing"), since its option names `SteamWorksExample.exe` and
+  the depot holds `SteamworksExample.exe`; since 3838c1d Windows paths
+  are looked up without regard to case, and it runs under Proton
+  Experimental.
+- Install scripts at the start (`install-scripts.md` §3.1), f8543d4,
+  2026-11-05: planned and run by a thread per launch, announced as
+  `LaunchStep`, recorded with the install; on Windows through the
+  registry API, `netsh` and the elevated helper, in a Proton prefix as
+  [m1d-compat-tools](m1d-compat-tools.md) says. Run live on Linux with
+  Spacewar ([m1d](../acceptance/m1d.md)). The Windows code has run only
+  under Wine (HKCU values): UAC, the helper, HKLM and firewall rules
+  wait for real Windows ([hardware-mac-windows](hardware-mac-windows.md)).
+  `kvsignatures` stay unchecked ([install-scripts-2-6](install-scripts-2-6.md)).
 
-Left: launch-time install-script steps
-([install-scripts-2-6](install-scripts-2-6.md)); live runs (Spacewar 480,
-a 32-bit title, playtime on the account).
+Left: live runs (a 32-bit title, playtime on the account); install
+scripts on real Windows.

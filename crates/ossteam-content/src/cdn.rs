@@ -64,6 +64,9 @@ pub fn select(list: &[CContentServerDirectoryServerInfo], app: AppId) -> Vec<Ser
 #[derive(Debug)]
 pub struct Rotation {
     inner: Mutex<RotationState>,
+    /// How long a failed server is passed over: [`PENALTY`], shorter in
+    /// tests.
+    penalty: Duration,
 }
 
 #[derive(Debug)]
@@ -77,12 +80,18 @@ struct RotationState {
 impl Rotation {
     /// `None` when `list` is empty.
     pub fn new(list: Vec<Server>) -> Option<Self> {
+        Self::with_penalty(list, PENALTY)
+    }
+
+    /// A rotation whose failed servers are passed over for `penalty`.
+    pub fn with_penalty(list: Vec<Server>, penalty: Duration) -> Option<Self> {
         (!list.is_empty()).then(|| Self {
             inner: Mutex::new(RotationState {
                 list,
                 next: 0,
                 penalised: Vec::new(),
             }),
+            penalty,
         })
     }
 
@@ -115,10 +124,10 @@ impl Rotation {
             .expect("penalised hosts are in the list")
     }
 
-    /// `server` failed a request; pass it over for [`PENALTY`].
+    /// `server` failed a request; pass it over for the penalty.
     pub fn failed(&self, server: &Server) {
         let mut s = self.inner.lock().unwrap_or_else(|e| e.into_inner());
-        let until = Instant::now() + PENALTY;
+        let until = Instant::now() + self.penalty;
         match s.penalised.iter_mut().find(|(h, _)| *h == server.vhost) {
             Some(entry) => entry.1 = until,
             None => s.penalised.push((server.vhost.clone(), until)),
@@ -127,13 +136,24 @@ impl Rotation {
 
     /// Whether every server is currently penalised.
     pub fn exhausted(&self) -> bool {
+        self.rest().is_some()
+    }
+
+    /// While every server is penalised, how long until the first penalty
+    /// ends; a retry waits that long first (`content.md` §7).
+    pub fn rest(&self) -> Option<Duration> {
         let s = self.inner.lock().unwrap_or_else(|e| e.into_inner());
         let now = Instant::now();
-        s.list.iter().all(|srv| {
-            s.penalised
+        let mut first: Option<Instant> = None;
+        for srv in &s.list {
+            let until = s
+                .penalised
                 .iter()
-                .any(|(h, until)| *h == srv.vhost && *until > now)
-        })
+                .find(|(h, until)| *h == srv.vhost && *until > now)
+                .map(|(_, until)| *until)?;
+            first = Some(first.map_or(until, |f| f.min(until)));
+        }
+        first.map(|f| f - now)
     }
 }
 
@@ -358,7 +378,27 @@ mod tests {
         assert!(r.exhausted());
         // The one whose penalty ends first.
         assert_eq!(r.pick().host, "a");
+        let rest = r.rest().unwrap();
+        assert!(rest <= PENALTY && rest > PENALTY / 2, "{rest:?}");
         assert!(Rotation::new(Vec::new()).is_none());
+    }
+
+    #[test]
+    fn rest_ends_with_the_first_penalty() {
+        let s = |h: &str| Server {
+            kind: "CDN".into(),
+            host: h.into(),
+            vhost: h.into(),
+        };
+        let r = Rotation::with_penalty(vec![s("a"), s("b")], Duration::from_millis(50)).unwrap();
+        assert_eq!(r.rest(), None);
+        r.failed(&s("a"));
+        assert_eq!(r.rest(), None, "b is still there");
+        r.failed(&s("b"));
+        assert!(r.rest().is_some());
+        std::thread::sleep(Duration::from_millis(60));
+        assert_eq!(r.rest(), None);
+        assert!(!r.exhausted());
     }
 
     #[test]

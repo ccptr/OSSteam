@@ -56,9 +56,27 @@ pub fn update(cli: &Cli, apps: &[String], all: bool, wait: bool) -> Result<(), F
         subscribe(&client)?;
     }
     let jobs = client.update(&ids, all)?;
-    if jobs.is_empty() && !cli.json && !cli.quiet {
-        println!("no updates to install");
-        return Ok(());
+    if !cli.json && !cli.quiet {
+        // An app that already has an unfinished job gets no update job
+        // (`ipc.md` §5.6); name that job rather than saying nothing.
+        let skipped: Vec<u32> = ids
+            .iter()
+            .copied()
+            .filter(|id| !jobs.iter().any(|j| j.app_id == *id))
+            .collect();
+        if !skipped.is_empty() {
+            for j in client.list_jobs()? {
+                if skipped.contains(&j.app_id) && unfinished(j.state()) {
+                    println!("{}", held_by(&j));
+                }
+            }
+        }
+        if jobs.is_empty() {
+            if skipped.is_empty() || ids.is_empty() {
+                println!("no updates to install");
+            }
+            return Ok(());
+        }
     }
     finish(cli, &client, jobs, wait, true)
 }
@@ -376,6 +394,35 @@ fn state_name(s: JobState) -> &'static str {
     }
 }
 
+/// The daemon's unfinished jobs, failed ones included (`ipc.md` §5.6).
+fn unfinished(s: JobState) -> bool {
+    matches!(
+        s,
+        JobState::Queued | JobState::Running | JobState::Paused | JobState::Failed
+    )
+}
+
+/// Why an update of `j`'s app was not queued: `j` is unfinished.
+fn held_by(j: &v1::Job) -> String {
+    let what = format!(
+        "app {} has a {} {} (job {})",
+        j.app_id,
+        state_name(j.state()),
+        kind_name(j.kind()),
+        j.job_id
+    );
+    match (j.state(), &j.error) {
+        (JobState::Failed, Some(e)) => format!(
+            "{what}: {}; `ossteam jobs resume {}` tries it again",
+            e.message, j.job_id
+        ),
+        (JobState::Failed | JobState::Paused, _) => {
+            format!("{what}; `ossteam jobs resume {}` goes on with it", j.job_id)
+        }
+        _ => what,
+    }
+}
+
 fn phase_name(p: JobPhase) -> &'static str {
     match p {
         JobPhase::Preparing => "preparing",
@@ -615,6 +662,26 @@ mod tests {
             }),
             "finishing"
         );
+    }
+
+    #[test]
+    fn update_held_by_a_job() {
+        let mut failed = job(17, JobKind::Update, JobState::Failed);
+        failed.error = Some(v1::Error {
+            message: "HTTP 503".into(),
+            ..Default::default()
+        });
+        assert_eq!(
+            held_by(&failed),
+            "app 480 has a failed update (job 17): HTTP 503; \
+             `ossteam jobs resume 17` tries it again"
+        );
+        assert_eq!(
+            held_by(&job(4, JobKind::Verify, JobState::Running)),
+            "app 480 has a running verify (job 4)"
+        );
+        assert!(unfinished(JobState::Failed));
+        assert!(!unfinished(JobState::Done));
     }
 
     #[test]

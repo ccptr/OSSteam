@@ -4,7 +4,7 @@
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use ossteam_types::{CancelToken, DepotId, ManifestId};
 
@@ -26,6 +26,19 @@ pub trait Tokens: Send + Sync {
         host: &str,
         cancel: &CancelToken,
     ) -> Result<(String, u64), String>;
+}
+
+/// Sleeps for `d`, checking `cancel` at least once a second (CONC-2).
+fn wait(d: Duration, cancel: &CancelToken) {
+    const SLICE: Duration = Duration::from_millis(250);
+    let end = Instant::now() + d;
+    while !cancel.is_cancelled() {
+        let left = end.saturating_duration_since(Instant::now());
+        if left.is_zero() {
+            return;
+        }
+        std::thread::sleep(left.min(SLICE));
+    }
 }
 
 #[derive(Debug, Clone, thiserror::Error, PartialEq, Eq)]
@@ -154,7 +167,14 @@ impl Downloader {
         accept: impl Fn(Vec<u8>) -> Result<T, E>,
     ) -> Result<T, DownloadError> {
         let mut last = String::new();
-        for _ in 0..ATTEMPTS {
+        for attempt in 0..ATTEMPTS {
+            if attempt > 0
+                && let Some(rest) = self.rotation.rest()
+            {
+                // Every server failed lately: wait for one, not at once.
+                tracing::debug!(?rest, "every content server failed; waiting");
+                wait(rest, cancel);
+            }
             if cancel.is_cancelled() {
                 return Err(DownloadError::Cancelled);
             }
@@ -174,6 +194,12 @@ impl Downloader {
             }
         }
         Err(DownloadError::Exhausted { what: what(), last })
+    }
+
+    /// Whether every server of the rotation is penalised, so a job that
+    /// failed should fetch the server list again (`content.md` §1).
+    pub fn exhausted(&self) -> bool {
+        self.rotation.exhausted()
     }
 
     /// A chunk's file data, decrypted and checked (`content.md` §5).

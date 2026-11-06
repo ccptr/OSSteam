@@ -5,6 +5,7 @@
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 
 use ossteam_content::cdn::{Rotation, Server};
 use ossteam_content::download::Downloader;
@@ -52,8 +53,11 @@ fn servers() -> Rotation {
         host: h.into(),
         vhost: h.into(),
     };
-    Rotation::new(vec![s("a.cdn"), s("b.cdn")]).unwrap()
+    Rotation::with_penalty(vec![s("a.cdn"), s("b.cdn")], PENALTY).unwrap()
 }
+
+/// The servers' penalty here, short so failing tests stay fast.
+const PENALTY: Duration = Duration::from_millis(100);
 
 fn downloader(cdn: &Arc<FakeCdn>) -> Downloader {
     Downloader::new(cdn.clone(), servers(), Some(cdn.clone()))
@@ -428,6 +432,58 @@ fn retries_other_servers_and_fetches_tokens() {
     run(&job(&l, Mode::Install, m, None), &cdn, None).unwrap();
     assert_eq!(read(&l.install.join("bin/game")), big);
     assert_eq!(cdn.tokens_issued(), 1, "one token per depot and host");
+}
+
+#[test]
+fn waits_once_every_server_has_failed() {
+    let cdn = Arc::new(FakeCdn::new());
+    let (_, _, d) = v1();
+    cdn.publish(&d, 77);
+    let path = ossteam_content::cdn::manifest_path(DEPOT, d.manifest.id, 77);
+    // a.cdn and b.cdn fail, then a.cdn again: the third attempt waits for
+    // a penalty to end (`content.md` §7).
+    cdn.fail(&path, 503, 3);
+    let start = Instant::now();
+    downloader(&cdn)
+        .manifest(DEPOT, d.manifest.id, 77, &CancelToken::new())
+        .unwrap();
+    assert!(start.elapsed() >= PENALTY, "{:?}", start.elapsed());
+}
+
+#[test]
+fn a_cancel_ends_the_wait() {
+    let cdn = Arc::new(FakeCdn::new());
+    let (_, _, d) = v1();
+    cdn.publish(&d, 77);
+    let path = ossteam_content::cdn::manifest_path(DEPOT, d.manifest.id, 77);
+    cdn.fail(&path, 503, usize::MAX);
+    let s = |h: &str| Server {
+        kind: "CDN".into(),
+        host: h.into(),
+        vhost: h.into(),
+    };
+    let rotation = Rotation::new(vec![s("a.cdn")]).unwrap();
+    let dl = Downloader::new(cdn.clone(), rotation, None);
+    let cancel = CancelToken::new();
+    let c = cancel.clone();
+    let stop = std::thread::spawn(move || {
+        std::thread::sleep(Duration::from_millis(300));
+        c.cancel();
+    });
+    let start = Instant::now();
+    let r = dl.manifest(DEPOT, d.manifest.id, 77, &cancel);
+    stop.join().unwrap();
+    assert_eq!(
+        r.unwrap_err(),
+        ossteam_content::download::DownloadError::Cancelled
+    );
+    // Within a second of the cancel, not after the 60 s penalty.
+    assert!(
+        start.elapsed() < Duration::from_secs(2),
+        "{:?}",
+        start.elapsed()
+    );
+    assert!(dl.exhausted());
 }
 
 #[test]

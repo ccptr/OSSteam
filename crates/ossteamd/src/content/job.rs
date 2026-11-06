@@ -164,6 +164,21 @@ impl ServerList {
             return Ok(list.clone());
         }
         let list = request::servers(conn, cell_id, cancel)?;
+        let servers: Vec<String> = list
+            .iter()
+            .map(|s| {
+                format!(
+                    "{} {} https={} load={} class={} entries={}",
+                    s.r#type(),
+                    s.vhost(),
+                    s.https_support(),
+                    s.weighted_load(),
+                    s.priority_class(),
+                    s.num_entries_in_client_list()
+                )
+            })
+            .collect();
+        tracing::info!(cell_id, count = list.len(), ?servers, "content server list");
         *l = Some((list.clone(), Instant::now()));
         Ok(list)
     }
@@ -383,7 +398,9 @@ impl Runner<'_> {
                 format!("Steam gave no request code for manifest {id} of depot {depot}"),
             ));
         }
-        let mut m = dl.manifest(depot, id, code, self.cancel())?;
+        let mut m = dl
+            .manifest(depot, id, code, self.cancel())
+            .map_err(|e| self.download_failed(dl, e))?;
         m.decrypt_names(key).and_then(|()| m.check()).map_err(|e| {
             fail(
                 ErrorCode::Internal,
@@ -461,7 +478,27 @@ impl Runner<'_> {
                 ));
             }
         }
-        Ok(prepared.run(dl, self.spec.threads, &hooks, self.cancel())?)
+        prepared
+            .run(dl, self.spec.threads, &hooks, self.cancel())
+            .map_err(|e| self.download_failed(dl, e))
+    }
+
+    /// A download failed. If every server had failed, the next job fetches
+    /// the server list again (`content.md` §1).
+    fn download_failed(&self, dl: &Downloader, e: impl Into<Failure>) -> Failure {
+        let failure = e.into();
+        if matches!(
+            failure,
+            Failure::Error {
+                code: ErrorCode::Network,
+                ..
+            }
+        ) && dl.exhausted()
+        {
+            tracing::info!(app = %self.spec.app, "every content server failed; the list is fetched again");
+            self.env.servers.forget();
+        }
+        failure
     }
 
     /// Install or update (`content.md` §6, §10).

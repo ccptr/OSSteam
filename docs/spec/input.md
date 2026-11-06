@@ -107,9 +107,19 @@ From `logs/controller.txt` on Linux:
   The client takes the controller out of lizard mode when it opens it
   (`CExitLizardModeWorkItem`) so that its keyboard and mouse reports
   stop, and closes the device when a read fails.
-- Other makers' controllers appear with paths `sdl://<n>`: the client
-  reads them through SDL. *Unverified*: whether SDL's HIDAPI drivers or
-  the kernel's evdev devices underneath.
+- Other devices are read through SDL 3. The client ships its own build
+  (`ubuntu12_32/libSDL3.so.0` and `ubuntu12_64/libSDL3.so.0`, from SDL's
+  3.4 branch) and `steamclient.so` loads it at run time (it is not among
+  the library's `NEEDED` entries, but its strings name `libSDL3.so.0`
+  and the SDL gamepad and joystick functions it calls). The same strings
+  hold SDL hint names that choose SDL's HIDAPI drivers
+  (`SDL_JOYSTICK_HIDAPI_STEAM`, `SDL_JOYSTICK_HIDAPI_STEAMXBOX`,
+  `SDL_JOYSTICK_HIDAPI_GIP`, `SDL_HIDAPI_LIBUSB` …), and the path format
+  `sdl://%d` that the log shows for devices found that way. The only
+  such device in the log on the development computer is a set of racing
+  pedals. *Unverified*: the values the client gives those hints, and
+  whether it leaves Valve's controllers out of SDL (as its own hidraw
+  driver suggests).
 - For each app that starts, the client logs an "Opted-in Controller Mask
   for AppId": a bit per controller type (`ffff` for all) (§2.3).
 
@@ -727,7 +737,8 @@ read by the other unchanged.
 ## 13. Questions for review
 
 1. **Device access.** The official client reads other makers'
-   controllers through SDL (§2.2). Should `ossteam-input` do the same,
+   controllers through its own build of SDL 3 on Linux (§2.2; Windows
+   and macOS unverified). Should `ossteam-input` do the same,
    with SDL 3 (zlib) as a C dependency, or have its own drivers for
    every family? SDL is the faithful choice and covers 619 devices on
    all three platforms; its drivers are what games already use. Own

@@ -311,7 +311,10 @@ daemon takes the entries over when all of these hold:
   (the client starts each game under it, and it lasts as long as the
   game's processes do, those without `steamclient.so` loaded included,
   §1.1.3), and none has a `steamclient.so` mapped from the directory
-  that the official `sdk64` or `sdk32` points to;
+  that the official `sdk64` or `sdk32` points to. Waiting on the reaper
+  also waits on processes that would start nothing, such as a crash
+  handler, since they cannot be told from a launcher that would; the
+  maintainer chose that on 2026-11-05 over a gap for launchers;
 - nothing in `~/.steam` has been created, renamed or removed by anyone
   but ossteam in the last 30 s (the race, below), not counting what
   changed before the official client last closed while the daemon

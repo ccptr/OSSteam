@@ -63,10 +63,23 @@ empty the job fails with "no content server offers HTTPS for this app"
 
 The list is fetched when the first job of a session needs it and again
 after an hour, after every server has failed, or when a new session
-starts. It is not written to disk.
+starts. Every server has failed when a job fails with a network error
+while all of its rotation is penalised; the next job fetches the list
+again. It is not written to disk.
+
+**Priority classes.** Each server has a `priority_class`. In one list
+(cell 134, 2026-11-06), all 22 HTTPS servers were `SteamCache`: two
+caches of the local ISP in class 9, eleven in the nearest city in class 5
+and nine further away in class 4. The official client's content log
+says "Moving to source priority class '10'" before an update, and then
+creates download interfaces only for the two local caches, out of "30
+download sources". So it seems to use one class at a time, the highest
+first. ossteam rotates through every class, ordered by load.
 
 *Unverified:* the official client's selection, ordering and penalty
-rules; how it uses `priority_class`.
+rules; when it moves to another priority class, and how its class
+numbers relate to the list's (it named 10 where ossteam's list, a day
+later, had 9).
 
 ## 2. Depot keys (CONT-1)
 
@@ -320,7 +333,13 @@ A job downloads up to `content.download_threads` chunks at a time
 A request that fails (a connection error, a timeout, an HTTP status other
 than 200, a wrong length, a chunk that fails its checks) is retried on
 the next server in the rotation, up to 5 attempts per chunk; then the job
-fails with a network error (exit code 9) and can be resumed.
+fails with a network error (exit code 9) and can be resumed. When every
+server in the rotation is penalised (§1), a retry first waits until the
+first penalty ends, so a failure of every server at once takes about four
+minutes to fail a job, not a second. On 2026-11-05 a Counter-Strike 2
+update queued a minute after its build appeared failed in 25 s that way:
+one chunk answered with HTTP 503 five times, with no wait in between.
+Cancelling or pausing the job ends the wait.
 
 **403.** A server can require a CDN auth token. On a 403, ossteam asks
 `ContentServerDirectory.GetCDNAuthToken` with `depot_id`, `host_name`

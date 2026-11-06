@@ -91,6 +91,61 @@ pub fn shell_quote(s: &str) -> String {
     format!("'{}'", s.replace('\'', r"'\''"))
 }
 
+/// Arguments split as `CommandLineToArgvW` splits what follows the
+/// program's name: whitespace between words, `"` around words with
+/// spaces, `""` inside quotes and `\"` for a quote, and backslashes
+/// doubled only before a quote.
+pub fn windows_split(arguments: &str) -> Vec<String> {
+    let mut words = Vec::new();
+    let mut word = String::new();
+    let mut in_word = false;
+    let mut quoted = false;
+    let mut chars = arguments.chars().peekable();
+    while let Some(c) = chars.next() {
+        match c {
+            '\\' => {
+                let mut n = 1;
+                while chars.peek() == Some(&'\\') {
+                    chars.next();
+                    n += 1;
+                }
+                if chars.peek() == Some(&'"') {
+                    word.extend(std::iter::repeat_n('\\', n / 2));
+                    if n % 2 == 1 {
+                        chars.next();
+                        word.push('"');
+                    }
+                } else {
+                    word.extend(std::iter::repeat_n('\\', n));
+                }
+                in_word = true;
+            }
+            '"' if quoted && chars.peek() == Some(&'"') => {
+                chars.next();
+                word.push('"');
+            }
+            '"' => {
+                quoted = !quoted;
+                in_word = true;
+            }
+            ' ' | '\t' if !quoted => {
+                if in_word {
+                    words.push(std::mem::take(&mut word));
+                    in_word = false;
+                }
+            }
+            c => {
+                word.push(c);
+                in_word = true;
+            }
+        }
+    }
+    if in_word {
+        words.push(word);
+    }
+    words
+}
+
 /// The command line for `CreateProcessW`: the executable in double
 /// quotes, the option's arguments as written, the extra arguments quoted
 /// so that `CommandLineToArgvW` gives them back.
@@ -224,5 +279,22 @@ mod tests {
             line,
             r#""C:\Games\Game\game.exe" -dx11 plain "two words" "a\"b" trailing\ "C:\dir with space\\" """#
         );
+    }
+
+    #[test]
+    fn windows_words() {
+        let split = |s: &str| windows_split(s);
+        assert_eq!(split("/quiet C:\\windows"), ["/quiet", "C:\\windows"]);
+        assert_eq!(split(r#"  /D="C:\a b\\" x "#), [r"/D=C:\a b\", "x"]);
+        assert_eq!(split(r#"/D="C:\a b\" x "#), [r#"/D=C:\a b" x "#]);
+        assert_eq!(split(r#"a\\\"b "c""d" """#), [r#"a\"b"#, r#"c"d"#, ""]);
+        assert_eq!(split(r"\\server\share\"), [r"\\server\share\"]);
+        assert!(split("   ").is_empty());
+        // What `windows_command_line` quotes comes back as it was.
+        for a in ["a b", "x\"y", "C:\\dir\\", "", "tab\there"] {
+            let line = windows_command_line(Path::new("p"), "", &[a.to_owned()]);
+            let rest = line.strip_prefix("\"p\" ").unwrap();
+            assert_eq!(split(rest), [a], "{line}");
+        }
     }
 }

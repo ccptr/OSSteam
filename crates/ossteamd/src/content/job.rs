@@ -306,7 +306,8 @@ impl Runner<'_> {
                 Some(_) => self.dir_for(d.shared_from).ok(),
             }
         };
-        script::load(&installed.scripts, &dir_of, &self.spec.language, sys)
+        // Verify and uninstall go on without a damaged script (§6).
+        script::load(&installed.scripts, &dir_of, &self.spec.language, sys).scripts
     }
 
     /// Asks for each depot's key and keeps the depots it is granted for
@@ -627,7 +628,7 @@ impl Runner<'_> {
         if let Some(sys) = &self.env.scripts {
             let loaded = self.scripts(sys.as_ref(), &installed);
             let plan = script::removal(&loaded, &installed.script_values, sys.as_ref());
-            let out = script::execute(sys.as_ref(), &plan, self.cancel())
+            let out = script::execute(sys.as_ref(), &plan, self.cancel(), &mut |_| {})
                 .map_err(|script::Stopped| Failure::Cancelled)?;
             installed.script_values = script::remaining(&installed.script_values, &plan, &out);
         }
@@ -649,7 +650,7 @@ impl Runner<'_> {
         if let Some(sys) = &self.env.scripts {
             let loaded = self.scripts(sys.as_ref(), installed);
             let plan = script::uninstall(&loaded, &installed.script_values, sys.as_ref());
-            script::execute(sys.as_ref(), &plan, self.cancel())
+            script::execute(sys.as_ref(), &plan, self.cancel(), &mut |_| {})
                 .map_err(|script::Stopped| Failure::Cancelled)?;
         }
         // Shared depots: their files go only if no other app has them.

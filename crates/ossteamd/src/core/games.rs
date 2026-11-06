@@ -3,7 +3,7 @@
 //! methods and their checks, running games, play sessions (PLAY-1) and
 //! the discovery entries (`steamworks-abi.md` §1).
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
@@ -16,11 +16,14 @@ use ossteam_launch::options::{self, ChoiceError, LaunchOption, Platform};
 use ossteam_launch::process::{self, Exit, Game, SpawnError, Stopper};
 use ossteam_launch::{command, env, isolation, steamstub};
 use ossteam_proto::steam::{CMsgClientGamesPlayed, c_msg_client_games_played::GamePlayed};
-use ossteam_types::{AppId, SteamId};
+use ossteam_types::{AppId, DepotId, SteamId};
 
 use super::compat::{self, Prepared};
+use super::scripts;
 use super::{Command, Core, Outcome, internal, invalid};
 use crate::content::folders::Layout;
+use crate::content::script::prefix::Setup;
+use crate::db::InstalledApp;
 use crate::launch::{self, Exited};
 use crate::session::{Cmd, ReplyTo};
 use ossteam_launch::compat::{CompatEnv, Verb, chain};
@@ -39,13 +42,18 @@ pub struct Running {
 enum Started {
     Now(v1::RunningGame),
     Waiting(Vec<u64>),
+    /// The install scripts must run first (`install-scripts.md` §3.1).
+    Scripts(Box<scripts::Work>),
 }
 
-/// A launch that waits for its tools.
+/// A launch under way: waiting for the jobs that install its tools, or
+/// for its install scripts.
 pub struct Pending {
     to: ReplyTo,
     req: v1::LaunchRequest,
     jobs: Vec<u64>,
+    /// Its install scripts are running.
+    scripts: bool,
 }
 
 /// Whether launches get a private `~/.steam` (`steamworks-abi.md`
@@ -76,7 +84,7 @@ pub struct Games {
     pub data: PathBuf,
     pub running: BTreeMap<AppId, Running>,
     /// Launches waiting for jobs that install their tools
-    /// (`compat-tools.md` §4).
+    /// (`compat-tools.md` §4), or for their install scripts.
     pub pending: BTreeMap<AppId, Pending>,
     /// `<state>/games`.
     pub log_dir: PathBuf,
@@ -396,25 +404,91 @@ impl Core {
     }
 
     /// `Launch`: replies at once, or once the jobs that install the app's
-    /// tools are done (`compat-tools.md` §4).
+    /// tools are done (`compat-tools.md` §4) and its install scripts have
+    /// run (`install-scripts.md` §3.1).
     pub(super) fn launch(&mut self, to: ReplyTo, req: v1::LaunchRequest) -> Outcome {
+        self.launch_after(to, req, false)
+    }
+
+    /// `launch`, with the install scripts already run when `scripts_done`.
+    fn launch_after(&mut self, to: ReplyTo, req: v1::LaunchRequest, scripts_done: bool) -> Outcome {
         let app = AppId(req.app_id);
-        if self.games.pending.contains_key(&app) {
-            return Some(Err(conflict(format!(
-                "app {app} is being launched; its compatibility tools are being installed"
-            ))));
+        if let Some(p) = self.games.pending.get(&app) {
+            let why = if p.scripts {
+                "its install scripts are running"
+            } else {
+                "its compatibility tools are being installed"
+            };
+            return Some(Err(conflict(format!("app {app} is being launched; {why}"))));
         }
-        match self.try_launch(&req) {
+        match self.try_launch(&req, scripts_done) {
             Ok(Started::Now(game)) => Some(Ok(response::Result::Launch(v1::LaunchResponse {
                 game: Some(game),
             }))),
             Ok(Started::Waiting(jobs)) => {
                 tracing::info!(app = %app, ?jobs, "the launch waits for its tools");
-                self.games.pending.insert(app, Pending { to, req, jobs });
+                self.games.pending.insert(
+                    app,
+                    Pending {
+                        to,
+                        req,
+                        jobs,
+                        scripts: false,
+                    },
+                );
+                None
+            }
+            Ok(Started::Scripts(work)) => {
+                tracing::info!(app = %app, "the launch runs the app's install scripts first");
+                if let Err(e) = scripts::spawn(*work, self.games.commands.clone()) {
+                    return Some(Err(internal(&anyhow::anyhow!(
+                        "starting the install scripts' thread failed: {e}"
+                    ))));
+                }
+                self.games.pending.insert(
+                    app,
+                    Pending {
+                        to,
+                        req,
+                        jobs: Vec::new(),
+                        scripts: true,
+                    },
+                );
                 None
             }
             Err(e) => Some(Err(e)),
         }
+    }
+
+    /// A launch's install scripts are done: it goes on, unless they
+    /// stopped it (`install-scripts.md` §3.1).
+    pub(super) fn scripts_done(&mut self, app: AppId, result: Result<(), RemoteError>) {
+        let Some(p) = self.games.pending.remove(&app) else {
+            return;
+        };
+        let outcome = match result {
+            Err(e) => Some(Err(e)),
+            Ok(()) => self.launch_after(p.to, p.req, true),
+        };
+        if let Some(result) = outcome {
+            self.reply(p.to, result);
+        }
+    }
+
+    /// The directory of each depot of `installed` that has scripts.
+    fn script_dirs(&self, installed: &InstalledApp, layout: &Layout) -> HashMap<DepotId, PathBuf> {
+        installed
+            .depots
+            .iter()
+            .filter(|d| installed.scripts.iter().any(|f| f.depot == d.depot))
+            .filter_map(|d| {
+                let dir = match d.shared_from {
+                    None => installed.install_dir.clone(),
+                    Some(other) => crate::content::job::install_dir(&self.app_info(other)?).ok()?,
+                };
+                Some((d.depot, layout.app_dir(&dir)))
+            })
+            .collect()
     }
 
     /// Goes on with the launches whose tool jobs have ended.
@@ -423,7 +497,7 @@ impl Core {
             .games
             .pending
             .iter()
-            .filter(|(_, p)| p.jobs.iter().all(|j| !self.job_unfinished(*j)))
+            .filter(|(_, p)| !p.scripts && p.jobs.iter().all(|j| !self.job_unfinished(*j)))
             .map(|(a, _)| *a)
             .collect();
         for app in ready {
@@ -449,8 +523,13 @@ impl Core {
         }
     }
 
-    /// `launch.md` §2, in order.
-    fn try_launch(&mut self, req: &v1::LaunchRequest) -> Result<Started, RemoteError> {
+    /// `launch.md` §2, in order; then the install scripts, unless
+    /// `scripts_done` (`install-scripts.md` §3.1).
+    fn try_launch(
+        &mut self,
+        req: &v1::LaunchRequest,
+        scripts_done: bool,
+    ) -> Result<Started, RemoteError> {
         let Some(account) = self.session_state.account.clone() else {
             return Err(RemoteError::new(
                 ErrorCode::NotLoggedIn,
@@ -595,8 +674,10 @@ impl Core {
             .into_iter()
             .map(|(k, v)| (k.to_owned(), v))
             .collect();
-        let (command_line, env, interrupt_first) = match &ready {
-            None => (game_line, base_env, false),
+        // With a chain, setup commands run through it (`compat-tools.md`
+        // §7): its command line with `run`, and its variables only.
+        let (command_line, env, interrupt_first, setup) = match &ready {
+            None => (game_line, base_env, false, None),
             Some(r) => {
                 let data_dir = layout.compat_data(app);
                 let client_dir = &self.games.client_dir;
@@ -636,32 +717,77 @@ impl Core {
                     .tools
                     .first()
                     .is_some_and(|t| t.manifest.use_subprocess_reaper);
+                let setup = (
+                    chain::command_prefix(&r.tools, Verb::Run),
+                    compat::chain_env(Vec::new(), &compat_env, None),
+                );
                 (
                     line,
                     compat::chain_env(base_env, &compat_env, extra),
                     interrupt,
+                    Some(setup),
                 )
             }
         };
         std::fs::create_dir_all(&self.games.log_dir)
             .map_err(|e| internal(&anyhow::Error::from(e)))?;
         let log = self.games.log_dir.join(format!("{app}.log"));
-        let mut spec = process::Spec {
+        let isolation = if self.games.isolation.available() {
+            let plan = isolation::Plan::new(&self.games.settings.home, &self.games.data)
+                .map_err(|f| self.isolation_failed(app, &f))?;
+            Some(Arc::new(plan))
+        } else {
+            None
+        };
+
+        // Install scripts are for Windows programs: natively, or in the
+        // prefix of a chain (`install-scripts.md` §3).
+        let target = match setup {
+            Some((chain, env)) => Some(scripts::Target::Prefix {
+                compat_data: layout.compat_data(app),
+                setup: Setup {
+                    app,
+                    chain,
+                    env,
+                    working_dir: self.games.client_dir.clone(),
+                    log: log.clone(),
+                    reaper: self.games.settings.reaper.clone(),
+                    isolation: isolation.clone(),
+                },
+            }),
+            None if cfg!(windows) => Some(scripts::Target::Windows),
+            None => None,
+        };
+        if !scripts_done
+            && windows
+            && !installed.scripts.is_empty()
+            && let Some(target) = target
+        {
+            // The launch's log starts with its setup commands (`launch.md`
+            // §3).
+            std::fs::File::create(&log)
+                .map_err(|e| internal(&anyhow::anyhow!("creating {}: {e}", log.display())))?;
+            return Ok(Started::Scripts(Box::new(scripts::Work {
+                app,
+                files: installed.scripts.clone(),
+                dirs: self.script_dirs(&installed, &layout),
+                language: self.config.language().to_owned(),
+                target,
+            })));
+        }
+
+        let spec = process::Spec {
             app,
             executable,
             command_line,
             working_dir,
             env,
             log: log.clone(),
+            append_log: scripts_done,
             reaper: self.games.settings.reaper.clone(),
             interrupt_first,
-            isolation: None,
+            isolation,
         };
-        if self.games.isolation.available() {
-            let plan = isolation::Plan::new(&self.games.settings.home, &self.games.data)
-                .map_err(|f| self.isolation_failed(app, &f))?;
-            spec.isolation = Some(Arc::new(plan));
-        }
         tracing::info!(
             app = %app,
             option = option.index,

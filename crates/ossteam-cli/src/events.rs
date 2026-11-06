@@ -140,6 +140,15 @@ fn to_json(ev: &Event) -> Value {
             "job_id": p.job_id,
             "progress": p.progress.as_ref().map(crate::content::progress_json),
         }),
+        Some(event::Kind::LaunchStep(l)) => json!({
+            "event": "launch_step",
+            "app_id": l.app_id,
+            "step": match v1::LaunchStepKind::try_from(l.step) {
+                Ok(v1::LaunchStepKind::InstallScript) => "install_script",
+                _ => "unknown",
+            },
+            "text": l.text,
+        }),
         Some(event::Kind::GameStarted(g)) => json!({
             "event": "game_started",
             "game": g.game.as_ref().map(crate::games::game_json),
@@ -227,6 +236,13 @@ fn to_text(ev: &Event) -> String {
                 .map(crate::content::progress_text)
                 .unwrap_or_default()
         ),
+        Some(event::Kind::LaunchStep(l)) => {
+            format!(
+                "game     app {} launching: {}",
+                l.app_id,
+                crate::games::step_text(l)
+            )
+        }
         Some(event::Kind::GameStarted(g)) => match &g.game {
             Some(g) => format!("game     app {} started (pid {})", g.app_id, g.pid),
             None => "game     started".into(),

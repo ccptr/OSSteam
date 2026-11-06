@@ -344,6 +344,9 @@ fn play(g: &mut Gui, cx: &mut Cx<Gui>) {
     g.call_unbounded(
         move |c| c.launch(id, option, &extra, stale),
         move |g, r, cx| {
+            if let Some(m) = g.model_mut() {
+                m.store.launch_steps.remove(&id);
+            }
             let Some(app) = page(g, id) else {
                 return;
             };
@@ -513,6 +516,9 @@ fn main(
         } else {
             let label = if busy { "Launching…" } else { "Play" };
             buttons = buttons.child(button(p, "play-stop", label).disabled(busy).on_click(play));
+        }
+        if busy && let Some(step) = store.launch_steps.get(&id) {
+            buttons = buttons.child(muted(p, step.clone()));
         }
         out = out
             .when(i.update_available, |d| {

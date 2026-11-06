@@ -66,7 +66,7 @@ pub struct Game {
 
 impl Game {
     pub fn spawn(spec: &Spec) -> io::Result<Self> {
-        let log = File::create(&spec.log)?;
+        let log = spec.open_log()?;
         let null = File::open("NUL")?;
         for h in [log.as_raw_handle(), null.as_raw_handle()] {
             // SAFETY: valid handles owned by the files above.

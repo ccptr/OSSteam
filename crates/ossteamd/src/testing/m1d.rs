@@ -82,6 +82,11 @@ pub(super) fn manifests_section() -> ossteam_vdf::Object {
 }
 
 pub(super) fn tool_depot(app: u32, manifest: &str, entry: &'static str) -> Depot {
+    tool_depot_with(app, manifest, entry, TOOL)
+}
+
+/// A tool whose entry point is `script`.
+fn tool_depot_with(app: u32, manifest: &str, entry: &'static str, script: &'static [u8]) -> Depot {
     let id = app + 1;
     let manifest: &'static [u8] = Box::leak(manifest.as_bytes().to_vec().into_boxed_slice());
     Depot::build(
@@ -96,7 +101,7 @@ pub(super) fn tool_depot(app: u32, manifest: &str, entry: &'static str) -> Depot
             },
             Entry::File {
                 name: entry,
-                data: TOOL,
+                data: script,
                 flags: flags::EXECUTABLE,
             },
         ],
@@ -147,6 +152,11 @@ fn depot_app(depot: u32) -> u32 {
 }
 
 fn steam(cdn: &Arc<FakeCdn>) -> FakeCm {
+    steam_with(cdn, TOOL)
+}
+
+/// `steam`, with `proton` as Proton's script.
+fn steam_with(cdn: &Arc<FakeCdn>, proton: &'static [u8]) -> FakeCm {
     let cm = FakeCm::new()
         .package(0, &[MANIFESTS, SNIPER, PROTON])
         .package(200, &[NATIVE, WINDOWS])
@@ -175,13 +185,14 @@ fn steam(cdn: &Arc<FakeCdn>) -> FakeCm {
     );
     add_app(
         &cm,
-        &tool_depot(
+        &tool_depot_with(
             PROTON,
             &format!(
                 r#""manifest" {{ "version" "2" "commandline" "/proton %verb%"
                                 "require_tool_appid" "{SNIPER}" }}"#
             ),
             "proton",
+            proton,
         ),
         "linux",
         "Proton - Experimental",
@@ -462,5 +473,214 @@ fn a_game_in_a_container_reaches_the_daemon_by_the_abstract_socket() {
         ..container
     };
     assert!(connect(&nobody).is_err());
+    d.stop();
+}
+
+/// A Proton that makes a prefix as Proton's look to install scripts (a
+/// 64-bit registry with DirectX recorded as installed, `Z:` for `/`, a
+/// user), keeps each file `regedit` imports, and runs programs named by
+/// `Z:` paths as shell scripts.
+const PREFIX_PROTON: &[u8] = br#"#!/bin/sh
+here="${0%/*}"
+verb="$1"; shift
+pfx="$STEAM_COMPAT_DATA_PATH/pfx"
+if [ ! -e "$pfx/system.reg" ]; then
+  mkdir -p "$pfx/dosdevices" "$pfx/drive_c/users/steamuser" "$pfx/drive_c/users/Public"
+  ln -s / "$pfx/dosdevices/z:"
+  printf '%s\n' 'WINE REGISTRY Version 2' '#arch=win64' '' \
+    '[Software\\Wow6432Node\\Valve\\Steam\\Apps\\CommonRedist\\DirectX\\Jun2010] 1' \
+    '"DirectX"=dword:00000001' > "$pfx/system.reg"
+fi
+printf '%s\n' "$verb $*" >> "$here/verbs.txt"
+unix() { printf '%s' "$1" | sed -e 's/^Z://' -e 's|\\|/|g'; }
+if [ "$1" = regedit ]; then
+  n=$(ls "$STEAM_COMPAT_DATA_PATH" | grep -c '^import-')
+  cp "$(unix "$3")" "$STEAM_COMPAT_DATA_PATH/import-$n.reg"
+  exit 0
+fi
+case "$1" in
+  Z:*) prog=$(unix "$1"); shift; exec sh "$prog" "$@" ;;
+  *) exec "$@" ;;
+esac
+"#;
+
+/// Spacewar's install script (depot 481), with a firewall entry, an
+/// entry Proton's prefix records as run, and one that is due.
+const INSTALL_SCRIPT: &[u8] = br#""InstallScript"
+{
+    "Registry"
+    {
+        "HKEY_LOCAL_MACHINE\\SOFTWARE\\Valve\\Spacewar"
+        {
+            "string" { "Exe_Path" "%INSTALLDIR%\\bin\\game.exe" }
+            "dword" { "PatchVersion" "42" }
+        }
+    }
+    "Firewall" { "Spacewar" "%INSTALLDIR%\\bin\\game.exe" }
+    "Run Process"
+    {
+        "DirectX"
+        {
+            "HasRunKey" "HKEY_LOCAL_MACHINE\\Software\\Valve\\Steam\\Apps\\CommonRedist\\DirectX\\Jun2010"
+            "process 1" "%INSTALLDIR%\\DXSETUP.exe"
+        }
+        "Setup"
+        {
+            "HasRunKey" "HKEY_CURRENT_USER\\Software\\Example"
+            "process 1" "%INSTALLDIR%\\setup.exe"
+            "command 1" "/quiet %WinDir%"
+        }
+    }
+}
+"kvsignatures" { "InstallScript" "73e0" }
+"#;
+
+/// A Run Process program: writes how it was started next to itself.
+const SETUP: &[u8] = br#"#!/bin/sh
+here="${0%/*}"
+printf '%s\n' "$@" > "$here/setup-args.txt"
+env > "$here/setup-env.txt"
+echo "setup output"
+"#;
+
+/// The UTF-16 text of an import file.
+fn import_text(p: &Path) -> String {
+    let bytes = std::fs::read(p).unwrap_or_else(|e| panic!("{}: {e}", p.display()));
+    assert_eq!(&bytes[..2], &[0xff, 0xfe], "a byte order mark");
+    let units: Vec<u16> = bytes[2..]
+        .chunks(2)
+        .map(|c| u16::from_le_bytes([c[0], c[1]]))
+        .collect();
+    String::from_utf16(&units).unwrap()
+}
+
+/// `compat-tools.md` §7 and `install-scripts.md` §3.1.
+#[test]
+fn install_scripts_apply_to_the_prefix_before_the_game_starts() {
+    let cdn = Arc::new(FakeCdn::new());
+    let cm = steam_with(&cdn, PREFIX_PROTON);
+    let id = WINDOWS * 10 + 1;
+    let depot = Depot::build(
+        DepotId(id),
+        ManifestId(u64::from(id)),
+        key(id),
+        &[
+            Entry::File {
+                name: "bin/game.exe",
+                data: GAME,
+                flags: flags::EXECUTABLE,
+            },
+            Entry::File {
+                name: "installscript.vdf",
+                data: INSTALL_SCRIPT,
+                flags: flags::INSTALL_SCRIPT,
+            },
+            Entry::File {
+                name: "setup.exe",
+                data: SETUP,
+                flags: flags::EXECUTABLE,
+            },
+        ],
+    );
+    add_app(&cm, &depot, "windows", "Windows");
+    cm.app_section(
+        WINDOWS,
+        "config",
+        section(
+            r#""installdir" "Windows"
+               "launch" { "0" { "executable" "bin/game.exe" "config" { "oslist" "windows" } } }"#,
+        ),
+    );
+    let root = Root::new();
+    root.install_client_libraries();
+    let d = TestDaemon::start_with_cdn(&root, &cm, POLL, cdn.clone());
+    login(&d);
+    let c = d.subscribed(&[Topic::Jobs, Topic::Games]);
+    c.set_setting("content.auto_update", Some("never"))
+        .expect("setting");
+    let game = install(&c, WINDOWS);
+    let data = game
+        .parent()
+        .unwrap()
+        .parent()
+        .unwrap()
+        .join("compatdata")
+        .join(WINDOWS.to_string());
+
+    let running = c.launch(WINDOWS, None, &[], false).expect("launched");
+    let mut steps = Vec::new();
+    while let Ok(ev) = c.events().recv_timeout(Duration::from_secs(10)) {
+        match ev.kind {
+            Some(event::Kind::LaunchStep(s)) if s.app_id == WINDOWS => {
+                assert_eq!(s.step(), v1::LaunchStepKind::InstallScript);
+                steps.push(s.text);
+            }
+            Some(event::Kind::GameStarted(_)) => break,
+            _ => {}
+        }
+    }
+    assert_eq!(
+        exited(&c, WINDOWS).status,
+        Some(game_exited::Status::ExitCode(3))
+    );
+    // The prefix first, then the values, then the entry that is due; no
+    // firewall in Wine, and DirectX is recorded as run.
+    assert_eq!(
+        steps,
+        [
+            "Making the Proton prefix",
+            "Writing 2 registry values",
+            "Running setup.exe"
+        ]
+    );
+    let proton = PathBuf::from(installed(&c, PROTON).expect("proton").path);
+    let verbs = lines(&proton.join("verbs.txt"));
+    assert_eq!(verbs.len(), 5, "{verbs:#?}");
+    assert!(
+        verbs[..4].iter().all(|v| v.starts_with("run ")),
+        "{verbs:#?}"
+    );
+    assert!(verbs[4].starts_with("waitforexitandrun "), "{verbs:#?}");
+
+    let windows_dir = format!("Z:{}", game.to_str().unwrap().replace('/', "\\"));
+    assert_eq!(
+        import_text(&data.join("import-0.reg")),
+        "Windows Registry Editor Version 5.00\r\n\r\n"
+    );
+    let values = import_text(&data.join("import-1.reg"));
+    let exe = format!("{}\\bin\\game.exe", windows_dir).replace('\\', "\\\\");
+    assert_eq!(
+        values,
+        format!(
+            "Windows Registry Editor Version 5.00\r\n\r\n\
+             [HKEY_LOCAL_MACHINE\\SOFTWARE\\Wow6432Node\\Valve\\Spacewar]\r\n\
+             \"Exe_Path\"=\"{exe}\"\r\n\
+             \"PatchVersion\"=dword:0000002a\r\n\r\n"
+        )
+    );
+    assert_eq!(
+        import_text(&data.join("import-2.reg")),
+        "Windows Registry Editor Version 5.00\r\n\r\n\
+         [HKEY_CURRENT_USER\\Software\\Example]\r\n\
+         \"Setup\"=dword:00000001\r\n\r\n"
+    );
+    assert!(!data.join("ossteam-script.reg").exists());
+    // The entry ran with its arguments, without the game's variables.
+    assert_eq!(
+        lines(&game.join("setup-args.txt")),
+        ["/quiet", "C:\\windows"]
+    );
+    let env = lines(&game.join("setup-env.txt"));
+    assert!(
+        has(&env, &format!("STEAM_COMPAT_APP_ID={WINDOWS}")),
+        "{env:#?}"
+    );
+    assert!(
+        !env.iter().any(|l| l.starts_with("SteamAppId=")),
+        "{env:#?}"
+    );
+    // Its output comes first in the game's log.
+    let log = std::fs::read_to_string(&running.log).expect("the log");
+    assert!(log.contains("setup output"), "{log}");
     d.stop();
 }

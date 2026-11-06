@@ -6,7 +6,6 @@
 //! official client's `reaper` is. macOS has no subreaper, so the game's
 //! process group stands for its tree there.
 
-use std::fs::File;
 use std::io;
 use std::os::unix::process::{CommandExt, ExitStatusExt};
 use std::process::{Child, Command, Stdio};
@@ -26,7 +25,7 @@ pub struct Game {
 
 impl Game {
     pub fn spawn(spec: &Spec) -> Result<Self, SpawnError> {
-        let log = File::create(&spec.log)?;
+        let log = spec.open_log()?;
         let mut cmd = if cfg!(target_os = "linux") {
             let mut c = Command::new(&spec.reaper);
             c.arg("--reaper")

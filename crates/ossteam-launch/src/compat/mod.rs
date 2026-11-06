@@ -9,6 +9,7 @@
 
 pub mod chain;
 pub mod manifest;
+pub mod registry;
 pub mod tools;
 
 pub use chain::{ChainTool, CompatEnv, Verb};

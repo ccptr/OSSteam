@@ -1,10 +1,11 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
-//! Install script steps on Windows: the registry, processes and the
-//! elevated helper (`install-scripts.md` §2, §4).
+//! Install script steps on Windows: the registry, the firewall, processes
+//! and the elevated helper (`install-scripts.md` §2, §4).
 
 use std::ffi::{OsStr, c_void};
 use std::os::windows::ffi::OsStrExt;
-use std::path::Path;
+use std::os::windows::process::CommandExt;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use ossteam_types::CancelToken;
@@ -16,8 +17,9 @@ use windows_sys::Win32::Foundation::{
 use windows_sys::Win32::System::Com::CoTaskMemFree;
 use windows_sys::Win32::System::Registry::{
     HKEY, HKEY_CURRENT_USER, HKEY_LOCAL_MACHINE, KEY_SET_VALUE, KEY_WOW64_32KEY, REG_DWORD,
-    REG_OPTION_NON_VOLATILE, RRF_RT_ANY, RRF_RT_REG_DWORD, RRF_SUBKEY_WOW6432KEY, RegCloseKey,
-    RegCreateKeyExW, RegDeleteValueW, RegGetValueW, RegOpenKeyExW, RegSetValueExW,
+    REG_OPTION_NON_VOLATILE, REG_SZ, REG_VALUE_TYPE, RRF_NOEXPAND, RRF_RT_ANY,
+    RRF_SUBKEY_WOW6432KEY, RegCloseKey, RegCreateKeyExW, RegDeleteValueW, RegGetValueW,
+    RegOpenKeyExW, RegSetValueExW,
 };
 use windows_sys::Win32::System::SystemInformation::OSVERSIONINFOW;
 use windows_sys::Win32::System::Threading::{
@@ -31,7 +33,7 @@ use windows_sys::Win32::UI::Shell::{
 use windows_sys::Win32::UI::WindowsAndMessaging::{SW_HIDE, SW_SHOWNORMAL};
 use windows_sys::core::GUID;
 
-use super::{HelperRequest, Key, Outcome, Step, System, ValueRef};
+use super::{Data, HelperRequest, Key, Outcome, Step, System, ValueRef};
 
 /// The longest command line Windows takes, in UTF-16 units, with room for
 /// the program's path.
@@ -76,6 +78,11 @@ fn ptr(w: &Option<Vec<u16>>) -> *const u16 {
 }
 
 fn set_dword(v: &ValueRef, n: u32) -> Result<(), String> {
+    set(v, REG_DWORD, &n.to_le_bytes())
+}
+
+/// Writes a value of `kind` with `bytes` as its data, creating its key.
+fn set(v: &ValueRef, kind: REG_VALUE_TYPE, bytes: &[u8]) -> Result<(), String> {
     let (hive, view, _) = root(&v.key);
     let path = wide(&v.key.path);
     let name = name(v);
@@ -97,14 +104,148 @@ fn set_dword(v: &ValueRef, n: u32) -> Result<(), String> {
         if r != ERROR_SUCCESS {
             return Err(os_error(r));
         }
-        let bytes = n.to_le_bytes();
-        let r = RegSetValueExW(key, ptr(&name), 0, REG_DWORD, bytes.as_ptr(), 4);
+        let r = RegSetValueExW(key, ptr(&name), 0, kind, bytes.as_ptr(), bytes.len() as u32);
         RegCloseKey(key);
         if r != ERROR_SUCCESS {
             return Err(os_error(r));
         }
     }
     Ok(())
+}
+
+fn set_data(v: &ValueRef, d: &Data) -> Result<(), String> {
+    match d {
+        Data::String(s) => {
+            let bytes: Vec<u8> = wide(s).iter().flat_map(|u| u.to_le_bytes()).collect();
+            set(v, REG_SZ, &bytes)
+        }
+        Data::Dword(n) => set_dword(v, *n),
+        Data::Other => Err("no data to write".into()),
+    }
+}
+
+/// A value's type and data, `None` when it is missing.
+fn read(v: &ValueRef) -> Option<Data> {
+    let (hive, _, view) = root(&v.key);
+    let path = wide(&v.key.path);
+    let name = name(v);
+    let flags = RRF_RT_ANY | RRF_NOEXPAND | view;
+    let mut kind: REG_VALUE_TYPE = 0;
+    let mut size = 0u32;
+    // SAFETY: the first call asks only for the type and the size; the
+    // second gets a buffer of that size.
+    unsafe {
+        let r = RegGetValueW(
+            hive,
+            path.as_ptr(),
+            ptr(&name),
+            flags,
+            &mut kind,
+            std::ptr::null_mut(),
+            &mut size,
+        );
+        if r != ERROR_SUCCESS {
+            return None;
+        }
+        match kind {
+            REG_DWORD => {
+                let mut n = 0u32;
+                let mut size = 4u32;
+                let r = RegGetValueW(
+                    hive,
+                    path.as_ptr(),
+                    ptr(&name),
+                    flags,
+                    std::ptr::null_mut(),
+                    &mut n as *mut u32 as *mut c_void,
+                    &mut size,
+                );
+                Some(if r == ERROR_SUCCESS {
+                    Data::Dword(n)
+                } else {
+                    Data::Other
+                })
+            }
+            REG_SZ => {
+                let mut buf = vec![0u16; size as usize / 2 + 1];
+                let mut size = (buf.len() * 2) as u32;
+                let r = RegGetValueW(
+                    hive,
+                    path.as_ptr(),
+                    ptr(&name),
+                    flags,
+                    std::ptr::null_mut(),
+                    buf.as_mut_ptr() as *mut c_void,
+                    &mut size,
+                );
+                if r != ERROR_SUCCESS {
+                    return Some(Data::Other);
+                }
+                let len = buf.iter().position(|&u| u == 0).unwrap_or(buf.len());
+                Some(Data::String(String::from_utf16_lossy(&buf[..len])))
+            }
+            _ => Some(Data::Other),
+        }
+    }
+}
+
+/// `CREATE_NO_WINDOW`: netsh is a console program.
+const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+
+fn netsh() -> PathBuf {
+    let windir = std::env::var_os("SystemRoot")
+        .or_else(|| std::env::var_os("WINDIR"))
+        .unwrap_or_else(|| "C:\\Windows".into());
+    Path::new(&windir).join("System32").join("netsh.exe")
+}
+
+/// A name as netsh takes it in double quotes, which it cannot hold.
+fn netsh_quote(s: &str) -> String {
+    format!("\"{}\"", s.replace('"', ""))
+}
+
+/// Whether a rule named `name` for `program` is there (§2.3). netsh's
+/// labels are translated, so its output is only searched for the path.
+fn firewall_rule(name: &str, program: &str) -> Option<bool> {
+    let out = std::process::Command::new(netsh())
+        .args(["advfirewall", "firewall", "show", "rule"])
+        .raw_arg(format!("name={}", netsh_quote(name)))
+        .arg("verbose")
+        .creation_flags(CREATE_NO_WINDOW)
+        .output();
+    match out {
+        Ok(o) => Some(
+            o.status.success()
+                && String::from_utf8_lossy(&o.stdout)
+                    .to_lowercase()
+                    .contains(&program.to_lowercase()),
+        ),
+        Err(e) => {
+            // Without netsh no rule can be added either.
+            tracing::warn!("running netsh: {e}");
+            None
+        }
+    }
+}
+
+fn add_firewall_rule(name: &str, program: &str) -> Outcome {
+    let out = std::process::Command::new(netsh())
+        .args(["advfirewall", "firewall", "add", "rule"])
+        .raw_arg(format!("name={}", netsh_quote(name)))
+        .args(["dir=in", "action=allow"])
+        .raw_arg(format!("program={}", netsh_quote(program)))
+        .arg("enable=yes")
+        .creation_flags(CREATE_NO_WINDOW)
+        .output();
+    match out {
+        Ok(o) if o.status.success() => Outcome::Done,
+        Ok(o) => Outcome::Failed(format!(
+            "netsh exited with {}: {}",
+            o.status,
+            String::from_utf8_lossy(&o.stdout).trim()
+        )),
+        Err(e) => Outcome::Failed(format!("running netsh: {e}")),
+    }
 }
 
 fn delete(v: &ValueRef) -> Result<(), String> {
@@ -268,52 +409,25 @@ fn known_folder(id: &GUID) -> Option<String> {
 }
 
 impl System for Windows {
-    fn dword(&self, v: &ValueRef) -> Option<u32> {
-        let (hive, _, view) = root(&v.key);
-        let path = wide(&v.key.path);
-        let name = name(v);
-        let mut n = 0u32;
-        let mut size = 4u32;
-        // SAFETY: `n` has room for the `size` bytes asked for.
-        let r = unsafe {
-            RegGetValueW(
-                hive,
-                path.as_ptr(),
-                ptr(&name),
-                RRF_RT_REG_DWORD | view,
-                std::ptr::null_mut(),
-                &mut n as *mut u32 as *mut c_void,
-                &mut size,
-            )
-        };
-        (r == ERROR_SUCCESS).then_some(n)
+    fn value(&self, v: &ValueRef) -> Option<Data> {
+        read(v)
     }
 
-    fn exists(&self, v: &ValueRef) -> bool {
-        let (hive, _, view) = root(&v.key);
-        let path = wide(&v.key.path);
-        let name = name(v);
-        // SAFETY: no data is asked for.
-        let r = unsafe {
-            RegGetValueW(
-                hive,
-                path.as_ptr(),
-                ptr(&name),
-                RRF_RT_ANY | view,
-                std::ptr::null_mut(),
-                std::ptr::null_mut(),
-                std::ptr::null_mut(),
-            )
-        };
-        r == ERROR_SUCCESS
+    fn firewall_rule(&self, name: &str, program: &str) -> Option<bool> {
+        firewall_rule(name, program)
     }
 
     fn apply(&self, step: &Step, cancel: &CancelToken) -> Outcome {
         match step {
+            Step::Set { value, data } => match set_data(value, data) {
+                Ok(()) => Outcome::Done,
+                Err(e) => Outcome::Failed(e),
+            },
             Step::Delete(v) => match delete(v) {
                 Ok(()) => Outcome::Done,
                 Err(e) => Outcome::Failed(e),
             },
+            Step::Firewall { name, program } => add_firewall_rule(name, program),
             Step::Run {
                 program,
                 arguments,
@@ -373,22 +487,12 @@ impl System for Windows {
         unsafe { IsWow64Process(GetCurrentProcess(), &mut wow) != 0 && wow != 0 }
     }
 
-    /// *Unverified:* the names beyond `WinXP` and `Win7` (§2.2).
     fn os_type(&self) -> String {
         let mut v: OSVERSIONINFOW = unsafe { std::mem::zeroed() };
         v.dwOSVersionInfoSize = std::mem::size_of::<OSVERSIONINFOW>() as u32;
         // SAFETY: `v` is the size it says.
         unsafe { RtlGetVersion(&mut v) };
-        match (v.dwMajorVersion, v.dwMinorVersion) {
-            (5, _) => "WinXP",
-            (6, 0) => "WinVista",
-            (6, 1) => "Win7",
-            (6, 2) => "Win8",
-            (6, 3) => "Win81",
-            (10, _) if v.dwBuildNumber >= 22_000 => "Win11",
-            _ => "Win10",
-        }
-        .to_owned()
+        super::os_type(v.dwMajorVersion, v.dwMinorVersion, v.dwBuildNumber).to_owned()
     }
 
     fn var(&self, name: &str) -> Option<String> {
@@ -400,6 +504,69 @@ impl System for Windows {
             "USER_MYDOCS" => known_folder(&FOLDERID_Documents),
             "COMMON_MYDOCS" => known_folder(&FOLDERID_PublicDocuments),
             _ => None,
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn value(name: Option<&str>) -> ValueRef {
+        ValueRef {
+            key: Key {
+                machine: false,
+                path: "Software\\ossteam-test\\scripts".into(),
+            },
+            name: name.map(str::to_owned),
+        }
+    }
+
+    #[test]
+    fn values_are_written_read_and_deleted() {
+        let w = Windows;
+        let s = value(Some("Exe_Path"));
+        let n = value(Some("PatchVersion"));
+        let default = value(None);
+        let text = "C:\\Games\\Späcewar\\SteamworksExample.exe";
+        let steps = [
+            Step::Set {
+                value: s.clone(),
+                data: Data::String(text.into()),
+            },
+            Step::Set {
+                value: n.clone(),
+                data: Data::Dword(42),
+            },
+            Step::Set {
+                value: default.clone(),
+                data: Data::String("x".into()),
+            },
+        ];
+        let cancel = CancelToken::new();
+        assert!(
+            w.apply_all(&steps, &cancel)
+                .iter()
+                .all(|o| *o == Outcome::Done)
+        );
+        assert_eq!(w.value(&s), Some(Data::String(text.into())));
+        assert_eq!(w.value(&n), Some(Data::Dword(42)));
+        assert_eq!(w.dword(&s), None);
+        assert_eq!(w.value(&default), Some(Data::String("x".into())));
+        for v in [&s, &n, &default] {
+            assert_eq!(w.apply(&Step::Delete(v.clone()), &cancel), Outcome::Done);
+            assert_eq!(w.value(v), None);
+        }
+        // SAFETY: the path is NUL-terminated.
+        unsafe {
+            windows_sys::Win32::System::Registry::RegDeleteKeyW(
+                HKEY_CURRENT_USER,
+                wide("Software\\ossteam-test\\scripts").as_ptr(),
+            );
+            windows_sys::Win32::System::Registry::RegDeleteKeyW(
+                HKEY_CURRENT_USER,
+                wide("Software\\ossteam-test").as_ptr(),
+            );
         }
     }
 }

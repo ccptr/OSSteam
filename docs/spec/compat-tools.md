@@ -439,7 +439,11 @@ apply to the prefix, not to the host. They are planned as on Windows
   §5), and the next start, verify or uninstall reads what is really there:
   a recorded value that is missing is not deleted again.
 - **Run Process.** Each entry that is due runs as a setup command:
-  the program's path, quoted, and its arguments as written. When it exits
+  the program's path and the words of its arguments, each quoted for
+  the shell. The arguments are a Windows command line, split as
+  `CommandLineToArgvW` splits one, so that the shell neither splits nor
+  expands them (unlike a game's, `launch.md` §3); Wine joins the words
+  again. When it exits
   with 0, its `HasRunKey` value is set to 1 by a further `regedit`
   import. *Unverified:* that Proton's `steam.exe` starts `.cmd` and
   `.bat` files, and that `run` returns the program's exit code.

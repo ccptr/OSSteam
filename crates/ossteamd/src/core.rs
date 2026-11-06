@@ -29,6 +29,7 @@ mod gc;
 mod http;
 mod jobs;
 mod networking;
+mod scripts;
 mod shim;
 mod takeover;
 mod tickets;
@@ -90,6 +91,8 @@ pub enum Command {
     UpdateHoldOver(ossteam_types::AppId, Instant),
     /// A game's HTTP request has news (`isteamhttp.md` §8).
     Http(http::HttpEvent),
+    /// From a launch's install scripts (`install-scripts.md` §3.1).
+    Scripts(scripts::Report),
     /// Linux: `~/.steam` changed, or the take-over's interval passed
     /// (`steamworks-abi.md` §1.1.5).
     #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
@@ -292,6 +295,7 @@ impl Core {
                 Command::Http(e) => self.on_http(e),
                 Command::GameExitWait(app) => self.exit_wait_over(app),
                 Command::SteamDir => self.sync_take_over(),
+                Command::Scripts(r) => self.on_scripts(r),
             }
         };
         // Running jobs stop first and keep their journals (`content.md`

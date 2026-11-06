@@ -775,6 +775,7 @@ message Event {
     GameStarted game_started = 10;
     GameExited game_exited = 11;
     ShimReport shim_report = 12;
+    LaunchStep launch_step = 13;
   }
 }
 
@@ -894,6 +895,21 @@ message StopGameRequest {
 }
 
 message StopGameResponse {}
+
+enum LaunchStepKind {
+  LAUNCH_STEP_KIND_UNSPECIFIED = 0;
+  // Install scripts run (install-scripts.md §3.1).
+  LAUNCH_STEP_KIND_INSTALL_SCRIPT = 1;
+}
+
+// Topic: GAMES. A step of a launch under way started, before the game's
+// process exists (launch.md §8).
+message LaunchStep {
+  uint32 app_id = 1;
+  LaunchStepKind step = 2;
+  // What it does, in words: "Writing 2 registry values".
+  string text = 3;
+}
 
 // Topic: GAMES. A game's process was created.
 message GameStarted {

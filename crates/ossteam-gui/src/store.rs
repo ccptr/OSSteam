@@ -142,6 +142,9 @@ pub struct Store {
     pub apps: HashMap<u32, AppDetails>,
     pub jobs: BTreeMap<u64, v1::Job>,
     pub running: BTreeMap<u32, v1::RunningGame>,
+    /// What each launch under way is doing, from `LaunchStep`
+    /// (`launch.md` §8): until its game starts or its `Launch` returns.
+    pub launch_steps: HashMap<u32, String>,
     pub shim_reports: HashMap<u32, v1::ShimReport>,
     /// How each app's game last ended, of those seen to end since the GUI
     /// connected: the daemon keeps no record of it.
@@ -173,6 +176,7 @@ impl Store {
                 .map(|j| (j.job_id, j))
                 .collect(),
             running: i.running.into_iter().map(|g| (g.app_id, g)).collect(),
+            launch_steps: HashMap::new(),
             shim_reports: HashMap::new(),
             exits: HashMap::new(),
             settings: i.settings.into_iter().map(|s| (s.key.clone(), s)).collect(),
@@ -283,8 +287,19 @@ impl Store {
                 }
                 Vec::new()
             }
+            event::Kind::LaunchStep(step) => {
+                let text = match v1::LaunchStepKind::try_from(step.step) {
+                    Ok(v1::LaunchStepKind::InstallScript) => {
+                        format!("Running install scripts: {}", step.text)
+                    }
+                    _ => step.text,
+                };
+                self.launch_steps.insert(step.app_id, text);
+                Vec::new()
+            }
             event::Kind::GameStarted(g) => {
                 if let Some(g) = g.game {
+                    self.launch_steps.remove(&g.app_id);
                     self.running.insert(g.app_id, g);
                 }
                 Vec::new()

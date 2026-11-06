@@ -1,10 +1,11 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 //! Install scripts in the daemon (`install-scripts.md`; SPEC CONT-8):
-//! what is recorded with an install, and the steps verify and uninstall
-//! take. Parsing is `ossteam_content::script`'s. The steps themselves
-//! reach Windows through [`System`]; elsewhere there is none, and scripts
-//! are not applied (§3).
+//! what is recorded with an install, and the steps a start, verify and
+//! uninstall take. Parsing is `ossteam_content::script`'s. The steps
+//! themselves reach Windows, or a Proton prefix (`compat-tools.md` §7),
+//! through [`System`].
 
+pub mod prefix;
 #[cfg(windows)]
 pub mod windows;
 
@@ -13,7 +14,7 @@ use std::path::{Path, PathBuf};
 
 use ossteam_content::Manifest;
 use ossteam_content::manifest::flags;
-use ossteam_content::script::{Hive, Process, RegKey, Script};
+use ossteam_content::script::{self as parsed, Hive, Process, RegKey, Script};
 use ossteam_types::{CancelToken, DepotId};
 use serde::{Deserialize, Serialize};
 use sha1::{Digest, Sha1};
@@ -78,12 +79,36 @@ impl fmt::Display for ValueRef {
     }
 }
 
+/// A registry value's type and data, as far as scripts write them.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum Data {
+    /// `REG_SZ`.
+    String(String),
+    /// `REG_DWORD`.
+    Dword(u32),
+    /// Another type, which no script writes.
+    Other,
+}
+
+impl From<&parsed::Data> for Data {
+    fn from(d: &parsed::Data) -> Self {
+        match d {
+            parsed::Data::String(s) => Self::String(s.clone()),
+            parsed::Data::Dword(n) => Self::Dword(*n),
+        }
+    }
+}
+
 /// One thing done to the system. The elevated helper reads these, so
 /// their form is shared with it, and with it only.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Step {
+    /// Writes a value (§2.1), creating its key.
+    Set { value: ValueRef, data: Data },
     /// Deletes a value; one that is not there is fine.
     Delete(ValueRef),
+    /// Adds an inbound firewall rule for a program (§2.3).
+    Firewall { name: String, program: String },
     /// Runs a program and waits for it. When it exits with 0, `has_run`
     /// is set to 1 (§2.2).
     Run {
@@ -96,7 +121,9 @@ pub enum Step {
 impl fmt::Display for Step {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            Self::Set { value, data } => write!(f, "set {value} to {data:?}"),
             Self::Delete(v) => write!(f, "delete {v}"),
+            Self::Firewall { name, program } => write!(f, "firewall rule {name:?} for {program}"),
             Self::Run {
                 program, arguments, ..
             } => write!(f, "run {program} {arguments}"),
@@ -174,14 +201,43 @@ pub struct Planned {
 #[derive(Debug, PartialEq, Eq)]
 pub struct Stopped;
 
-/// What steps act on: Windows, or a fake in tests (FAITH-4).
+/// What steps act on: Windows, a Proton prefix, or a fake in tests
+/// (FAITH-4).
 pub trait System: Send + Sync {
+    /// A value's type and data; `None` when it is missing.
+    fn value(&self, v: &ValueRef) -> Option<Data>;
     /// A `REG_DWORD` value; `None` when it is missing or of another type.
-    fn dword(&self, v: &ValueRef) -> Option<u32>;
-    fn exists(&self, v: &ValueRef) -> bool;
+    fn dword(&self, v: &ValueRef) -> Option<u32> {
+        match self.value(v) {
+            Some(Data::Dword(n)) => Some(n),
+            _ => None,
+        }
+    }
+    fn exists(&self, v: &ValueRef) -> bool {
+        self.value(v).is_some()
+    }
+    /// Whether a firewall rule `name` for `program` is there; `None`
+    /// where there is no firewall (§2.3; a prefix, `compat-tools.md` §7).
+    fn firewall_rule(&self, name: &str, program: &str) -> Option<bool>;
+    /// Whether steps can be elevated: on Windows, not in a prefix, where
+    /// none needs it (§4).
+    fn elevates(&self) -> bool {
+        true
+    }
+    /// A host directory as the scripts' programs name it, for
+    /// `%INSTALLDIR%` (§2.5).
+    fn path(&self, dir: &Path) -> String {
+        dir.to_string_lossy().into_owned()
+    }
     /// Takes a step in the daemon's own user context. Returns `NotRun`
     /// when `cancel` stops it before it starts.
     fn apply(&self, step: &Step, cancel: &CancelToken) -> Outcome;
+    /// Takes steps in the daemon's own user context, in order. A system
+    /// that does several registry steps at once, as a prefix does, takes
+    /// them together.
+    fn apply_all(&self, steps: &[Step], cancel: &CancelToken) -> Vec<Outcome> {
+        steps.iter().map(|s| self.apply(s, cancel)).collect()
+    }
     /// Takes the steps in one elevated helper, behind one UAC prompt.
     /// `Err` when the helper did not run: the user declined, or it could
     /// not start.
@@ -193,12 +249,45 @@ pub trait System: Send + Sync {
     fn var(&self, name: &str) -> Option<String>;
 }
 
-/// The system on this platform: Windows only (§3).
+/// A Windows version as `Requirement_OS` names it (§2.2), from its
+/// major and minor version and build. *Unverified:* the names beyond
+/// `WinXP` and `Win7`.
+pub fn os_type(major: u32, minor: u32, build: u32) -> &'static str {
+    match (major, minor) {
+        (5, _) => "WinXP",
+        (6, 0) => "WinVista",
+        (6, 1) => "Win7",
+        (6, 2) => "Win8",
+        (6, 3) => "Win81",
+        (10, _) if build >= 22_000 => "Win11",
+        _ => "Win10",
+    }
+}
+
+/// The system on this platform: Windows only (§3). A prefix's is made
+/// for each launch ([`prefix::Prefix`]).
 pub fn system() -> Option<std::sync::Arc<dyn System>> {
     #[cfg(windows)]
     return Some(std::sync::Arc::new(windows::Windows));
     #[cfg(not(windows))]
     None
+}
+
+/// An app's scripts, read.
+#[derive(Debug, Default)]
+pub struct Loaded {
+    pub scripts: Vec<Script>,
+    /// Scripts that are missing or do not match the installed manifest:
+    /// the app needs a verify (§6).
+    pub unusable: Vec<ScriptFile>,
+}
+
+/// Why a script was left out.
+enum Unread {
+    /// Missing, or not as the manifest says.
+    Unusable(String),
+    /// It does not parse.
+    Broken(String),
 }
 
 /// Reads an app's scripts, in order of depot, then path (§3). `dir_of`
@@ -210,17 +299,21 @@ pub fn load(
     dir_of: &dyn Fn(DepotId) -> Option<PathBuf>,
     language: &str,
     sys: &dyn System,
-) -> Vec<Script> {
+) -> Loaded {
     let mut files = files.to_vec();
     files.sort_by(|a, b| (a.depot, &a.path).cmp(&(b.depot, &b.path)));
-    let mut out = Vec::new();
+    let mut out = Loaded::default();
     for f in files {
         let read = dir_of(f.depot)
-            .ok_or_else(|| "the depot is not installed".to_owned())
-            .and_then(|dir| read(&dir, &f, language, sys).map_err(|e| e.to_string()));
+            .ok_or_else(|| Unread::Unusable("the depot is not installed".to_owned()))
+            .and_then(|dir| read(&dir, &f, language, sys));
         match read {
-            Ok(script) => out.push(script),
-            Err(why) => {
+            Ok(script) => out.scripts.push(script),
+            Err(Unread::Unusable(why)) => {
+                tracing::warn!(depot = %f.depot, path = %f.path, "install script not used: {why}");
+                out.unusable.push(f);
+            }
+            Err(Unread::Broken(why)) => {
                 tracing::warn!(depot = %f.depot, path = %f.path, "install script not used: {why}")
             }
         }
@@ -228,18 +321,23 @@ pub fn load(
     out
 }
 
-fn read(dir: &Path, f: &ScriptFile, language: &str, sys: &dyn System) -> anyhow::Result<Script> {
-    let components = ossteam_content::path::components(&f.path, cfg!(windows))?;
+fn read(dir: &Path, f: &ScriptFile, language: &str, sys: &dyn System) -> Result<Script, Unread> {
+    let unusable = |e: &dyn fmt::Display| Unread::Unusable(e.to_string());
+    let components =
+        ossteam_content::path::components(&f.path, cfg!(windows)).map_err(|e| unusable(&e))?;
     let path = components.iter().fold(dir.to_owned(), |p, c| p.join(c));
-    let bytes = std::fs::read(&path)?;
+    let bytes = std::fs::read(&path).map_err(|e| unusable(&e))?;
     if bytes.len() as u64 != f.size || Sha1::digest(&bytes).as_slice() != f.sha1 {
-        anyhow::bail!("the file does not match the installed manifest; the app needs a verify");
+        return Err(unusable(
+            &"the file does not match the installed manifest; the app needs a verify",
+        ));
     }
-    let script = Script::parse(&decode(&bytes), language)?;
+    let script =
+        Script::parse(&decode(&bytes), language).map_err(|e| Unread::Broken(e.to_string()))?;
     for p in &script.problems {
         tracing::info!(depot = %f.depot, path = %f.path, "install script: {p}");
     }
-    let install_dir = dir.to_string_lossy().trim_end_matches('\\').to_owned();
+    let install_dir = sys.path(dir).trim_end_matches('\\').to_owned();
     let root_drive = install_dir
         .get(..2)
         .filter(|d| d.ends_with(':'))
@@ -295,8 +393,79 @@ fn run_step(p: &Process, sys: &dyn System) -> Option<Planned> {
             arguments: p.arguments.clone(),
             has_run,
         },
-        elevated: !p.as_current_user,
+        elevated: !p.as_current_user && sys.elevates(),
     })
+}
+
+/// What a start takes (§3.1): the registry values not already there
+/// (`HKEY_LOCAL_MACHINE` only from signed scripts, §2.6), the firewall
+/// rules not there yet, then the Run Process entries that are due.
+pub fn start(loaded: &[Script], sys: &dyn System) -> Vec<Planned> {
+    let mut plan = Vec::new();
+    for s in loaded {
+        for r in &s.registry {
+            let value = ValueRef {
+                key: (&r.key).into(),
+                name: r.name.clone(),
+            };
+            if value.key.machine && !s.signed {
+                tracing::info!("install script: not writing {value}: the script is not signed");
+                continue;
+            }
+            let data = Data::from(&r.data);
+            if sys.value(&value).as_ref() == Some(&data) {
+                continue;
+            }
+            plan.push(Planned {
+                elevated: value.key.machine && sys.elevates(),
+                step: Step::Set { value, data },
+            });
+        }
+    }
+    for s in loaded {
+        for (name, program) in &s.firewall {
+            match sys.firewall_rule(name, program) {
+                Some(true) => {}
+                Some(false) => plan.push(Planned {
+                    step: Step::Firewall {
+                        name: name.clone(),
+                        program: program.clone(),
+                    },
+                    elevated: sys.elevates(),
+                }),
+                None => tracing::info!(
+                    "install script: no firewall here; the rule {name:?} for {program} is not added"
+                ),
+            }
+        }
+    }
+    plan.extend(
+        loaded
+            .iter()
+            .flat_map(|s| &s.run)
+            .filter_map(|p| run_step(p, sys)),
+    );
+    plan
+}
+
+/// The values a start wrote: its `Set` steps that were done (§5).
+pub fn written(plan: &[Planned], out: &[Outcome]) -> Vec<ValueRef> {
+    plan.iter()
+        .zip(out)
+        .filter_map(|(p, o)| match (&p.step, o) {
+            (Step::Set { value, .. }, Outcome::Done) => Some(value.clone()),
+            _ => None,
+        })
+        .collect()
+}
+
+/// `written` added to `recorded`, each value once.
+pub fn record(recorded: &mut Vec<ValueRef>, written: Vec<ValueRef>) {
+    for v in written {
+        if !recorded.contains(&v) {
+            recorded.push(v);
+        }
+    }
 }
 
 /// What verify takes away so the scripts apply again at the next start
@@ -318,7 +487,7 @@ pub fn removal(loaded: &[Script], written: &[ValueRef], sys: &dyn System) -> Vec
     values
         .into_iter()
         .map(|v| Planned {
-            elevated: v.key.machine,
+            elevated: v.key.machine && sys.elevates(),
             step: Step::Delete(v),
         })
         .collect()
@@ -336,24 +505,75 @@ pub fn uninstall(loaded: &[Script], written: &[ValueRef], sys: &dyn System) -> V
     plan
 }
 
+/// What a group of steps does, in words, for `LaunchStep`
+/// (`launch.md` §8).
+pub fn describe(steps: &[Step], elevated: bool) -> String {
+    let n = steps.len();
+    let values = |verb: &str| match n {
+        1 => format!("{verb} a registry value"),
+        n => format!("{verb} {n} registry values"),
+    };
+    if elevated {
+        return match n {
+            1 => "Asking for administrator approval for one step".to_owned(),
+            n => format!("Asking for administrator approval for {n} steps"),
+        };
+    }
+    match steps {
+        [Step::Run { program, .. }] => {
+            let file = program.rsplit(['\\', '/']).next().unwrap_or(program);
+            format!("Running {file}")
+        }
+        [Step::Firewall { name, .. }] => format!("Adding a firewall rule for {name}"),
+        s if s.iter().all(|s| matches!(s, Step::Set { .. })) => values("Writing"),
+        s if s.iter().all(|s| matches!(s, Step::Delete(_))) => values("Removing"),
+        _ => values("Changing"),
+    }
+}
+
+/// Whether a step changes the registry only, so that it can be taken
+/// with its neighbours.
+fn registry_only(s: &Step) -> bool {
+    matches!(s, Step::Set { .. } | Step::Delete(_))
+}
+
 /// Takes the steps in order, except that every elevated step runs in one
-/// helper at the place of the first (§4). A step that fails does not stop
-/// the others (§6); each is logged.
+/// helper at the place of the first (§4). Neighbouring registry steps
+/// run together (`System::apply_all`). Before each group, `report` gets
+/// what it does. A step that fails does not stop the others (§6); each
+/// is logged.
 pub fn execute(
     sys: &dyn System,
     plan: &[Planned],
     cancel: &CancelToken,
+    report: &mut dyn FnMut(String),
 ) -> Result<Vec<Outcome>, Stopped> {
     let mut out = vec![Outcome::NotRun; plan.len()];
     let elevated: Vec<usize> = (0..plan.len()).filter(|&i| plan[i].elevated).collect();
-    for (i, p) in plan.iter().enumerate() {
+    let mut i = 0;
+    while i < plan.len() {
         if cancel.is_cancelled() {
             return Err(Stopped);
         }
-        if !p.elevated {
-            out[i] = sys.apply(&p.step, cancel);
-        } else if elevated.first() == Some(&i) {
+        if !plan[i].elevated {
+            let mut end = i + 1;
+            if registry_only(&plan[i].step) {
+                while end < plan.len() && !plan[end].elevated && registry_only(&plan[end].step) {
+                    end += 1;
+                }
+            }
+            let steps: Vec<Step> = plan[i..end].iter().map(|p| p.step.clone()).collect();
+            report(describe(&steps, false));
+            let results = sys.apply_all(&steps, cancel);
+            for (j, r) in (i..end).zip(results) {
+                out[j] = r;
+            }
+            i = end;
+            continue;
+        }
+        if elevated.first() == Some(&i) {
             let steps: Vec<Step> = elevated.iter().map(|&j| plan[j].step.clone()).collect();
+            report(describe(&steps, true));
             match sys.apply_elevated(&steps, cancel) {
                 Ok(results) if results.len() == steps.len() => {
                     for (&j, r) in elevated.iter().zip(results) {
@@ -375,6 +595,7 @@ pub fn execute(
                 }
             }
         }
+        i += 1;
     }
     if cancel.is_cancelled() {
         return Err(Stopped);
@@ -405,7 +626,7 @@ pub fn remaining(written: &[ValueRef], plan: &[Planned], out: &[Outcome]) -> Vec
 
 #[cfg(test)]
 pub mod fake {
-    //! A registry and process table in memory (FAITH-4).
+    //! A registry, firewall and process table in memory (FAITH-4).
 
     use std::collections::HashMap;
     use std::sync::Mutex;
@@ -414,23 +635,53 @@ pub mod fake {
 
     #[derive(Default)]
     pub struct State {
-        pub values: HashMap<String, u32>,
+        pub values: HashMap<String, Data>,
+        /// Firewall rules: name and program.
+        pub rules: Vec<(String, String)>,
         /// Programs that ran, with their arguments and whether elevated.
         pub ran: Vec<(String, String, bool)>,
         /// Exit codes by program; 0 when not given.
         pub exit: HashMap<String, u32>,
         pub prompts: usize,
         pub decline: bool,
+        /// Each call of `apply_all`, by the number of steps it got.
+        pub batches: Vec<usize>,
     }
 
-    #[derive(Default)]
     pub struct FakeSystem {
         pub state: Mutex<State>,
+        /// Whether steps are elevated: Windows, not a prefix.
+        pub elevates: bool,
+        /// Whether there is a firewall.
+        pub firewall: bool,
+    }
+
+    impl Default for FakeSystem {
+        fn default() -> Self {
+            Self {
+                state: Mutex::default(),
+                elevates: true,
+                firewall: true,
+            }
+        }
     }
 
     impl FakeSystem {
+        /// Like a prefix: no elevation, no firewall.
+        pub fn prefix() -> Self {
+            Self {
+                elevates: false,
+                firewall: false,
+                ..Self::default()
+            }
+        }
+
         pub fn set(&self, v: &ValueRef, n: u32) {
-            self.state.lock().unwrap().values.insert(v.to_string(), n);
+            self.set_data(v, Data::Dword(n));
+        }
+
+        pub fn set_data(&self, v: &ValueRef, d: Data) {
+            self.state.lock().unwrap().values.insert(v.to_string(), d);
         }
 
         pub fn has(&self, v: &ValueRef) -> bool {
@@ -443,12 +694,27 @@ pub mod fake {
 
         fn take(&self, step: &Step, elevated: bool) -> Outcome {
             let mut s = self.state.lock().unwrap();
+            let denied = |machine: bool| machine && self.elevates && !elevated;
             match step {
+                Step::Set { value, data } => {
+                    if denied(value.key.machine) {
+                        return Outcome::Failed("access denied".into());
+                    }
+                    s.values.insert(value.to_string(), data.clone());
+                    Outcome::Done
+                }
                 Step::Delete(v) => {
-                    if v.key.machine && !elevated {
+                    if denied(v.key.machine) {
                         return Outcome::Failed("access denied".into());
                     }
                     s.values.remove(&v.to_string());
+                    Outcome::Done
+                }
+                Step::Firewall { name, program } => {
+                    if !elevated {
+                        return Outcome::Failed("access denied".into());
+                    }
+                    s.rules.push((name.clone(), program.clone()));
                     Outcome::Done
                 }
                 Step::Run {
@@ -460,7 +726,7 @@ pub mod fake {
                     match s.exit.get(program).copied().unwrap_or(0) {
                         0 => {
                             if let Some(v) = has_run {
-                                s.values.insert(v.to_string(), 1);
+                                s.values.insert(v.to_string(), Data::Dword(1));
                             }
                             Outcome::Done
                         }
@@ -472,21 +738,37 @@ pub mod fake {
     }
 
     impl System for FakeSystem {
-        fn dword(&self, v: &ValueRef) -> Option<u32> {
+        fn value(&self, v: &ValueRef) -> Option<Data> {
             self.state
                 .lock()
                 .unwrap()
                 .values
                 .get(&v.to_string())
-                .copied()
+                .cloned()
         }
 
-        fn exists(&self, v: &ValueRef) -> bool {
-            self.has(v)
+        fn firewall_rule(&self, name: &str, program: &str) -> Option<bool> {
+            self.firewall.then(|| {
+                self.state
+                    .lock()
+                    .unwrap()
+                    .rules
+                    .iter()
+                    .any(|(n, p)| n == name && p == program)
+            })
+        }
+
+        fn elevates(&self) -> bool {
+            self.elevates
         }
 
         fn apply(&self, step: &Step, _: &CancelToken) -> Outcome {
             self.take(step, false)
+        }
+
+        fn apply_all(&self, steps: &[Step], _: &CancelToken) -> Vec<Outcome> {
+            self.state.lock().unwrap().batches.push(steps.len());
+            steps.iter().map(|s| self.take(s, false)).collect()
         }
 
         fn apply_elevated(&self, steps: &[Step], _: &CancelToken) -> Result<Vec<Outcome>, String> {
@@ -603,6 +885,7 @@ mod tests {
             "english",
             sys,
         )
+        .scripts
     }
 
     #[test]
@@ -626,12 +909,31 @@ mod tests {
         other.depot = DepotId(6);
         let d = dir.0.clone();
         let none = load(
-            &[other],
+            &[other.clone()],
             &move |depot| (depot == DepotId(5)).then(|| d.clone()),
             "english",
             &sys,
         );
-        assert!(none.is_empty());
+        assert!(none.scripts.is_empty());
+        assert_eq!(none.unusable, [other]);
+        let d = dir.0.clone();
+        let changed = load(
+            &[changed],
+            &move |depot| (depot == DepotId(5)).then(|| d.clone()),
+            "english",
+            &sys,
+        );
+        assert_eq!(changed.unusable.len(), 1);
+        // One that does not parse is left out, but is no reason to verify.
+        let (dir, broken) = installed(b"\"InstallScript\" {");
+        let d = dir.0.clone();
+        let broken = load(
+            &[broken],
+            &move |depot| (depot == DepotId(5)).then(|| d.clone()),
+            "english",
+            &sys,
+        );
+        assert!(broken.scripts.is_empty() && broken.unusable.is_empty());
     }
 
     #[test]
@@ -671,7 +973,7 @@ mod tests {
                 },
             ]
         );
-        let out = execute(&sys, &plan, &CancelToken::new()).unwrap();
+        let out = execute(&sys, &plan, &CancelToken::new(), &mut |_| {}).unwrap();
         assert_eq!(out, [Outcome::Done, Outcome::Done]);
         assert!(!sys.has(&written) && !sys.has(&prereq()) && sys.has(&dx()));
         assert_eq!(sys.state.lock().unwrap().prompts, 0);
@@ -690,7 +992,7 @@ mod tests {
         // "Old" is for 32-bit Windows only.
         let elevated: Vec<bool> = plan.iter().map(|p| p.elevated).collect();
         assert_eq!(elevated, [false, true, true]);
-        let out = execute(&sys, &plan, &CancelToken::new()).unwrap();
+        let out = execute(&sys, &plan, &CancelToken::new(), &mut |_| {}).unwrap();
         assert_eq!(out, [Outcome::Done, Outcome::Done, Outcome::Done]);
         let s = sys.state.lock().unwrap();
         assert_eq!(s.prompts, 1, "one prompt for every elevated step");
@@ -713,7 +1015,7 @@ mod tests {
         sys.set(&user, 1);
         let written = [machine.clone(), user.clone()];
         let plan = removal(&[], &written, &sys);
-        let out = execute(&sys, &plan, &CancelToken::new()).unwrap();
+        let out = execute(&sys, &plan, &CancelToken::new(), &mut |_| {}).unwrap();
         assert_eq!(out, [Outcome::NotRun, Outcome::Done]);
         assert_eq!(remaining(&written, &plan, &out), [machine]);
     }
@@ -726,7 +1028,7 @@ mod tests {
         let unreg = loaded[0].run_on_uninstall[1].program.clone();
         sys.state.lock().unwrap().exit.insert(unreg, 3);
         let plan = uninstall(&loaded, &[], &sys);
-        let out = execute(&sys, &plan, &CancelToken::new()).unwrap();
+        let out = execute(&sys, &plan, &CancelToken::new(), &mut |_| {}).unwrap();
         assert_eq!(out, [Outcome::Done, Outcome::Failed("exit code 3".into())]);
 
         // A Run Process entry already recorded as run is not due.
@@ -755,12 +1057,163 @@ mod tests {
         assert!(HelperRequest::decode("zz").is_err());
     }
 
+    /// Spacewar's script (depot 481), with a firewall entry and an entry
+    /// that runs as the user added, and an unsigned copy.
+    const START: &str = r#"
+"InstallScript"
+{
+    "Registry"
+    {
+        "HKEY_LOCAL_MACHINE\\SOFTWARE\\Valve\\Spacewar"
+        {
+            "string" { "Exe_Path" "%INSTALLDIR%\\SteamworksExample.exe" }
+            "dword" { "PatchVersion" "42" }
+        }
+        "HKEY_CURRENT_USER\\Software\\Valve\\Spacewar"
+        {
+            "dword" { "Volume" "7" }
+        }
+    }
+    "Firewall" { "Spacewar" "%INSTALLDIR%\\SteamworksExample.exe" }
+    "Run Process"
+    {
+        "Prereq"
+        {
+            "HasRunKey" "HKEY_CURRENT_USER\\Software\\Example"
+            "process 1" "%INSTALLDIR%\\prereq.exe"
+            "AsCurrentUser" "1"
+        }
+    }
+}
+"#;
+
+    fn spacewar(signed: bool) -> String {
+        let sig = if signed {
+            "\"kvsignatures\" { \"InstallScript\" \"73e0\" }"
+        } else {
+            ""
+        };
+        format!("{START}{sig}")
+    }
+
+    fn exe_path() -> ValueRef {
+        value(true, "SOFTWARE\\Valve\\Spacewar", "Exe_Path")
+    }
+
+    fn patch_version() -> ValueRef {
+        value(true, "SOFTWARE\\Valve\\Spacewar", "PatchVersion")
+    }
+
+    fn volume() -> ValueRef {
+        value(false, "Software\\Valve\\Spacewar", "Volume")
+    }
+
+    #[test]
+    fn a_start_writes_values_adds_rules_and_runs_entries() {
+        let sys = FakeSystem::default();
+        let (dir, file) = installed(spacewar(true).as_bytes());
+        let loaded = load_one(&dir, &file, &sys);
+        let exe = format!("{}\\SteamworksExample.exe", dir.0.to_string_lossy());
+        // Already as the script has it: not planned.
+        sys.set(&patch_version(), 42);
+
+        let plan = start(&loaded, &sys);
+        let steps: Vec<(&Step, bool)> = plan.iter().map(|p| (&p.step, p.elevated)).collect();
+        let prereq_step = Step::Run {
+            program: format!("{}\\prereq.exe", dir.0.to_string_lossy()),
+            arguments: String::new(),
+            has_run: Some(prereq()),
+        };
+        assert_eq!(
+            steps,
+            [
+                (
+                    &Step::Set {
+                        value: exe_path(),
+                        data: Data::String(exe.clone())
+                    },
+                    true
+                ),
+                (
+                    &Step::Set {
+                        value: volume(),
+                        data: Data::Dword(7)
+                    },
+                    false
+                ),
+                (
+                    &Step::Firewall {
+                        name: "Spacewar".into(),
+                        program: exe.clone()
+                    },
+                    true
+                ),
+                (&prereq_step, false),
+            ]
+        );
+        let mut reported = Vec::new();
+        let out = execute(&sys, &plan, &CancelToken::new(), &mut |t| reported.push(t)).unwrap();
+        assert!(out.iter().all(|o| *o == Outcome::Done), "{out:?}");
+        assert_eq!(
+            reported,
+            [
+                "Asking for administrator approval for 2 steps",
+                "Writing a registry value",
+                "Running prereq.exe",
+            ]
+        );
+        assert_eq!(written(&plan, &out), [exe_path(), volume()]);
+        let mut recorded = vec![volume()];
+        record(&mut recorded, written(&plan, &out));
+        assert_eq!(recorded, [volume(), exe_path()]);
+        assert_eq!(sys.state.lock().unwrap().prompts, 1);
+
+        // Everything is in place now: the next start plans nothing.
+        assert!(start(&loaded, &sys).is_empty());
+    }
+
+    #[test]
+    fn unsigned_scripts_write_no_local_machine_values() {
+        let sys = FakeSystem::default();
+        let (dir, file) = installed(spacewar(false).as_bytes());
+        let loaded = load_one(&dir, &file, &sys);
+        let plan = start(&loaded, &sys);
+        let sets: Vec<&ValueRef> = plan
+            .iter()
+            .filter_map(|p| match &p.step {
+                Step::Set { value, .. } => Some(value),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(sets, [&volume()]);
+    }
+
+    #[test]
+    fn a_prefix_takes_registry_steps_together() {
+        let sys = FakeSystem::prefix();
+        let (dir, file) = installed(spacewar(true).as_bytes());
+        let loaded = load_one(&dir, &file, &sys);
+        let plan = start(&loaded, &sys);
+        // No firewall, and nothing elevated.
+        assert_eq!(plan.len(), 4);
+        assert!(plan.iter().all(|p| !p.elevated));
+        let mut reported = Vec::new();
+        let out = execute(&sys, &plan, &CancelToken::new(), &mut |t| reported.push(t)).unwrap();
+        assert!(out.iter().all(|o| *o == Outcome::Done), "{out:?}");
+        assert_eq!(
+            reported,
+            ["Writing 3 registry values", "Running prereq.exe"]
+        );
+        let s = sys.state.lock().unwrap();
+        assert_eq!((s.prompts, s.batches.as_slice()), (0, [3, 1].as_slice()));
+    }
+
     #[test]
     fn a_stop_ends_the_steps() {
         let sys = FakeSystem::default();
         let cancel = CancelToken::new();
         cancel.cancel();
         let plan = removal(&[], &[], &sys);
-        assert_eq!(execute(&sys, &plan, &cancel), Err(Stopped));
+        assert_eq!(execute(&sys, &plan, &cancel, &mut |_| {}), Err(Stopped));
     }
 }

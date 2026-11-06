@@ -35,8 +35,12 @@ pub struct Spec {
     pub working_dir: PathBuf,
     /// Set on top of the inherited environment.
     pub env: Vec<(String, String)>,
-    /// Standard output and error go here; the file is replaced.
+    /// Standard output and error go here; the file is replaced, unless
+    /// `append_log`.
     pub log: PathBuf,
+    /// Adds to `log` instead: for a launch's setup commands and the game
+    /// after them (`launch.md` §3).
+    pub append_log: bool,
     /// Linux: the program that runs `--reaper` (the daemon's own
     /// executable). Unused elsewhere.
     pub reaper: PathBuf,
@@ -48,6 +52,20 @@ pub struct Spec {
     /// the launch, runs in (`steamworks-abi.md` §1.1.2). Always `None`
     /// elsewhere.
     pub isolation: Option<Arc<crate::isolation::Plan>>,
+}
+
+impl Spec {
+    /// The log file, replaced or added to.
+    fn open_log(&self) -> std::io::Result<std::fs::File> {
+        if self.append_log {
+            std::fs::File::options()
+                .create(true)
+                .append(true)
+                .open(&self.log)
+        } else {
+            std::fs::File::create(&self.log)
+        }
+    }
 }
 
 /// Why a game was not started.

@@ -69,14 +69,29 @@ pub struct Requirement {
 }
 
 impl Requirement {
-    /// Whether the entry runs on this Windows. `os_type` is matched
-    /// exactly, ignoring case (*unverified*, §2.2).
+    /// Whether the entry runs on this Windows. `os_type` matches when the
+    /// names are equal without spaces and case, a leading `Windows` read
+    /// as `Win`: `Windows XP` and `WinXP` are the same (*unverified*,
+    /// §2.2).
     pub fn holds(&self, is_64bit: bool, os_type: &str) -> bool {
         self.is_64bit.is_none_or(|want| want == is_64bit)
             && self
                 .os_type
                 .as_deref()
-                .is_none_or(|want| want.eq_ignore_ascii_case(os_type))
+                .is_none_or(|want| os_name(want) == os_name(os_type))
+    }
+}
+
+/// An `OSType` name in the form [`Requirement::holds`] compares.
+fn os_name(name: &str) -> String {
+    let squashed: String = name
+        .chars()
+        .filter(|c| !c.is_whitespace())
+        .collect::<String>()
+        .to_ascii_lowercase();
+    match squashed.strip_prefix("windows") {
+        Some(rest) => format!("win{rest}"),
+        None => squashed,
     }
 }
 
@@ -483,6 +498,51 @@ mod tests {
         assert_eq!(s.problems.len(), 3, "{:?}", s.problems);
     }
 
+    /// Depot 229006's script (the Steamworks Common Redistributables'
+    /// .NET 4.7), signature shortened: two entries with the same name.
+    #[test]
+    fn entries_with_the_same_name() {
+        let text = r#"
+"InstallScript"
+{
+	"Run Process"
+	{
+		"4.7.2"
+		{
+			"HasRunKey"		"HKEY_LOCAL_MACHINE\\Software\\Valve\\Steam\\Apps\\CommonRedist\\.NET\\4.7.2"
+			"process 1"		"%INSTALLDIR%\\_CommonRedist\\DotNet\\4.7\\noop.cmd"
+			"NoCleanUp"		"1"
+			"Requirement_OS"
+			{
+				"OSType"		"Windows XP"
+			}
+		}
+		"4.7.2"
+		{
+			"HasRunKey"		"HKEY_LOCAL_MACHINE\\Software\\Valve\\Steam\\Apps\\CommonRedist\\.NET\\4.7.2"
+			"process 1"		"%INSTALLDIR%\\_CommonRedist\\DotNet\\4.7\\Microsoft .NET Framework 4.7.2.cmd"
+			"NoCleanUp"		"1"
+		}
+	}
+}
+"kvsignatures"
+{
+	"InstallScript"		"0286da62"
+}
+"#;
+        let s = Script::parse(text, "english").unwrap();
+        assert!(s.signed && s.problems.is_empty(), "{:?}", s.problems);
+        let names: Vec<&str> = s.run.iter().map(|p| p.name.as_str()).collect();
+        assert_eq!(names, ["4.7.2", "4.7.2"]);
+        assert!(s.run[0].program.ends_with("noop.cmd"));
+        assert!(!s.run[0].requirement.holds(true, "Win10"));
+        assert!(s.run[1].requirement.holds(true, "Win10"));
+        assert_eq!(
+            s.run[1].has_run.as_ref().unwrap().path,
+            "Software\\Valve\\Steam\\Apps\\CommonRedist\\.NET\\4.7.2"
+        );
+    }
+
     #[test]
     fn languages_fall_back_to_english() {
         let s = Script::parse(SCRIPT, "german").unwrap();
@@ -548,6 +608,11 @@ mod tests {
             os_type: Some("WinXP".into()),
         };
         assert!(xp.holds(true, "winxp") && !xp.holds(true, "Win7"));
+        let spaced = Requirement {
+            is_64bit: None,
+            os_type: Some("Windows XP".into()),
+        };
+        assert!(spaced.holds(true, "WinXP") && !spaced.holds(true, "Win10"));
         assert_eq!(parse_dword("0x10"), Some(16));
         assert_eq!(parse_dword("-1"), Some(u32::MAX));
     }

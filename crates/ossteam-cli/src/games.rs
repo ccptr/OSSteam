@@ -1,11 +1,13 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 //! `launch`, `running` and `stop` (SPEC §15.2, `launch.md` §8).
 
+use std::collections::VecDeque;
 use std::io::{IsTerminal, Write};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
 use ossteam_ipc::Client;
-use ossteam_ipc::v1::{self, Topic, event, game_exited};
+use ossteam_ipc::v1::{self, Event, Topic, event, game_exited};
 use serde_json::{Value, json};
 
 use crate::library::resolve;
@@ -30,10 +32,13 @@ pub fn launch(
         None => choose(cli, &client, id)?,
     };
     warn_isolation(&client)?;
-    if wait {
+    if wait || !cli.quiet {
         client.subscribe(&[Topic::Games, Topic::Daemon])?;
     }
-    let game = client.launch(id, option, args, allow_stale)?;
+    let (game, backlog) = launch_showing_steps(cli, &client, id, |c| {
+        c.launch(id, option, args, allow_stale)
+    });
+    let game = game?;
     if cli.json && !wait {
         println!("{}", game_json(&game));
     } else if !cli.quiet && !cli.json {
@@ -43,7 +48,7 @@ pub fn launch(
         );
     }
     if wait {
-        let (exited, report) = wait_exit(&client, id, None)?;
+        let (exited, report) = wait_exit(&client, id, None, backlog)?;
         if cli.json {
             println!(
                 "{}",
@@ -58,6 +63,50 @@ pub fn launch(
         }
     }
     Ok(())
+}
+
+/// Runs `launch` while printing the app's `LaunchStep`s on standard
+/// error, unless `--quiet` (`launch.md` §8). The other events that came
+/// meanwhile are returned, in order, for `--wait`.
+fn launch_showing_steps<T>(
+    cli: &Cli,
+    client: &Client,
+    app: u32,
+    launch: impl FnOnce(&Client) -> T,
+) -> (T, VecDeque<Event>) {
+    let done = AtomicBool::new(false);
+    std::thread::scope(|s| {
+        let printer = s.spawn(|| {
+            let mut kept = VecDeque::new();
+            while !done.load(Ordering::Acquire) {
+                let ev = match client.events().recv_timeout(Duration::from_millis(100)) {
+                    Ok(ev) => ev,
+                    Err(e) if e.is_timeout() => continue,
+                    Err(_) => break,
+                };
+                match &ev.kind {
+                    Some(event::Kind::LaunchStep(step)) if step.app_id == app => {
+                        if !cli.quiet {
+                            eprintln!("{}", step_text(step));
+                        }
+                    }
+                    _ => kept.push_back(ev),
+                }
+            }
+            kept
+        });
+        let out = launch(client);
+        done.store(true, Ordering::Release);
+        (out, printer.join().unwrap_or_default())
+    })
+}
+
+/// A `LaunchStep` as `launch` prints it.
+pub(crate) fn step_text(step: &v1::LaunchStep) -> String {
+    match v1::LaunchStepKind::try_from(step.step) {
+        Ok(v1::LaunchStepKind::InstallScript) => format!("running install scripts: {}", step.text),
+        _ => step.text.clone(),
+    }
 }
 
 /// The warnings `launch` prints on standard error, whatever the outcome
@@ -179,7 +228,7 @@ pub fn stop(cli: &Cli, app: &str) -> Result<(), Failure> {
     if !cli.quiet && !cli.json && std::io::stderr().is_terminal() {
         eprintln!("asked app {id} to close; waiting for it");
     }
-    let (exited, report) = wait_exit(&client, id, Some(STOP_WAIT))?;
+    let (exited, report) = wait_exit(&client, id, Some(STOP_WAIT), VecDeque::new())?;
     if cli.json {
         let mut v = exited_json(&exited);
         v["shim_report"] = report.as_ref().map(shim_report_json).into();
@@ -204,13 +253,15 @@ fn wait_exit(
     client: &Client,
     app: u32,
     limit: Option<Duration>,
+    mut backlog: VecDeque<Event>,
 ) -> Result<(v1::GameExited, Option<v1::ShimReport>), Failure> {
     let mut report = None;
     let deadline = limit.map(|l| Instant::now() + l);
     loop {
-        let ev = match deadline {
-            None => client.events().recv().ok(),
-            Some(d) => client.events().recv_deadline(d).ok(),
+        let ev = match (backlog.pop_front(), deadline) {
+            (Some(ev), _) => Some(ev),
+            (None, None) => client.events().recv().ok(),
+            (None, Some(d)) => client.events().recv_deadline(d).ok(),
         };
         let Some(ev) = ev else {
             if client.is_closed() {

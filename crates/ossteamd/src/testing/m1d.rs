@@ -14,6 +14,7 @@ use ossteam_content::fake::{Depot, Entry};
 use ossteam_content::manifest::flags;
 use ossteam_ipc::Client;
 use ossteam_ipc::v1::{self, Topic, event, game_exited};
+use ossteam_launch::compat::client_dll::{self, Arch};
 use ossteam_types::{DepotId, ManifestId};
 
 use super::m1b::{done, installed, key, login, section};
@@ -336,13 +337,16 @@ fn a_native_game_runs_in_its_runtime_once_it_is_installed() {
         assert!(has(&env, &var), "{var} in {env:#?}");
     }
     assert!(!env.iter().any(|l| l.starts_with("STEAM_COMPAT_CONFIG=")));
-    assert!(
-        root.path()
-            .join("data")
-            .join("compat-client")
-            .join("legacycompat")
-            .is_dir()
-    );
+    // ossteam's own client DLLs, for Proton to copy (compat-tools.md §6.3).
+    let legacy = root
+        .path()
+        .join("data")
+        .join("compat-client")
+        .join("legacycompat");
+    for arch in [Arch::X86, Arch::X64] {
+        let file = std::fs::read(legacy.join(arch.file_name())).expect("client DLL");
+        assert_eq!(file, client_dll::image(arch));
+    }
     d.stop();
 }
 

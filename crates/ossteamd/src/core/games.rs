@@ -681,10 +681,16 @@ impl Core {
             Some(r) => {
                 let data_dir = layout.compat_data(app);
                 let client_dir = &self.games.client_dir;
-                for d in [&data_dir, &client_dir.join("legacycompat")] {
-                    std::fs::create_dir_all(d)
-                        .map_err(|e| internal(&anyhow::anyhow!("creating {}: {e}", d.display())))?;
-                }
+                std::fs::create_dir_all(&data_dir).map_err(|e| {
+                    internal(&anyhow::anyhow!("creating {}: {e}", data_dir.display()))
+                })?;
+                // Proton copies these into the prefix (§6.3).
+                ossteam_launch::compat::client_dll::write(client_dir).map_err(|e| {
+                    internal(&anyhow::anyhow!(
+                        "writing the client DLLs in {}: {e}",
+                        client_dir.display()
+                    ))
+                })?;
                 let list = list.as_ref().expect("a chain has a list");
                 let config = list.config(app);
                 let mut library_paths = vec![folder.path.clone()];

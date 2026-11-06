@@ -8,6 +8,7 @@
 //! uses it (PLAT-2).
 
 pub mod chain;
+pub mod client_dll;
 pub mod manifest;
 pub mod registry;
 pub mod tools;

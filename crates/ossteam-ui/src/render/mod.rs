@@ -5,6 +5,7 @@ pub mod shape;
 pub mod software;
 pub mod vulkan;
 
+use std::ffi::OsString;
 use std::num::NonZeroU32;
 use std::str::FromStr;
 use std::sync::Arc;
@@ -15,6 +16,10 @@ use winit::window::Window;
 use crate::Error;
 use crate::scene::Scene;
 use crate::text::GlyphCache;
+
+/// The environment variable that picks the renderer when the program
+/// leaves the choice open: `auto`, `vulkan` or `software`.
+pub const ENV: &str = "OSSTEAM_UI_RENDERER";
 
 /// `--renderer auto|vulkan|software`.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -40,6 +45,31 @@ impl FromStr for Choice {
     }
 }
 
+impl Choice {
+    pub fn name(self) -> &'static str {
+        match self {
+            Choice::Auto => "auto",
+            Choice::Vulkan => "vulkan",
+            Choice::Software => "software",
+        }
+    }
+
+    /// What [`ENV`] asks for: `None` when it is unset or empty.
+    pub fn from_env() -> Result<Option<Choice>, String> {
+        from_env_value(std::env::var_os(ENV))
+    }
+}
+
+fn from_env_value(value: Option<OsString>) -> Result<Option<Choice>, String> {
+    let Some(value) = value.filter(|v| !v.is_empty()) else {
+        return Ok(None);
+    };
+    let value = value
+        .into_string()
+        .map_err(|_| format!("{ENV} is not UTF-8"))?;
+    value.parse().map(Some).map_err(|e| format!("{ENV}: {e}"))
+}
+
 /// What a frame cost.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct FrameStats {
@@ -62,23 +92,28 @@ pub enum Renderer {
 
 impl Renderer {
     /// Makes the renderer `choice` asks for, and says why it was chosen.
-    pub fn new(window: Arc<Window>, choice: Choice) -> Result<(Renderer, String), Error> {
+    /// With no choice, [`ENV`] picks one, and `auto` without it.
+    pub fn new(window: Arc<Window>, choice: Option<Choice>) -> Result<(Renderer, String), Error> {
+        let (choice, by) = match choice {
+            Some(c) => (c, format!("--renderer {}", c.name())),
+            None => match Choice::from_env()? {
+                Some(c) => (c, format!("{ENV}={}", c.name())),
+                None => (Choice::Auto, "auto".into()),
+            },
+        };
         match choice {
-            Choice::Software => Ok((
-                Renderer::Software(SoftwarePresenter::new(window)?),
-                "--renderer software".into(),
-            )),
+            Choice::Software => Ok((Renderer::Software(SoftwarePresenter::new(window)?), by)),
             Choice::Vulkan => Ok((
                 Renderer::Vulkan(Box::new(vulkan::VulkanRenderer::new(window)?)),
-                "--renderer vulkan".into(),
+                by,
             )),
             Choice::Auto => match vulkan::VulkanRenderer::new(window.clone()) {
                 Ok(r) => Ok((
                     Renderer::Vulkan(Box::new(r)),
-                    "auto: a Vulkan device was found".into(),
+                    format!("{by}: a Vulkan device was found"),
                 )),
                 Err(e) => {
-                    let why = format!("auto: no Vulkan device ({e})");
+                    let why = format!("{by}: no Vulkan device ({e})");
                     tracing::warn!("{why}; using the software renderer");
                     Ok((Renderer::Software(SoftwarePresenter::new(window)?), why))
                 }
@@ -218,5 +253,35 @@ impl SoftwarePresenter {
             pixels: drawn.pixels,
             ..Default::default()
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn env(v: Option<&str>) -> Result<Option<Choice>, String> {
+        from_env_value(v.map(OsString::from))
+    }
+
+    #[test]
+    fn the_environment_names_a_renderer_or_nothing() {
+        assert_eq!(env(None), Ok(None));
+        assert_eq!(env(Some("")), Ok(None));
+        assert_eq!(env(Some("software")), Ok(Some(Choice::Software)));
+        assert_eq!(env(Some("vulkan")), Ok(Some(Choice::Vulkan)));
+        assert_eq!(env(Some("auto")), Ok(Some(Choice::Auto)));
+        let err = env(Some("gl")).unwrap_err();
+        assert!(
+            err.starts_with("OSSTEAM_UI_RENDERER: unknown renderer"),
+            "{err}"
+        );
+    }
+
+    #[test]
+    fn names_parse_back() {
+        for c in [Choice::Auto, Choice::Vulkan, Choice::Software] {
+            assert_eq!(c.name().parse(), Ok(c));
+        }
     }
 }

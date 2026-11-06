@@ -39,7 +39,9 @@ pub struct Options {
     pub height: f32,
     pub min_width: f32,
     pub min_height: f32,
-    pub renderer: Choice,
+    /// The program's choice, such as its `--renderer`. With none,
+    /// `OSSTEAM_UI_RENDERER` picks one, and `auto` without it.
+    pub renderer: Option<Choice>,
 }
 
 impl Default for Options {
@@ -51,7 +53,7 @@ impl Default for Options {
             height: 640.0,
             min_width: 320.0,
             min_height: 240.0,
-            renderer: Choice::Auto,
+            renderer: None,
         }
     }
 }

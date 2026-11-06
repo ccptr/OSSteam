@@ -4,7 +4,8 @@
 //! a scrolling page, a tooltip, key bindings and a timer.
 //!
 //! `cargo run -p ossteam-ui --example gallery -- [--renderer auto|vulkan|software]
-//! [--exit-after-ms N]`. It prints one line of JSON when the first frame
+//! [--exit-after-ms N]`; without `--renderer`, `OSSTEAM_UI_RENDERER` picks
+//! one. It prints one line of JSON when the first frame
 //! has been presented.
 
 use std::sync::Arc;
@@ -17,7 +18,6 @@ use ossteam_ui::element::{
 };
 use ossteam_ui::image::Image;
 use ossteam_ui::keys::KeyBinding;
-use ossteam_ui::render::Choice;
 use ossteam_ui::scene::Color;
 use ossteam_ui::style::{Align, Edges, Justify, Shadow, Styled};
 use ossteam_ui::text_field::{FieldStyle, TextField};
@@ -453,13 +453,13 @@ fn main() {
             tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| "info".into()),
         )
         .init();
-    let mut renderer = Choice::Auto;
+    let mut renderer = None;
     let mut exit_after = None;
     let mut args = std::env::args().skip(1);
     while let Some(a) = args.next() {
         match a.as_str() {
             "--renderer" => match args.next().map(|v| v.parse()) {
-                Some(Ok(c)) => renderer = c,
+                Some(Ok(c)) => renderer = Some(c),
                 _ => return eprintln!("--renderer auto|vulkan|software"),
             },
             "--exit-after-ms" => match args.next().and_then(|v| v.parse().ok()) {

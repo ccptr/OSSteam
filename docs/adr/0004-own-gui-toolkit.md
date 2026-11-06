@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| Status | Accepted (2026-11-03); amended 2026-11-03 (see Amendments) |
+| Status | Accepted (2026-11-03); amended 2026-11-03 and 2026-11-05 (see Amendments) |
 | Date | 2026-11-02 |
 | Requirements | GUI-1 to GUI-5, CONC-3, SYNC-1, SYNC-2, WS-1, LIC-4, §20 |
 | Code | `crates/ossteam-ui`, `crates/ossteam-dbus`, `crates/ossteam-gui` |
@@ -101,6 +101,8 @@ it does not wrap another GUI framework.
   atlas. Images are decoded and scaled to their drawn size before they
   reach the toolkit (gui.md §4.2), so neither renderer scales them.
 - **Choosing.** `--renderer auto|vulkan|software` (`auto` by default).
+  Without the flag, `OSSTEAM_UI_RENDERER` takes the same values, for every
+  program on the toolkit; a value it doesn't know is an error at start-up.
   `auto` uses Vulkan, and the software renderer when no Vulkan device
   can be created; the GUI logs which one it uses and why. The
   maintainer chose Vulkan as `auto`'s first choice on 2026-11-02, after
@@ -261,3 +263,9 @@ GUI therefore has no async at all, and CONC-3 names no exception for it.
   xdg-desktop-portal with its GTK back end. The client is its own crate,
   `ossteam-dbus`, which `ossteam-ui` alone depends on (WS-1 names it);
   the portal's calls stay in `ossteam-ui`'s `portal.rs`.
+- **2026-11-05, `OSSTEAM_UI_RENDERER`** (the maintainer's request). The
+  renderer can also be chosen in the environment, so tests, benches and
+  programs without a `--renderer` flag can force one. The toolkit reads
+  it when the program makes no choice (`Options::renderer` is `None`); a
+  program's `--renderer` wins over it. The log line says which of the two
+  chose.

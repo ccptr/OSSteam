@@ -67,20 +67,21 @@ pub fn run() -> ExitCode {
     }
 }
 
-/// `--no-autostart` and `--renderer`.
-fn parse(args: impl Iterator<Item = String>) -> Result<(bool, Choice), String> {
+/// `--no-autostart` and `--renderer`. Without `--renderer` the toolkit
+/// looks at `OSSTEAM_UI_RENDERER`.
+fn parse(args: impl Iterator<Item = String>) -> Result<(bool, Option<Choice>), String> {
     let mut autostart = true;
-    let mut renderer = Choice::Auto;
+    let mut renderer = None;
     let mut args = args;
     while let Some(a) = args.next() {
         match a.as_str() {
             "--no-autostart" => autostart = false,
             "--renderer" => {
                 let v = args.next().ok_or("--renderer needs a value")?;
-                renderer = v.parse()?;
+                renderer = Some(v.parse()?);
             }
             _ => match a.strip_prefix("--renderer=") {
-                Some(v) => renderer = v.parse()?,
+                Some(v) => renderer = Some(v.parse()?),
                 None => return Err(format!("unknown argument {a:?}")),
             },
         }
@@ -92,18 +93,21 @@ fn parse(args: impl Iterator<Item = String>) -> Result<(bool, Choice), String> {
 mod tests {
     use super::*;
 
-    fn args(a: &[&str]) -> Result<(bool, Choice), String> {
+    fn args(a: &[&str]) -> Result<(bool, Option<Choice>), String> {
         parse(a.iter().map(|s| s.to_string()))
     }
 
     #[test]
     fn arguments() {
-        assert_eq!(args(&[]), Ok((true, Choice::Auto)));
+        assert_eq!(args(&[]), Ok((true, None)));
         assert_eq!(
             args(&["--no-autostart", "--renderer", "software"]),
-            Ok((false, Choice::Software))
+            Ok((false, Some(Choice::Software)))
         );
-        assert_eq!(args(&["--renderer=vulkan"]), Ok((true, Choice::Vulkan)));
+        assert_eq!(
+            args(&["--renderer=vulkan"]),
+            Ok((true, Some(Choice::Vulkan)))
+        );
         assert!(args(&["--renderer"]).is_err());
         assert!(args(&["--renderer", "gl"]).is_err());
         assert!(args(&["--verbose"]).is_err());

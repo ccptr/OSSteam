@@ -109,7 +109,7 @@ enum BenchKind {
 }
 
 struct Args {
-    renderer: Choice,
+    renderer: Option<Choice>,
     bench: Option<BenchKind>,
     rows: usize,
     settle: Duration,
@@ -117,7 +117,7 @@ struct Args {
 
 fn parse_args() -> Result<Args, String> {
     let mut args = Args {
-        renderer: Choice::Auto,
+        renderer: None,
         bench: None,
         rows: ROWS,
         settle: Duration::from_secs(3),
@@ -126,7 +126,7 @@ fn parse_args() -> Result<Args, String> {
     while let Some(arg) = it.next() {
         let mut value = || it.next().ok_or(format!("{arg} needs a value"));
         match arg.as_str() {
-            "--renderer" => args.renderer = value()?.parse()?,
+            "--renderer" => args.renderer = Some(value()?.parse()?),
             "--bench" => {
                 args.bench = Some(match value()?.as_str() {
                     "scroll" => BenchKind::Scroll,

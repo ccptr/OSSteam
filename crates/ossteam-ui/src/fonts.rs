@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
+// SPDX-License-Identifier: LGPL-2.1-or-later
 //! Finding the fonts without reading them all first (ADR 0004 step 3,
 //! spike item 1).
 //!

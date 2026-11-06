@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
+// SPDX-License-Identifier: LGPL-2.1-or-later
 //! Running an [`App`] in a window (ADR 0004, "Synchronous"): winit's event
 //! loop on the main thread with `ControlFlow::Wait`, woken by input, by
 //! the next timer (`WaitUntil`) or by a [`Sender`] from another thread.

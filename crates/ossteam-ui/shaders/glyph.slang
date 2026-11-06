@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
+// SPDX-License-Identifier: LGPL-2.1-or-later
 // Glyphs from the atlas, drawn 1:1 at whole device pixels (scene::Glyph),
 // so the atlas is read with Load and needs no sampler.
 

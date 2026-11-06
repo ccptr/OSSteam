@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
+// SPDX-License-Identifier: LGPL-2.1-or-later
 //! ossteam's GUI toolkit (SPEC GUI-1, ADR 0004): windows and input from
 //! winit, layout into a [`scene::Scene`], and two renderers that draw it,
 //! Vulkan through `ash` and our own software renderer.

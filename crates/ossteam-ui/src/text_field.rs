@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
+// SPDX-License-Identifier: LGPL-2.1-or-later
 //! A single-line text field: its editing model, the key bindings, IME
 //! composition and painting (ADR 0004: the text field is ours).
 //!

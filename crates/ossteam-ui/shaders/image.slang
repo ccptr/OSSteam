@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
+// SPDX-License-Identifier: LGPL-2.1-or-later
 // Images drawn 1:1 at whole device pixels (scene::ImageQuad): each image
 // is its own texture, read with Load, so there is no sampler. Texels are
 // premultiplied RGBA. Corners are cut as quad.slang cuts a quad's, and

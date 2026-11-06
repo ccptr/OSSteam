@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
+// SPDX-License-Identifier: LGPL-2.1-or-later
 //! The system's light or dark appearance (GUI-4, gui.md §6). On Linux it
 //! is asked of the desktop portal as the process starts, so the first
 //! frame already has it; elsewhere winit reports it with the window.

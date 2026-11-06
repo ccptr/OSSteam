@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
+// SPDX-License-Identifier: LGPL-2.1-or-later
 //! A scripted input method for testing IME on a Wayland compositor that
 //! supports `zwp_input_method_v2` (sway does): it composes and commits
 //! text in whichever window has the keyboard focus, as an IME such as

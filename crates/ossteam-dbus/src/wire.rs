@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
+// SPDX-License-Identifier: LGPL-2.1-or-later
 //! The D-Bus wire format (the D-Bus specification, "Message Protocol"):
 //! types and signatures, values, and whole messages. Every type is read,
 //! so any message can be parsed (and its parts we do not use ignored);

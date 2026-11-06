@@ -3,7 +3,7 @@ name = "ossteam-dbus"
 description = "A minimal, synchronous D-Bus client for the desktop portal (ADR 0004)"
 version.workspace = true
 edition.workspace = true
-license.workspace = true
+license = "LGPL-2.1-or-later"
 publish.workspace = true
 
 [features]

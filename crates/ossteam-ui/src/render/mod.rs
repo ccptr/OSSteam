@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
+// SPDX-License-Identifier: LGPL-2.1-or-later
 //! The two renderers and how one is chosen (ADR 0004, "Choosing").
 
 pub mod shape;

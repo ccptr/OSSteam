@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
+// SPDX-License-Identifier: LGPL-2.1-or-later
 //! The toolkit's pieces in one window: buttons with hover and focus
 //! styles, a text input, a menu overlay, a 10,000-row list with images,
 //! a scrolling page, a tooltip, key bindings and a timer.

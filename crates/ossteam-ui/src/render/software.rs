@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
+// SPDX-License-Identifier: LGPL-2.1-or-later
 //! The software renderer (ADR 0004): draws a [`Scene`] into a 32-bit
 //! buffer with no GPU driver, redrawing only what changed.
 //!

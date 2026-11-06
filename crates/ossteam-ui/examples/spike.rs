@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
+// SPDX-License-Identifier: LGPL-2.1-or-later
 //! The ossteam-ui spike (ADR 0004 step 2). Opens a window with a header, a
 //! search box and a virtual list of 10,000 rows, then prints one JSON line
 //! and exits:

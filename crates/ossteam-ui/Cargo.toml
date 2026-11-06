@@ -3,7 +3,7 @@ name = "ossteam-ui"
 description = "ossteam's GUI toolkit: winit windows, a Vulkan and a software renderer (ADR 0004)"
 version.workspace = true
 edition.workspace = true
-license.workspace = true
+license = "LGPL-2.1-or-later"
 publish.workspace = true
 
 [dependencies]

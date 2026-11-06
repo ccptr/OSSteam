@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
+// SPDX-License-Identifier: LGPL-2.1-or-later
 //! A window's contents, apart from the platform window and the renderer:
 //! the application's state, the element tree its view last built, layout,
 //! painting into a [`Scene`], focus, key bindings and timers.

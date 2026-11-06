@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
+// SPDX-License-Identifier: LGPL-2.1-or-later
 // Rounded rectangles with borders, and shadows (scene::Quad). One instance
 // per quad, drawn as a four-vertex triangle strip shrunk to its clip. The
 // coverage is the same as src/render/shape.rs; keep the two in step.

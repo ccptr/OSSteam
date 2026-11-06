@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
+// SPDX-License-Identifier: LGPL-2.1-or-later
 //! The element tree a view builds (ADR 0004, "Views are functions").
 //!
 //! A view is a function from the application's state `S` to an

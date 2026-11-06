@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
+// SPDX-License-Identifier: LGPL-2.1-or-later
 //! Images (ADR 0004, "Images are explicit"). The application decodes an
 //! image and scales it to the size it is drawn at; the toolkit draws it
 //! pixel for pixel. The renderers keep a copy of an image (the Vulkan

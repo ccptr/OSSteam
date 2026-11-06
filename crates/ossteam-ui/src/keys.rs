@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
+// SPDX-License-Identifier: LGPL-2.1-or-later
 //! Key bindings (ADR 0004, "Focus and keys"). A [`KeyBinding`] maps a
 //! keystroke to an [`Action`], everywhere or only inside elements with a
 //! key context. The action then goes from the focused element up to the

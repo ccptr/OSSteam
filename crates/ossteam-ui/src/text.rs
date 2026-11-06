@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
+// SPDX-License-Identifier: LGPL-2.1-or-later
 //! Text: `cosmic-text` shapes it and `swash` rasterises its glyphs into a
 //! CPU-side cache that both renderers draw from (ADR 0004). The Vulkan
 //! renderer copies each glyph it draws into its atlas once.

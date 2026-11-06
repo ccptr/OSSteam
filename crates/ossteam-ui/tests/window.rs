@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
+// SPDX-License-Identifier: LGPL-2.1-or-later
 //! The toolkit driven without a platform window: layout, input, focus,
 //! key bindings, lists, overlays and timers (ADR 0004, "Headless").
 

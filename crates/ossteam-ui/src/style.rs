@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
+// SPDX-License-Identifier: LGPL-2.1-or-later
 //! Element styles (ADR 0004, "Layout"): how an element is laid out
 //! (flexbox, through `taffy`) and what it paints. Lengths are logical
 //! pixels; the toolkit scales them to device pixels when it lays out.

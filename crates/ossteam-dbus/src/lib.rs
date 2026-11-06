@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
+// SPDX-License-Identifier: LGPL-2.1-or-later
 //! A minimal, synchronous D-Bus client (ADR 0004), enough for the desktop
 //! portal that `ossteam-ui` calls: connect to the session bus, log in
 //! with `EXTERNAL`, call methods, add match rules and wait for signals.

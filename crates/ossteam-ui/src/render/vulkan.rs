@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
+// SPDX-License-Identifier: LGPL-2.1-or-later
 //! The Vulkan renderer (ADR 0004): Vulkan 1.2 through `ash`, one render
 //! pass a frame, and a pipeline each for quads and glyphs, drawn as
 //! instanced triangle strips in the scene's paint order. Glyphs come from

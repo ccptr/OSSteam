@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
+// SPDX-License-Identifier: LGPL-2.1-or-later
 //! The folder picker (ADR 0004): the desktop portal's file chooser
 //! through our own D-Bus client on Linux (`portal.rs`), and `rfd`'s
 //! dialogs on Windows and macOS.

@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
+// SPDX-License-Identifier: LGPL-2.1-or-later
 //! The desktop portal (`org.freedesktop.portal.Desktop`) through our own
 //! D-Bus client (`ossteam-dbus`, ADR 0004): the appearance setting and its
 //! change signal, and the file chooser. Each call blocks the thread that

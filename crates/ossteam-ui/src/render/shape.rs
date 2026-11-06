@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
+// SPDX-License-Identifier: LGPL-2.1-or-later
 //! The coverage math both renderers use. `shaders/quad.slang` is the same
 //! code in Slang; keep the two in step, or the renderers disagree.
 

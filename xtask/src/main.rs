@@ -3,7 +3,8 @@
 //!
 //! - `check-layering`: enforces the crate dependency rules (SPEC WS-1 to
 //!   WS-3, LEAF-2).
-//! - `check-spdx`: enforces license headers and crate licenses (LIC-1).
+//! - `check-spdx`: enforces license headers and crate licenses (LIC-1,
+//!   LIC-9).
 //! - `update-protos <rev> [<file>...]`: re-vendors the Steam protobuf
 //!   definitions at an upstream commit, applies local patches and rewrites
 //!   `PROVENANCE.md` (LIC-5 to LIC-7).
@@ -29,6 +30,13 @@ use cargo_metadata::{DependencyKind, MetadataCommand};
 
 const SPDX_LINE: &str = "// SPDX-License-Identifier: GPL-2.0-or-later";
 const LICENSE: &str = "GPL-2.0-or-later";
+
+/// LIC-9: the libraries other programs may embed, licensed
+/// LGPL-2.1-or-later. They may depend only on each other among the
+/// workspace crates. `ossteam-input` joins when it is written.
+const LGPL_CRATES: &[&str] = &["ossteam-dbus", "ossteam-ui"];
+const LGPL_SPDX_LINE: &str = "// SPDX-License-Identifier: LGPL-2.1-or-later";
+const LGPL_LICENSE: &str = "LGPL-2.1-or-later";
 
 /// Which workspace crates each workspace crate may depend on directly
 /// (normal and build dependencies). Every allowed edge points down a layer,
@@ -176,17 +184,46 @@ fn check_spdx() -> anyhow::Result<()> {
         .no_deps()
         .exec()
         .context("running cargo metadata")?;
+    let members: Vec<&str> = meta
+        .workspace_packages()
+        .iter()
+        .map(|p| p.name.as_str())
+        .collect();
+    let mut lgpl_dirs = Vec::new();
     for pkg in meta.workspace_packages() {
-        if pkg.license.as_deref() != Some(LICENSE) {
+        let lgpl = LGPL_CRATES.contains(&pkg.name.as_str());
+        let want = if lgpl { LGPL_LICENSE } else { LICENSE };
+        if pkg.license.as_deref() != Some(want) {
             problems.push(format!(
-                "{}: license must be {LICENSE}, is {:?}",
+                "{}: license must be {want}, is {:?}",
                 pkg.name, pkg.license
             ));
+        }
+        if !lgpl {
+            continue;
+        }
+        if let Some(dir) = pkg.manifest_path.parent() {
+            lgpl_dirs.push(dir.as_std_path().to_owned());
+        }
+        for dep in &pkg.dependencies {
+            let name = dep.name.as_str();
+            if dep.kind != DependencyKind::Development
+                && members.contains(&name)
+                && !LGPL_CRATES.contains(&name)
+            {
+                problems.push(format!(
+                    "{}: an LGPL library must not depend on the GPL crate {name} (LIC-9)",
+                    pkg.name
+                ));
+            }
         }
     }
 
     if !root.join("COPYING").is_file() {
         problems.push("COPYING (the GPLv2 text) is missing".into());
+    }
+    if !root.join("COPYING.LESSER").is_file() {
+        problems.push("COPYING.LESSER (the LGPLv2.1 text) is missing".into());
     }
 
     let mut files = Vec::new();
@@ -196,12 +233,14 @@ fn check_spdx() -> anyhow::Result<()> {
     for path in files {
         let text = std::fs::read_to_string(&path)
             .with_context(|| format!("reading {}", path.display()))?;
-        if text.lines().next() != Some(SPDX_LINE) {
+        let want = if lgpl_dirs.iter().any(|d| path.starts_with(d)) {
+            LGPL_SPDX_LINE
+        } else {
+            SPDX_LINE
+        };
+        if text.lines().next() != Some(want) {
             let rel = path.strip_prefix(&root).unwrap_or(&path);
-            problems.push(format!(
-                "{}: first line must be `{SPDX_LINE}`",
-                rel.display()
-            ));
+            problems.push(format!("{}: first line must be `{want}`", rel.display()));
         }
     }
     report("SPDX", problems)

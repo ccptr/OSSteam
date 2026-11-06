@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
+// SPDX-License-Identifier: LGPL-2.1-or-later
 //! The system clipboard, for text (ADR 0004): `smithay-clipboard` on
 //! Wayland, on winit's own connection, and `arboard` on X11, Windows and
 //! macOS.

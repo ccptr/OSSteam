@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
+// SPDX-License-Identifier: LGPL-2.1-or-later
 //! What a frame draws, in device pixels (ADR 0004, "Two renderers, one
 //! scene"). The Vulkan and the software renderer draw the same scene, so
 //! everything here is plain data: rounded rectangles with borders and

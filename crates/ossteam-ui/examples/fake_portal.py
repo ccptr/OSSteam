@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# SPDX-License-Identifier: GPL-2.0-or-later
+# SPDX-License-Identifier: LGPL-2.1-or-later
 """A stand-in desktop portal for a private session bus, for testing the
 folder picker without a dialog and the appearance without changing the
 desktop (AGENTS/testing/headless-sway-input.md).

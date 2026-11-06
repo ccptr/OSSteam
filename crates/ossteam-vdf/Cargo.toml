@@ -3,7 +3,7 @@ name = "ossteam-vdf"
 description = "KeyValues (VDF) text and binary formats"
 version.workspace = true
 edition.workspace = true
-license.workspace = true
+license = "LGPL-2.1-or-later"
 publish.workspace = true
 
 [dependencies]

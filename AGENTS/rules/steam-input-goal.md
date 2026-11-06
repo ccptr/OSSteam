@@ -9,7 +9,7 @@ Steam Input is an explicit goal (SPEC §1.1, the maintainer, 2026-11-05).
 It is built as `ossteam-input`, a library that other programs can embed
 without the daemon, the Steam session or the rest of ossteam, so keep its
 API free of ossteam's own types and depend on no other workspace crate
-(WS-1). It is LGPL: [lgpl-libraries](lgpl-libraries.md).
+but `ossteam-vdf` (WS-1). It is LGPL: [lgpl-libraries](lgpl-libraries.md).
 
 It has no milestone yet (§21 Later). Write and get review of
 `docs/spec/input.md` before code ([spec-first](spec-first.md)); until

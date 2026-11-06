@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
+// SPDX-License-Identifier: LGPL-2.1-or-later
 //! KeyValues ("VDF"), the tree format Steam uses for app info, manifests,
 //! library and configuration files.
 //!

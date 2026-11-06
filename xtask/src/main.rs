@@ -34,7 +34,7 @@ const LICENSE: &str = "GPL-2.0-or-later";
 /// LIC-9: the libraries other programs may embed, licensed
 /// LGPL-2.1-or-later. They may depend only on each other among the
 /// workspace crates. `ossteam-input` joins when it is written.
-const LGPL_CRATES: &[&str] = &["ossteam-dbus", "ossteam-ui"];
+const LGPL_CRATES: &[&str] = &["ossteam-dbus", "ossteam-ui", "ossteam-vdf"];
 const LGPL_SPDX_LINE: &str = "// SPDX-License-Identifier: LGPL-2.1-or-later";
 const LGPL_LICENSE: &str = "LGPL-2.1-or-later";
 
@@ -47,7 +47,8 @@ const LGPL_LICENSE: &str = "LGPL-2.1-or-later";
 /// `None` means any workspace crate except the leaf clients and the shim.
 const ALLOWED: &[(&str, Option<&[&str]>)] = &[
     ("ossteam-types", Some(&[])),
-    ("ossteam-vdf", Some(&["ossteam-types"])),
+    // LIC-9: an embeddable LGPL library, so no GPL workspace crates.
+    ("ossteam-vdf", Some(&[])),
     ("ossteam-proto", Some(&["ossteam-types"])),
     (
         "ossteam-net",

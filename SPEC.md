@@ -150,8 +150,10 @@ even if it works.
   `// SPDX-License-Identifier: GPL-2.0-or-later`. The repository root holds
   `COPYING` with the GPLv2 text.
 - **[LIC-9]** The libraries that other programs may embed are licensed
-  LGPL-2.1-or-later: `ossteam-input` (§1.1), `ossteam-ui`, and
-  `ossteam-dbus`, which `ossteam-ui` depends on. Each sets
+  LGPL-2.1-or-later: `ossteam-input` (§1.1), `ossteam-vdf`, the
+  KeyValues library, which `ossteam-input` may use for configuration
+  files, `ossteam-ui`, and `ossteam-dbus`, which `ossteam-ui` depends on.
+  Each sets
   `license = "LGPL-2.1-or-later"`, and every source file in it starts with
   `// SPDX-License-Identifier: LGPL-2.1-or-later`. The repository root
   holds `COPYING.LESSER` with the LGPLv2.1 text. Such a library depends on
@@ -248,7 +250,7 @@ even if it works.
 Cargo.toml                 workspace; edition 2024; pinned toolchain
 crates/
   ossteam-types/           ids (AppId, DepotId, ManifestId, PackageId, SteamId), shared plain types; no I/O
-  ossteam-vdf/             KeyValues text + binary; appinfo/packageinfo cache formats; .acf/.vdf
+  ossteam-vdf/             KeyValues text + binary; appinfo/packageinfo cache formats; .acf/.vdf; embeddable (LGPL, LIC-9)
   ossteam-proto/           vendored community Steam .proto files (LIC-5..7) + prost codegen (build.rs)
   ossteam-net/             CM directory, transports (WebSocket, TCP+channel encryption), framing, EMsg, job ids, service methods
   ossteam-webapi/          HTTPS WebAPI client (ureq)
@@ -278,9 +280,10 @@ docs/acceptance/           per-milestone acceptance corpora and checklists
   → auth/pics/content/stats/launch → ossteamd`. Leaf clients depend only on
   `ossteam-ipc` and `ossteam-types`, and the GUI also on `ossteam-ui`.
   `ossteam-ui` depends only on `ossteam-dbus`, which depends on no other
-  workspace crate. `ossteam-input` depends on no other workspace crate, so
-  that it can be embedded on its own (§1.1, LIC-9). Which ossteam crates
-  use it is for `docs/spec/input.md` to say.
+  workspace crate. `ossteam-vdf` depends on no other workspace crate, and
+  `ossteam-input` on none but `ossteam-vdf`, so that each can be embedded
+  on its own (§1.1, LIC-9). Which ossteam crates use `ossteam-input` is
+  for `docs/spec/input.md` to say.
 - **[WS-2]** `ossteam-steamclient` depends only on `ossteam-gameipc` and
   `ossteam-types`, plus `std`, and keeps third-party dependencies to a
   minimum. It is built for i686 and x86_64 on Linux and Windows, and as a

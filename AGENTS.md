@@ -31,7 +31,7 @@ These come from the maintainer. Don't trade them away for convenience.
 - [Faithful, never faked](AGENTS/rules/faithful-never-faked.md) — answers come from the real session or server; unimplemented features fail honestly
 - [VAC and Steam DRM](AGENTS/rules/vac-drm-goals.md) — goals, implemented faithfully in M2, never bypassed
 - [Steam Input](AGENTS/rules/steam-input-goal.md) — a goal, as `ossteam-input`, a library other programs can embed; spec first
-- [LGPL libraries](AGENTS/rules/lgpl-libraries.md) — `ossteam-ui`, `ossteam-dbus`, `ossteam-input`: LGPL headers, no GPL workspace dependencies
+- [LGPL libraries](AGENTS/rules/lgpl-libraries.md) — `ossteam-vdf`, `ossteam-ui`, `ossteam-dbus`, `ossteam-input`: LGPL headers, no GPL workspace dependencies
 - [Platform-standard directories](AGENTS/rules/platform-directories.md) — only those, except the ABI discovery entries
 - [Spec first](AGENTS/rules/spec-first.md) — reverse engineering is written up in `docs/spec/` before code; no Valve code
 - [Review gates](AGENTS/rules/review-gates.md) — no DRM/VAC/cloud/friends/betas/workshop/offline code before review; ask about install-scripts §2.6

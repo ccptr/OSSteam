@@ -68,8 +68,8 @@ version 2 or (at your option) any later version. See [COPYING](COPYING).
 
 The libraries other programs may embed are licensed under the GNU Lesser
 General Public License, version 2.1 or (at your option) any later version:
-`ossteam-ui`, `ossteam-dbus` and, once it is written, the Steam Input
-library `ossteam-input`. See [COPYING.LESSER](COPYING.LESSER) (SPEC
+`ossteam-vdf`, `ossteam-ui`, `ossteam-dbus` and, once it is written, the
+Steam Input library `ossteam-input`. See [COPYING.LESSER](COPYING.LESSER) (SPEC
 LIC-9). Linked with Apache-2.0 crates, they are conveyed under the terms
 of LGPL-3.0-or-later.
 

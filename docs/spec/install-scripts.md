@@ -247,9 +247,9 @@ left out (§6).
 While the steps run, the launch is under way, as one waiting for its
 tools is: its reply waits, and a second `Launch` of the app is refused
 with `CONFLICT`. Each step that starts is announced on `GAMES` as
-`LaunchStep` (`launch.md` §8). `Shutdown` with `force` does not wait for
-them: the launch fails with `CONFLICT`, and a program under way runs on,
-unwatched.
+`LaunchStep` (`launch.md` §8). The daemon's shutdown does not wait for
+them: the connection closes without a reply, as for a launch waiting for
+its tools, and a program under way runs on, unwatched.
 
 ## 4. Elevation
 

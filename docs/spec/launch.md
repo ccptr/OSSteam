@@ -305,7 +305,7 @@ Events on `GAMES`: `LaunchStep{app_id, step, text}` as each step of a
 launch under way starts, before the game's process exists. `step` is
 `INSTALL_SCRIPT` while install scripts run (`RunningInstallScript` in
 the official client's log), and `text` says which in words, such as
-"Registry values of depot 481" or "Running Microsoft .NET Framework
+"Writing 2 registry values" or "Running Microsoft .NET Framework
 4.7.2.cmd". `ossteam launch` prints each on standard error
 (`running install scripts: <text>`), unless `--quiet`. `GameStarted{game}` after the process is created,
 and `GameExited{app_id, exit_code | signal, seconds}` after the last

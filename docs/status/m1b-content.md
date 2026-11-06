@@ -1,6 +1,6 @@
 ---
 name: m1b-content
-description: M1b status - content engine, downloader, jobs and install scripts committed; most Linux live rows run 2026-11-04; CS2 matches the official tree once optional DLC is left out; a shared DLC depot, delta and Windows left; cancelled first installs leave files
+description: M1b status - content engine, downloader, jobs and install scripts committed; most Linux live rows run 2026-11-04, the delta update 2026-11-06; CS2 matches the official tree once optional DLC is left out; a shared DLC depot and Windows left; cancelled first installs leave files
 metadata:
   type: project
 ---
@@ -28,8 +28,21 @@ Left:
   `content.optional_dlc.<app>` names it, and a removed depot's
   directories that its manifest does not list were deleted too
   (`content.md` §6 rule 5, §10). Left live: a DLC depot that both
-  clients install, compared, a delta update of a new build, and the
-  Windows column. No captures yet.
+  clients install, compared, and the Windows column. No captures yet.
+- Delta update, live 2026-11-06: CS2 from build 26393695 to 26445667,
+  the official client's manifests and files afterwards, its download
+  size within 256 bytes ([acceptance](../acceptance/m1b.md)). The run
+  found three things, changed the same day: retries did not wait when
+  every server had failed, so a burst of HTTP 503 right after the build
+  appeared failed the automatic update in 25 s (now a retry waits for
+  the first penalty to end, `content.md` §7); the server list was never
+  fetched again after every server failed (now it is, §1); and `update`
+  said "no updates to install" for an app whose failed job held it (now
+  it names the job and how to resume it). The official client uses one
+  `priority_class` of servers at a time (§1, written up; ossteam still
+  rotates through all). Open for the maintainer: whether a failed
+  automatic update should be retried later on its own; job 17 stood
+  failed for two days.
 - Open for the maintainer: cancelling a first install leaves the files
   already renamed into place in `apps/<installdir>` with no record
   (`ipc.md` §5.6), and `uninstall` refuses an app that is not installed,

@@ -242,8 +242,11 @@ fn read_line(stream: &mut impl Read) -> Result<String> {
 }
 
 /// The session bus's socket, from `DBUS_SESSION_BUS_ADDRESS` or else
-/// `$XDG_RUNTIME_DIR/bus`.
-fn session_bus_socket() -> Result<UnixStream> {
+/// `$XDG_RUNTIME_DIR/bus`, connected but not logged in. For a caller that
+/// sets options on it first, such as read and write timeouts, before
+/// [`Connection::on`]; a connection whose read timed out is out of step
+/// with the bus and should be dropped.
+pub fn session_bus_socket() -> Result<UnixStream> {
     let runtime_bus = || {
         let dir = std::env::var_os("XDG_RUNTIME_DIR").ok_or_else(|| {
             Error::NoBus("neither DBUS_SESSION_BUS_ADDRESS nor XDG_RUNTIME_DIR is set".into())

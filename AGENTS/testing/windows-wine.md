@@ -24,6 +24,17 @@ CARGO_TARGET_X86_64_PC_WINDOWS_GNU_RUNNER=wine WINEDEBUG=-all \
   `ossteam-steamclient/tests/pump.rs` (Unix only).
 - Wine is not Windows: UAC, runas `--script-helper`, real HKLM and
   firewall behaviour stay unverified until a real Windows run.
+- Time zones (SPEC CLI-6): Wine takes the zone from `TZ` of a process
+  started from the Linux side, but a process that a Windows process
+  starts gets the parent's zone whatever its `TZ`. So the local-time
+  check runs from the shell, once per zone:
+  `TZ=Europe/Berlin OSSTEAM_TZ_EXPECT='13:00 UTC+01:00|14:00 UTC+02:00'
+  wine <ossteam_ipc test exe> --exact local_time::tests::tz_child`
+  (2026-11-06: Berlin, New York, Kolkata, `UTC`, empty and an unknown
+  zone all passed).
+- The first Wine run after a build can be slow enough that a daemon
+  test's `wait_until` times out (seen 2026-11-04 and 2026-11-05, in a
+  different test each time); a second run passes. Not yet looked into.
 
 GUI runs (the `ossteam-ui` spike):
 

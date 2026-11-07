@@ -32,19 +32,9 @@ pub fn duration(d: Duration) -> String {
     }
 }
 
-/// A Unix time as a UTC calendar date, `YYYY-MM-DD`.
+/// A Unix time as a local calendar date, `YYYY-MM-DD`.
 pub fn date(unix: u64) -> String {
-    // Days to civil date, after Howard Hinnant's `civil_from_days`.
-    let z = (unix / 86_400) as i64 + 719_468;
-    let era = z.div_euclid(146_097);
-    let doe = z.rem_euclid(146_097);
-    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
-    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
-    let mp = (5 * doy + 2) / 153;
-    let day = doy - (153 * mp + 2) / 5 + 1;
-    let month = if mp < 10 { mp + 3 } else { mp - 9 };
-    let year = yoe + era * 400 + i64::from(month <= 2);
-    format!("{year:04}-{month:02}-{day:02}")
+    ossteam_ipc::local_time::date(unix)
 }
 
 pub fn kind(k: JobKind) -> &'static str {
@@ -148,7 +138,6 @@ mod tests {
         assert_eq!(duration(Duration::from_secs(42)), "42 s");
         assert_eq!(duration(Duration::from_secs(125)), "2 min 5 s");
         assert_eq!(duration(Duration::from_secs(7322)), "2 h 2 min");
-        assert_eq!(date(1_700_000_000), "2023-11-14");
         let exit = |status, seconds| v1::GameExited {
             app_id: 480,
             status: Some(status),

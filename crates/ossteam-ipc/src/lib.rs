@@ -8,6 +8,7 @@
 pub mod client;
 pub mod endpoint;
 pub mod frame;
+pub mod local_time;
 mod os;
 
 /// Types generated from `proto/ossteam/ipc/v1/*.proto`.

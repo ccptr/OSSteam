@@ -256,7 +256,11 @@ fn info_text(r: &v1::GetAppResponse) -> String {
                 let _ = write!(line, "build {:<10}", b.build_id);
             }
             if b.time_updated != 0 {
-                let _ = write!(line, "updated {}  ", date(b.time_updated));
+                let _ = write!(
+                    line,
+                    "updated {}  ",
+                    ossteam_ipc::local_time::date(b.time_updated)
+                );
             }
             if b.password_required {
                 line.push_str("password  ");
@@ -471,21 +475,6 @@ pub(crate) fn size(bytes: u64) -> String {
     }
 }
 
-/// A Unix time as a UTC calendar date, `YYYY-MM-DD`.
-fn date(unix: u64) -> String {
-    // Days to civil date, after Howard Hinnant's `civil_from_days`.
-    let z = (unix / 86_400) as i64 + 719_468;
-    let era = z.div_euclid(146_097);
-    let doe = z.rem_euclid(146_097);
-    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
-    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
-    let mp = (5 * doy + 2) / 153;
-    let day = doy - (153 * mp + 2) / 5 + 1;
-    let month = if mp < 10 { mp + 3 } else { mp - 9 };
-    let year = yoe + era * 400 + i64::from(month <= 2);
-    format!("{year:04}-{month:02}-{day:02}")
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -529,12 +518,9 @@ mod tests {
     }
 
     #[test]
-    fn sizes_and_dates() {
+    fn sizes() {
         assert_eq!(size(512), "512 B");
         assert_eq!(size(1_048_576), "1.0 MiB");
-        assert_eq!(date(0), "1970-01-01");
-        assert_eq!(date(1_700_000_000), "2023-11-14");
-        assert_eq!(date(951_782_400), "2000-02-29");
     }
 
     #[test]
@@ -555,7 +541,9 @@ mod tests {
         assert!(text.starts_with("Spacewar (480)\n"));
         assert!(text.contains("  platforms     windows, linux\n"));
         assert!(text.contains("  installed     no\n"));
-        assert!(text.contains("  public        build 1234      updated 2023-11-14\n"));
+        // The local date (SPEC CLI-6).
+        let day = ossteam_ipc::local_time::date(1_700_000_000);
+        assert!(text.contains(&format!("  public        build 1234      updated {day}\n")));
         assert!(!text.contains("depots"));
         assert!(!text.contains("compatibility tool"));
         assert!(!text.contains("last run"));

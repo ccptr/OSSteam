@@ -3,13 +3,35 @@
 An open-source Steam client written in Rust. A per-user daemon, `ossteamd`,
 owns the Steam session, the library and game processes. Two thin clients
 drive it: `ossteam` (CLI, clap) and `ossteam-gui` (GUI, on our own toolkit
-`ossteam-ui`).
+`ossteam-ui`). Games reach the daemon through `ossteam-steamclient`, our
+own Steamworks client library.
 
 The design, its rules and the milestones are in [SPEC.md](SPEC.md).
-Subsystem specs are under [docs/spec/](docs/spec/).
+Subsystem specs are under [docs/spec/](docs/spec/). Where each milestone
+stands is in [docs/status.md](docs/status.md).
 
-> **Status: M0 (foundations).** The daemon, the IPC protocol, and
-> `ossteam daemon start | stop | status` work. There is no Steam login yet.
+> **Status: M1 (a usable client) is built; its acceptance runs are under
+> way.** It is tested mostly on Linux. The Windows code has run only under
+> Wine so far, and macOS builds but has not been run. Not ready for
+> everyday use.
+
+## What works
+
+- Signing in with a password, Steam Guard (email, device code,
+  confirmation) or a QR code; remembered accounts and switching.
+- The library: the apps your licenses grant, with DLC under its game.
+- Install, update (delta), verify and repair, and uninstall, with
+  resumable jobs, a bandwidth limit and several library folders.
+  Install scripts run as the official client runs them (on Windows,
+  so far only under Wine).
+- Launching games, natively and through Proton and the Steam Linux
+  Runtime. Games that use Steamworks get achievements, stats, local
+  storage and auth tickets.
+- The GUI: sign-in, the library, app pages, downloads and settings.
+
+Not there yet: Steam DRM and VAC (M2); cloud sync, friends, beta codes,
+the Workshop and offline mode (M3); Steam Input, Big Picture and Game Mode
+(goals, no milestone yet). These fail honestly rather than pretend.
 
 ## Not affiliated with Valve
 
@@ -24,7 +46,6 @@ The toolchain is pinned in `rust-toolchain.toml`; rustup picks it up.
 
 ```sh
 cargo build --release
-target/release/ossteam daemon status
 ```
 
 Games reach the daemon through the Steamworks client library. This
@@ -50,6 +71,26 @@ run time, so it needs no development packages; on Ubuntu:
 sudo apt-get install libdbus-1-dev libzstd-dev pkg-config
 ```
 
+The GUI's shaders are committed as SPIR-V, so building needs no shader
+compiler. Changing one needs `slangc` (the version in
+`crates/ossteam-ui/shaders/slangc-version.txt`) and `cargo xtask shaders`;
+`cargo xtask shaders --check` checks that the SPIR-V matches its source.
+
+## Using it
+
+The CLI starts the daemon when it needs it.
+
+```sh
+ossteam login             # prompts for the password and any Steam Guard code
+ossteam library
+ossteam install <app>
+ossteam launch <app>
+ossteam-gui
+```
+
+`ossteam --help` lists every command. Add `--json` for output other
+programs can read.
+
 ## Checks
 
 ```sh
@@ -68,8 +109,9 @@ version 2 or (at your option) any later version. See [COPYING](COPYING).
 
 The libraries other programs may embed are licensed under the GNU Lesser
 General Public License, version 2.1 or (at your option) any later version:
-`ossteam-vdf`, `ossteam-ui`, `ossteam-dbus` and, once it is written, the
-Steam Input library `ossteam-input`. See [COPYING.LESSER](COPYING.LESSER) (SPEC
+`ossteam-vdf`, `ossteam-ui`, `ossteam-dbus` and, once they are written,
+the Steam Input library `ossteam-input` and the Steam Controller driver
+`ossteam-steamcontroller`. See [COPYING.LESSER](COPYING.LESSER) (SPEC
 LIC-9). Linked with Apache-2.0 crates, they are conveyed under the terms
 of LGPL-3.0-or-later.
 

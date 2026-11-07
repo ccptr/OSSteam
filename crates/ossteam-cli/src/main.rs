@@ -145,16 +145,13 @@ enum Command {
         #[arg(long)]
         wait: bool,
     },
-    /// Delete an installed app's files.
+    /// Delete an installed app's files, and on Linux its compatibility
+    /// tool prefix.
     Uninstall {
         app: String,
         /// Do not ask first.
         #[arg(long, short)]
         yes: bool,
-        /// Linux: also delete the app's compatibility tool prefix, which
-        /// holds its saves and settings under Proton.
-        #[arg(long)]
-        remove_compat_data: bool,
         /// Wait until the files are deleted.
         #[arg(long)]
         wait: bool,
@@ -404,9 +401,8 @@ fn run(cli: &Cli) -> Result<(), Failure> {
         Command::Uninstall {
             app,
             yes,
-            remove_compat_data,
             wait,
-        } => content::uninstall(cli, app, *yes, *remove_compat_data, *wait),
+        } => content::uninstall(cli, app, *yes, *wait),
         Command::Jobs { action } => match action.as_ref().unwrap_or(&JobsAction::List) {
             JobsAction::List => content::list_jobs(cli),
             JobsAction::Pause { job } => content::control(cli, *job, content::Control::Pause),

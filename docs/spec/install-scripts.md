@@ -218,7 +218,12 @@ work without it, and the entry runs again next time. *Unverified:* what
 the official client shows or does in that case.
 
 Scripts are applied on native Windows, and on Linux to the prefix of an
-app launched through Proton (`compat-tools.md` §7).
+app run through Proton (`compat-tools.md` §7). The table above is for
+Windows. In a prefix ossteam follows what the official client does
+there: the scripts are applied at the end of an install or update, at
+every start and again at every verify, nothing is removed, and uninstall
+deletes the prefix. Whether the official client does the same on
+Windows is unverified, so Windows keeps the documentation's behaviour.
 
 ### 3.1 At the start
 

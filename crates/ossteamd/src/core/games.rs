@@ -4,7 +4,7 @@
 //! the discovery entries (`steamworks-abi.md` §1).
 
 use std::collections::{BTreeMap, HashMap};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
@@ -22,11 +22,12 @@ use super::compat::{self, Prepared};
 use super::scripts;
 use super::{Command, Core, Outcome, internal, invalid};
 use crate::content::folders::Layout;
+use crate::content::{Kind, job};
 use crate::content::script::prefix::Setup;
 use crate::db::InstalledApp;
 use crate::launch::{self, Exited};
 use crate::session::{Cmd, ReplyTo};
-use ossteam_launch::compat::{CompatEnv, Verb, chain};
+use ossteam_launch::compat::{CompatEnv, ToolList, Verb, chain};
 
 pub struct Running {
     pub proto: v1::RunningGame,
@@ -36,6 +37,40 @@ pub struct Running {
     steam_id: SteamId,
     build_id: u32,
     branch: String,
+}
+
+/// What commands through an app's chain get besides their command line
+/// (`compat-tools.md` §5.2, §6).
+struct ChainParts {
+    /// The prefix directory (§6.1).
+    data_dir: PathBuf,
+    library_paths: Vec<PathBuf>,
+    /// Innermost first.
+    tool_paths: Vec<PathBuf>,
+    mounts: Vec<PathBuf>,
+    /// `app_compat_configs`' `config` and `environment` (§5.3).
+    config: Option<String>,
+    environment: Option<String>,
+}
+
+impl ChainParts {
+    fn compat_env<'a>(
+        &'a self,
+        app: AppId,
+        install_dir: &'a Path,
+        client_dir: &'a Path,
+    ) -> CompatEnv<'a> {
+        CompatEnv {
+            app,
+            install_dir,
+            data_dir: &self.data_dir,
+            client_dir,
+            library_paths: self.library_paths.clone(),
+            tool_paths: self.tool_paths.clone(),
+            mounts: self.mounts.clone(),
+            config: self.config.as_deref(),
+        }
+    }
 }
 
 /// What [`Core::try_launch`] did.
@@ -476,6 +511,125 @@ impl Core {
     }
 
     /// The directory of each depot of `installed` that has scripts.
+    /// What a command through `app`'s chain gets besides its command line
+    /// (`compat-tools.md` §5.2, §6). Writes the client DLLs Proton copies
+    /// into the prefix (§6.3).
+    fn chain_parts(
+        &self,
+        app: AppId,
+        folder: &Path,
+        r: &compat::Ready,
+        list: &ToolList,
+    ) -> Result<ChainParts, RemoteError> {
+        let data_dir = Layout::new(folder).compat_data(app);
+        let client_dir = &self.games.client_dir;
+        ossteam_launch::compat::client_dll::write(client_dir).map_err(|e| {
+            internal(&anyhow::anyhow!(
+                "writing the client DLLs in {}: {e}",
+                client_dir.display()
+            ))
+        })?;
+        let config = list.config(app);
+        let mut library_paths = vec![folder.to_owned()];
+        library_paths.extend(r.tool_folders.iter().cloned());
+        let mounts = if self.games.sdk_dir.starts_with(&self.games.settings.home) {
+            Vec::new()
+        } else {
+            vec![self.games.sdk_dir.clone()]
+        };
+        Ok(ChainParts {
+            data_dir,
+            library_paths,
+            tool_paths: r.tools.iter().rev().map(|t| t.dir.clone()).collect(),
+            mounts,
+            config: config.map(|c| c.config.clone()),
+            environment: config.map(|c| c.environment.clone()),
+        })
+    }
+
+    /// How `app`'s setup commands run (`compat-tools.md` §7), adding to the
+    /// game's log.
+    fn setup(
+        &self,
+        app: AppId,
+        chain: String,
+        env: Vec<(String, String)>,
+        isolation: Option<Arc<isolation::Plan>>,
+    ) -> Setup {
+        Setup {
+            app,
+            chain,
+            env,
+            working_dir: self.games.client_dir.clone(),
+            log: self.games.log_dir.join(format!("{app}.log")),
+            reaper: self.games.settings.reaper.clone(),
+            isolation,
+        }
+    }
+
+    /// Where a job applies the app's install scripts: its Proton prefix,
+    /// through the chain a launch would use (`compat-tools.md` §7). `None`
+    /// for an app without one, and, logged, when not every tool is
+    /// installed or the chain cannot be prepared: the next launch applies
+    /// the scripts then.
+    pub(super) fn job_prefix(&mut self, spec: &job::Spec) -> Option<job::PrefixWork> {
+        if !compat::ENABLED {
+            return None;
+        }
+        let app = spec.app;
+        let (windows, install_dir) = match (spec.kind, &spec.installed) {
+            (Kind::Verify | Kind::Uninstall, Some(a)) => {
+                if a.scripts.is_empty() {
+                    return None;
+                }
+                (a.platform == "windows", a.install_dir.clone())
+            }
+            (Kind::Install | Kind::Update, _) => (
+                spec.host.os == "windows",
+                job::install_dir(&spec.info).ok()?,
+            ),
+            _ => return None,
+        };
+        if !windows {
+            return None;
+        }
+        let skip = |why: String| {
+            tracing::info!(app = %app, "install scripts not applied in the prefix: {why}");
+            None
+        };
+        let list = self.tool_list()?;
+        let info = self.app_info(app);
+        let mapping = self.compat_mapping(&list, app, info.as_ref())?;
+        let Some(r) = self.installed_chain(&list, mapping.tool.app) else {
+            return skip("not every compatibility tool is installed; the next launch applies them".into());
+        };
+        if let Err(e) = self.make_discovery() {
+            return skip(format!("the discovery entries: {e}"));
+        }
+        let isolation = if self.games.isolation.available() {
+            match isolation::Plan::new(&self.games.settings.home, &self.games.data) {
+                Ok(p) => Some(Arc::new(p)),
+                Err(f) => return skip(format!("no private ~/.steam: {f}")),
+            }
+        } else {
+            None
+        };
+        let parts = match self.chain_parts(app, &spec.folder.root, &r, &list) {
+            Ok(p) => p,
+            Err(e) => return skip(e.message),
+        };
+        let app_dir = spec.folder.app_dir(&install_dir);
+        let compat_env = parts.compat_env(app, &app_dir, &self.games.client_dir);
+        let env = compat::chain_env(Vec::new(), &compat_env, None);
+        if let Err(e) = std::fs::create_dir_all(&self.games.log_dir) {
+            return skip(format!("{}: {e}", self.games.log_dir.display()));
+        }
+        Some(job::PrefixWork {
+            compat_data: parts.data_dir.clone(),
+            setup: self.setup(app, chain::command_prefix(&r.tools, Verb::Run), env, isolation),
+        })
+    }
+
     fn script_dirs(&self, installed: &InstalledApp, layout: &Layout) -> HashMap<DepotId, PathBuf> {
         installed
             .depots
@@ -679,42 +833,21 @@ impl Core {
         let (command_line, env, interrupt_first, setup) = match &ready {
             None => (game_line, base_env, false, None),
             Some(r) => {
-                let data_dir = layout.compat_data(app);
-                let client_dir = &self.games.client_dir;
-                std::fs::create_dir_all(&data_dir).map_err(|e| {
-                    internal(&anyhow::anyhow!("creating {}: {e}", data_dir.display()))
-                })?;
-                // Proton copies these into the prefix (§6.3).
-                ossteam_launch::compat::client_dll::write(client_dir).map_err(|e| {
+                let list = list.as_ref().expect("a chain has a list");
+                let parts = self.chain_parts(app, &folder.path, r, list)?;
+                // The launch makes the prefix's directory, empty (§6.1).
+                std::fs::create_dir_all(&parts.data_dir).map_err(|e| {
                     internal(&anyhow::anyhow!(
-                        "writing the client DLLs in {}: {e}",
-                        client_dir.display()
+                        "creating {}: {e}",
+                        parts.data_dir.display()
                     ))
                 })?;
-                let list = list.as_ref().expect("a chain has a list");
-                let config = list.config(app);
-                let mut library_paths = vec![folder.path.clone()];
-                library_paths.extend(r.tool_folders.iter().cloned());
-                let home = &self.games.settings.home;
-                let mounts = if self.games.sdk_dir.starts_with(home) {
-                    Vec::new()
-                } else {
-                    vec![self.games.sdk_dir.clone()]
-                };
-                let compat_env = CompatEnv {
-                    app,
-                    install_dir: &app_dir,
-                    data_dir: &data_dir,
-                    client_dir,
-                    library_paths,
-                    tool_paths: r.tools.iter().rev().map(|t| t.dir.clone()).collect(),
-                    mounts,
-                    config: config.map(|c| c.config.as_str()),
-                };
+                let compat_env = parts.compat_env(app, &app_dir, &self.games.client_dir);
                 // An app's environment is for Proton (§5.3).
-                let extra = config
-                    .filter(|_| platform.os == "windows")
-                    .map(|c| c.environment.as_str());
+                let extra = parts
+                    .environment
+                    .as_deref()
+                    .filter(|_| platform.os == "windows");
                 let line = format!(
                     "{} {game_line}",
                     chain::command_prefix(&r.tools, Verb::WaitForExitAndRun)
@@ -751,15 +884,7 @@ impl Core {
         let target = match setup {
             Some((chain, env)) => Some(scripts::Target::Prefix {
                 compat_data: layout.compat_data(app),
-                setup: Setup {
-                    app,
-                    chain,
-                    env,
-                    working_dir: self.games.client_dir.clone(),
-                    log: log.clone(),
-                    reaper: self.games.settings.reaper.clone(),
-                    isolation: isolation.clone(),
-                },
+                setup: self.setup(app, chain, env, isolation.clone()),
             }),
             None if cfg!(windows) => Some(scripts::Target::Windows),
             None => None,

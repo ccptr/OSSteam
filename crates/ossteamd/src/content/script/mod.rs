@@ -493,14 +493,21 @@ pub fn removal(loaded: &[Script], written: &[ValueRef], sys: &dyn System) -> Vec
         .collect()
 }
 
-/// What uninstall does before the files go (§3): the Run Process On
-/// Uninstall entries, then the removal.
-pub fn uninstall(loaded: &[Script], written: &[ValueRef], sys: &dyn System) -> Vec<Planned> {
-    let mut plan: Vec<Planned> = loaded
+/// The Run Process On Uninstall entries whose conditions hold and that
+/// are due (§2.4). In a prefix they are all an uninstall takes, as the
+/// prefix goes after them (`compat-tools.md` §7).
+pub fn uninstall_entries(loaded: &[Script], sys: &dyn System) -> Vec<Planned> {
+    loaded
         .iter()
         .flat_map(|s| &s.run_on_uninstall)
         .filter_map(|p| run_step(p, sys))
-        .collect();
+        .collect()
+}
+
+/// What uninstall does on Windows before the files go (§3): the Run
+/// Process On Uninstall entries, then the removal.
+pub fn uninstall(loaded: &[Script], written: &[ValueRef], sys: &dyn System) -> Vec<Planned> {
+    let mut plan = uninstall_entries(loaded, sys);
     plan.extend(removal(loaded, written, sys));
     plan
 }
@@ -1206,6 +1213,25 @@ mod tests {
         );
         let s = sys.state.lock().unwrap();
         assert_eq!((s.prompts, s.batches.as_slice()), (0, [3, 1].as_slice()));
+    }
+
+    #[test]
+    fn a_prefix_uninstall_runs_entries_only() {
+        let sys = FakeSystem::prefix();
+        let (dir, file) = installed(SCRIPT.as_bytes());
+        let loaded = load_one(&dir, &file, &sys);
+        sys.set(&prereq(), 1);
+        let plan = uninstall_entries(&loaded, &sys);
+        // "Old" is for 32-bit Windows only; nothing is deleted.
+        let programs: Vec<&str> = plan
+            .iter()
+            .map(|p| match &p.step {
+                Step::Run { program, .. } => program.rsplit('\\').next().unwrap(),
+                other => panic!("{other}"),
+            })
+            .collect();
+        assert_eq!(programs, ["cleanup.exe", "unreg.exe"]);
+        assert!(plan.iter().all(|p| !p.elevated));
     }
 
     #[test]

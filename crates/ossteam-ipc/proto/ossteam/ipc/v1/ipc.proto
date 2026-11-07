@@ -646,11 +646,12 @@ message VerifyRequest {
   uint32 app_id = 1;
 }
 
+// On Linux the app's prefix, <library>/compatdata/<app id>, goes too
+// (docs/spec/compat-tools.md §6.1).
 message UninstallRequest {
   uint32 app_id = 1;
-  // Linux: also delete <library>/compatdata/<app id>
-  // (docs/spec/compat-tools.md §6.1).
-  bool remove_compat_data = 2;
+  // remove_compat_data, until uninstall always deleted the prefix.
+  reserved 2;
 }
 
 message ListJobsRequest {}

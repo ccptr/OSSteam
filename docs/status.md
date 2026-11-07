@@ -19,7 +19,7 @@ Almost all remaining work needs one of these.
 - [A Mac and real Windows](status/hardware-mac-windows.md) — for macOS acceptance and what Wine can't show; waits until closer to release (2026-11-03)
 - [SPEC changes for CLI-6](status/spec-changes-cli-6.md) — local times in the CLI and the GUI (CLI-6) and the §5.1 line for `ossteam-ipc`; the wording and details need sign-off
 - [Retrying a failed automatic update](status/retry-failed-auto-update.md) — a failed automatic update stays failed until resumed by hand (job 17, two days); whether the daemon should retry it on its own
-- [Install scripts in a Proton prefix](status/install-scripts-in-prefix.md) — the official client re-applies at verify, deletes the prefix at uninstall and writes `S:` paths (seen 2026-11-07); ossteam differs on each; follow it or not
+- [Install scripts in a Proton prefix](status/install-scripts-in-prefix.md) — follow the official client, built and run live 2026-11-07; the SPEC.md lines for `Uninstall` (no `remove_compat_data`) need sign-off; tools at install and script order open
 
 ## Decisions the maintainer hasn't confirmed
 
@@ -41,7 +41,7 @@ When one is confirmed, write it into the spec and delete the note.
 - [M1b: Content](status/m1b-content.md) — committed; most Linux live rows run 2026-11-04; CS2 matches the official tree once optional DLC is left out, and its delta update to a new build matched too (2026-11-06; retries now wait once every server has failed); a shared DLC depot and Windows left; a question on cancelled first installs
 - [M1c: Play (native)](status/m1c-play.md) — shim, stats, storage, tickets and install scripts at the start committed (scripts 2026-11-05, run live through Proton); Spacewar gets past `SteamAPI_Init` under Proton since 2026-11-05 and stops at `ISteamController::Init` (for the maintainer); live runs and real Windows left
 - [Discovery entries](status/discovery-entries-official-steam.md) — official Steam owns `~/.steam/sdk64`; a private `~/.steam` per launch (DISC-4 to DISC-6) accepted 2026-11-03; DISC-4 built and run live 2026-11-03 (scout, legacy scout, Proton, CS2 in sniper); CS2 reaches its Game Coordinator 2026-11-04, and its relay network comes up with ossteam's certificate (`SteamNetworkingSocketsSerialized005`, `SteamAppDisableUpdate001` and `ISteamHTTP` with its cache added the same day); DISC-5 and DISC-6 built 2026-11-04; the take-over run live against the official client 2026-11-05, and follows the client's close at once since the same day
-- [M1d: Compat tools](status/m1d-compat-tools.md) — committed; install scripts in the prefix run live with Spacewar 2026-11-05; ossteam's own `steamclient.dll` in the prefix since the same day; their removal at verify/uninstall waits on the maintainer (the official client differs, 2026-11-07); the remaining live rows left
+- [M1d: Compat tools](status/m1d-compat-tools.md) — committed; install scripts in the prefix run live with Spacewar 2026-11-05; ossteam's own `steamclient.dll` in the prefix since the same day; since 2026-11-07 they follow the official client (applied at install and verify, the prefix deleted at uninstall); the remaining live rows left
 - [M1e: GUI and macOS](status/m1e-gui-macos.md) — committed; logged-in checks, macOS runs and §20 rows left
 - [M2: Steam DRM](status/m2-drm.md) — drm.md drafted, not reviewed
 - [M2: VAC](status/m2-vac.md) — vac.md drafted, not reviewed

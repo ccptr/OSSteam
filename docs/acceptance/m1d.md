@@ -23,10 +23,10 @@ build.
 | Tools installed or updated as jobs before a launch, which waits for them (§4) | built 2026-10-18; daemon tests with a fake runtime and a fake Proton |
 | `compatdata/<app>`, the generated client-install directory (§6) | built 2026-10-18; daemon test |
 | `compat.default_tool`, `compat.tool.<app>`; `GetApp` `compat`; `info` output (§8) | built 2026-10-18; daemon and CLI tests |
-| `uninstall --remove-compat-data` (§6.1) | built 2026-10-18; daemon test |
+| Uninstall deletes `compatdata/<app>` (§6.1) | built 2026-10-18 as `--remove-compat-data`; always since 2026-11-07, as the official client does; daemon test |
 | The shim in a container: library copies, the abstract socket (§9) | built 2026-10-18; daemon test of the abstract socket; never run in a real container |
 | Stopping through `use_tool_subprocess_reaper` (§10) | built 2026-10-18; not tested against a real tool |
-| Install scripts in the prefix (§7) | built 2026-11-05 (f8543d4): Wine's registry files, the 32-bit view, `regedit` imports and Run Process entries as setup commands; daemon test with a fake Proton (`m1d::install_scripts_apply_to_the_prefix_before_the_game_starts`). Not built: their removal at verify and uninstall |
+| Install scripts in the prefix (§7) | built 2026-11-05 (f8543d4): Wine's registry files, the 32-bit view, `regedit` imports and Run Process entries as setup commands; daemon test with a fake Proton (`m1d::install_scripts_apply_to_the_prefix_before_the_game_starts`). Since 2026-11-07 as the official client does it (§7.1): applied at the end of an install or update and again at verify, nothing removed, Run Process On Uninstall entries before the prefix is deleted, paths on Wine's drive (`S:` for the library folder); the same daemon test, and unit tests of Wine's drive rule |
 
 ## Setup
 
@@ -59,6 +59,7 @@ build.
 | `config set compat.tool.<app> <tool>` switches the tool; an unknown name is refused; a choice that changes the platform marks an update | ⏳ |
 | `stop` ends a game under Proton, and every process of the prefix exits (`wineserver` included) | ⏳ |
 | A tool update published while installed is installed before the next launch | ⏳ |
-| `uninstall` keeps `compatdata/<app>`; `uninstall --remove-compat-data` deletes it | ⏳ |
+| `uninstall` deletes `compatdata/<app>` after the files | ✅ 2026-11-07, Spacewar (480): `apps/Spacewar` and `compatdata/480` both gone |
 | With the data directory outside the home directory, the shim still loads (`STEAM_COMPAT_MOUNTS`) | ⏳ |
 | A Windows-only title with an install script: its registry values land in the prefix | ✅ 2026-11-05, Spacewar (480) under Proton Experimental in the Steam Linux Runtime 4: `launch` printed "running install scripts: Writing 2 registry values", one `proton run regedit /S` exited 0, and the game started 6.7 s after the call; `Exe_Path` (its `Z:` path) and `PatchVersion` = 42 appeared under `Software\Wow6432Node\Valve\Spacewar` in `system.reg` once Wine's server saved it, and were recorded with the install. .NET 4.7.2 (depot 229006) was not run: Proton's prefix records it. A second launch planned nothing and started in 0.57 s. No Run Process entry was due, so `.cmd` files and exit codes through Proton's `steam.exe` are still unverified |
+| Install scripts in the prefix at verify and install, as the official client (§7.1) | ✅ 2026-11-07, Spacewar (480), Proton Experimental in the Steam Linux Runtime 4, the daemon on this build: `verify` rewrote `Exe_Path` from its old `Z:` path to `S:\apps\Spacewar\SteamworksExample.exe` ("Writing a registry value"; `PatchVersion` already matched) and removed nothing; after `uninstall`, `install` made the prefix once the files were in place and wrote both values on `S:`, before any launch. The official client wrote `S:\steamapps\common\Spacewar\SteamworksExample.exe` for its own library the same day |

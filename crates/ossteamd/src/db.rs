@@ -113,9 +113,11 @@ const SCHEMA_V6: &str = "
     ALTER TABLE installed_apps ADD COLUMN platform TEXT NOT NULL DEFAULT '';
 ";
 
-const SCHEMA_V7: &str = "
-    ALTER TABLE jobs ADD COLUMN remove_compat_data INTEGER NOT NULL DEFAULT 0;
-";
+/// Once `jobs.remove_compat_data`, for an uninstall that deleted the
+/// prefix too. Uninstall always deletes it now (`compat-tools.md` §6.1),
+/// so the step adds nothing; a database that has the column keeps it,
+/// unused and not converted.
+const SCHEMA_V7: &str = "";
 
 /// The last `ShimReport` of each app, per account (`gui.md` §5), as its
 /// protobuf encoding.
@@ -409,8 +411,6 @@ pub struct JobRow {
     pub created: u64,
     /// The error a failed job failed with: its IPC code and message.
     pub error: Option<(v1::ErrorCode, String)>,
-    /// An uninstall that deletes the app's prefix too.
-    pub remove_compat_data: bool,
 }
 
 impl Db {
@@ -636,7 +636,7 @@ impl Db {
     pub fn jobs(&self) -> anyhow::Result<Vec<JobRow>> {
         let mut stmt = self.conn.prepare(
             "SELECT job_id, steam_id, app_id, kind, state, priority, folder_id, branch,
-                    created, error_code, error_message, remove_compat_data
+                    created, error_code, error_message
              FROM jobs ORDER BY job_id",
         )?;
         let rows = stmt.query_map([], |r| {
@@ -659,7 +659,6 @@ impl Db {
                         ))
                     })
                     .transpose()?,
-                remove_compat_data: r.get(11)?,
             })
         })?;
         Ok(rows.collect::<Result<_, _>>()?)
@@ -669,9 +668,8 @@ impl Db {
     /// the id.
     pub fn add_job(&self, j: &JobRow) -> anyhow::Result<u64> {
         self.conn.execute(
-            "INSERT INTO jobs (steam_id, app_id, kind, state, priority, folder_id, branch, created,
-                               remove_compat_data)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+            "INSERT INTO jobs (steam_id, app_id, kind, state, priority, folder_id, branch, created)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
             params![
                 j.steam_id.0 as i64,
                 j.app_id.0,
@@ -681,7 +679,6 @@ impl Db {
                 j.folder_id,
                 j.branch,
                 j.created as i64,
-                j.remove_compat_data
             ],
         )?;
         Ok(self.conn.last_insert_rowid() as u64)
@@ -950,7 +947,6 @@ mod tests {
             branch: "public".into(),
             created: 1_700_000_000,
             error: None,
-            remove_compat_data: true,
         };
         job.job_id = db.add_job(&job).unwrap();
         db.set_job_journal(job.job_id, Some(b"OSJ1")).unwrap();

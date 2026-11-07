@@ -68,7 +68,6 @@ pub struct AppPage {
     option: Option<u32>,
     allow_stale: bool,
     args: TextField,
-    remove_compat_data: bool,
     error: Option<String>,
     compat_error: Option<String>,
     /// Turning an optional DLC on or off failed.
@@ -90,7 +89,6 @@ impl AppPage {
             option: None,
             allow_stale: false,
             args: TextField::new("Arguments", widgets::TEXT),
-            remove_compat_data: false,
             error: None,
             compat_error: None,
             dlc_error: None,
@@ -278,10 +276,10 @@ fn uninstall(g: &mut Gui) {
     let Some(app) = &g.app else {
         return;
     };
-    let (id, remove) = (app.app_id, app.remove_compat_data);
+    let id = app.app_id;
     act(
         g,
-        move |c| c.uninstall(id, remove),
+        move |c| c.uninstall(id),
         |g, id, job, cx| {
             close_chooser(g, id, cx);
             add_jobs(g, vec![job]);
@@ -914,9 +912,6 @@ fn manage(info: &v1::GetAppResponse, app: &AppPage, p: Palette) -> Option<El> {
                     .on_click(|g, cx| {
                         if g.app.as_ref().is_some_and(|a| a.open != Chooser::Uninstall) {
                             open_chooser(g, Chooser::Uninstall, cx);
-                            if let Some(app) = &mut g.app {
-                                app.remove_compat_data = false;
-                            }
                         }
                     }),
             ),
@@ -927,29 +922,17 @@ fn manage(info: &v1::GetAppResponse, app: &AppPage, p: Palette) -> Option<El> {
             .as_ref()
             .map(|a| a.name.clone())
             .unwrap_or_default();
+        // The prefix goes too (`compat-tools.md` §6.1).
+        let what = if info.compat.as_ref().is_some_and(|c| c.tool.is_some()) {
+            "Its files are deleted, and its Proton prefix with any saves kept there."
+        } else {
+            "Its files are deleted."
+        };
         let confirm = panel()
             .id("uninstall-confirm")
             .reveal_when_shown()
             .gap(12.0)
-            .child(muted(
-                p,
-                format!("Uninstall {name}? Its files are deleted."),
-            ))
-            .when(info.compat.is_some(), |d| {
-                d.child(
-                    switch(
-                        p,
-                        "remove-compat-data",
-                        "Also delete the Proton prefix",
-                        app.remove_compat_data,
-                    )
-                    .on_toggle(|g, _| {
-                        if let Some(app) = &mut g.app {
-                            app.remove_compat_data = !app.remove_compat_data;
-                        }
-                    }),
-                )
-            })
+            .child(muted(p, format!("Uninstall {name}? {what}")))
             .child(confirm_row(
                 button(p, "confirm-uninstall", "Uninstall")
                     .danger()

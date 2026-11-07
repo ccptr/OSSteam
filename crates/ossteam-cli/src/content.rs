@@ -95,7 +95,6 @@ pub fn uninstall(
     cli: &Cli,
     app: &str,
     yes: bool,
-    remove_compat_data: bool,
     wait: bool,
 ) -> Result<(), Failure> {
     let client = connect(cli, true)?;
@@ -111,7 +110,8 @@ pub fn uninstall(
             Some(i) => format!("Uninstall {name} and delete {} ({})", i.path, size(i.size)),
             None => format!("Uninstall {name} and delete what its install has written"),
         };
-        if remove_compat_data && r.compat.is_some() {
+        // The prefix goes too (`compat-tools.md` §6.1).
+        if r.compat.as_ref().is_some_and(|c| c.tool.is_some()) {
             what.push_str(", and its compatibility tool prefix with its saves and settings");
         }
         what.push('?');
@@ -128,7 +128,7 @@ pub fn uninstall(
     if wait {
         subscribe(&client)?;
     }
-    let job = client.uninstall(id, remove_compat_data)?;
+    let job = client.uninstall(id)?;
     finish(cli, &client, vec![job], wait, false)
 }
 

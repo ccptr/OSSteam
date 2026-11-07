@@ -255,26 +255,64 @@ fn escape(s: &str) -> String {
     s.replace('\\', "\\\\").replace('"', "\\\"")
 }
 
-/// The drive letter of the prefix whose `dosdevices` entry links to `/`,
-/// as `Z:`; `None` when there is none.
-pub fn root_drive(pfx: &Path) -> Option<String> {
-    let dir = std::fs::read_dir(pfx.join("dosdevices")).ok()?;
-    let mut found: Vec<String> = dir
+/// The prefix's drives, `A:` to `Z:`, each with the directory its
+/// `dosdevices` entry leads to, in letter order. Device entries (`d::`)
+/// and entries that lead nowhere are left out.
+fn drives(pfx: &Path) -> Vec<(String, std::fs::Metadata)> {
+    let Ok(dir) = std::fs::read_dir(pfx.join("dosdevices")) else {
+        return Vec::new();
+    };
+    let mut found: Vec<(String, std::fs::Metadata)> = dir
         .flatten()
-        .filter(|e| std::fs::read_link(e.path()).is_ok_and(|t| t == Path::new("/")))
         .filter_map(|e| {
             let name = e.file_name().to_string_lossy().to_lowercase();
             let letter = name.strip_suffix(':')?;
-            (letter.len() == 1 && letter.chars().all(|c| c.is_ascii_lowercase()))
-                .then(|| format!("{}:", letter.to_ascii_uppercase()))
+            if letter.len() != 1 || !letter.chars().all(|c| c.is_ascii_lowercase()) {
+                return None;
+            }
+            let meta = std::fs::metadata(e.path()).ok().filter(|m| m.is_dir())?;
+            Some((format!("{}:", letter.to_ascii_uppercase()), meta))
         })
         .collect();
-    found.sort();
-    found.pop()
+    found.sort_by(|a, b| a.0.cmp(&b.0));
+    found
 }
 
-/// A host path as a program in the prefix names it, on `drive`, the
-/// drive that links to `/`.
+#[cfg(unix)]
+fn same_dir(a: &std::fs::Metadata, b: &std::fs::Metadata) -> bool {
+    use std::os::unix::fs::MetadataExt;
+    a.dev() == b.dev() && a.ino() == b.ino()
+}
+
+#[cfg(not(unix))]
+fn same_dir(_: &std::fs::Metadata, _: &std::fs::Metadata) -> bool {
+    // Prefixes are Linux's (`compat-tools.md` §6.1).
+    false
+}
+
+/// A host path as Wine names it in the prefix (`compat-tools.md` §7):
+/// going up from the path, the first directory that is a drive's root
+/// gives the drive, the lowest letter when several share it. A part of
+/// the path that does not exist yet is passed over, as Wine does. `None`
+/// when no drive holds it, as before the prefix is made.
+pub fn wine_path(pfx: &Path, host: &Path) -> Option<String> {
+    let drives = drives(pfx);
+    let mut dir = Some(host);
+    while let Some(d) = dir {
+        if let Ok(meta) = std::fs::metadata(d)
+            && meta.is_dir()
+            && let Some((letter, _)) = drives.iter().find(|(_, m)| same_dir(m, &meta))
+        {
+            let rest = host.strip_prefix(d).unwrap_or(host);
+            return Some(dos_path(letter, rest));
+        }
+        dir = d.parent();
+    }
+    None
+}
+
+/// `host` on `drive`, its components joined with `\`: a path relative to
+/// the drive's root, or an absolute one on the drive that links to `/`.
 pub fn dos_path(drive: &str, host: &Path) -> String {
     let mut out = drive.to_owned();
     for c in host.components() {
@@ -441,8 +479,34 @@ mod tests {
         std::os::unix::fs::symlink("../drive_c", dos.join("c:")).unwrap();
         std::os::unix::fs::symlink("/", dos.join("z:")).unwrap();
         std::os::unix::fs::symlink("/dev/sda1", dos.join("d::")).unwrap();
-        assert_eq!(root_drive(&dir).as_deref(), Some("Z:"));
         assert_eq!(user(&dir).as_deref(), Some("steamuser"));
+
+        // Without a game drive, a path is on Z:; a file not made yet too.
+        let lib = dir.join("lib");
+        let game = lib.join("apps").join("Space war");
+        std::fs::create_dir_all(&game).unwrap();
+        let on_z = |p: &Path| dos_path("Z:", p);
+        assert_eq!(wine_path(&dir, &game), Some(on_z(&game)));
+        let file = game.join("new.reg");
+        assert_eq!(wine_path(&dir, &file), Some(on_z(&file)));
+        // Proton's S: for the library folder is deeper than Z:, so it wins
+        // (`compat-tools.md` §7), and drive_c is C: whichever way it is
+        // reached.
+        std::os::unix::fs::symlink(&lib, dos.join("s:")).unwrap();
+        assert_eq!(
+            wine_path(&dir, &game).as_deref(),
+            Some("S:\\apps\\Space war")
+        );
+        assert_eq!(wine_path(&dir, &lib).as_deref(), Some("S:\\"));
+        assert_eq!(
+            wine_path(&dir, &dir.join("drive_c/users")).as_deref(),
+            Some("C:\\users")
+        );
+        // Two drives at one root: the lower letter.
+        std::os::unix::fs::symlink(&lib, dos.join("r:")).unwrap();
+        assert_eq!(wine_path(&dir, &lib).as_deref(), Some("R:\\"));
+        // No drives at all: none.
+        assert_eq!(wine_path(&dir.join("nothing"), &game), None);
         std::fs::remove_dir_all(&dir).unwrap();
     }
 }

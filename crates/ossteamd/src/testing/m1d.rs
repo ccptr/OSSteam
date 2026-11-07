@@ -421,7 +421,8 @@ fn a_windows_game_gets_windows_depots_and_proton_in_the_runtime() {
     let compat = c.get_app(WINDOWS).expect("app").compat.expect("compat");
     assert_eq!(chain(&compat), [(SNIPER, true), (PROTON, true)]);
 
-    // Uninstalling keeps the prefix unless asked.
+    // Uninstalling deletes the prefix, saves and all (§6.1). An app
+    // without install scripts gets no prefix from its install.
     let data = game
         .parent()
         .unwrap()
@@ -430,12 +431,10 @@ fn a_windows_game_gets_windows_depots_and_proton_in_the_runtime() {
         .join("compatdata")
         .join(WINDOWS.to_string());
     std::fs::write(data.join("save"), b"x").unwrap();
-    done(&c, c.uninstall(WINDOWS, false).expect("uninstall"));
-    assert!(data.join("save").is_file());
-    install(&c, WINDOWS);
-    done(&c, c.uninstall(WINDOWS, true).expect("uninstall"));
+    done(&c, c.uninstall(WINDOWS).expect("uninstall"));
     assert!(!data.exists());
     install(&c, WINDOWS);
+    assert!(!data.exists());
 
     // Without a default tool the Windows game has no tool, and no
     // Windows launch option qualifies on Linux.
@@ -481,29 +480,35 @@ fn a_game_in_a_container_reaches_the_daemon_by_the_abstract_socket() {
 }
 
 /// A Proton that makes a prefix as Proton's look to install scripts (a
-/// 64-bit registry with DirectX recorded as installed, `Z:` for `/`, a
-/// user), keeps each file `regedit` imports, and runs programs named by
-/// `Z:` paths as shell scripts.
+/// 64-bit registry with DirectX recorded as installed, `Z:` for `/`, `S:`
+/// for the game's library folder as Proton's `gamedrive`, a user), keeps
+/// each file `regedit` imports, and runs programs named by `S:` or `Z:`
+/// paths as shell scripts.
 const PREFIX_PROTON: &[u8] = br#"#!/bin/sh
 here="${0%/*}"
 verb="$1"; shift
 pfx="$STEAM_COMPAT_DATA_PATH/pfx"
+lib=
+for l in $(printf '%s' "$STEAM_COMPAT_LIBRARY_PATHS" | tr ':' ' '); do
+  case "$STEAM_COMPAT_INSTALL_PATH" in "$l"/*) lib="$l"; break ;; esac
+done
 if [ ! -e "$pfx/system.reg" ]; then
   mkdir -p "$pfx/dosdevices" "$pfx/drive_c/users/steamuser" "$pfx/drive_c/users/Public"
   ln -s / "$pfx/dosdevices/z:"
+  [ -n "$lib" ] && ln -s "$lib" "$pfx/dosdevices/s:"
   printf '%s\n' 'WINE REGISTRY Version 2' '#arch=win64' '' \
     '[Software\\Wow6432Node\\Valve\\Steam\\Apps\\CommonRedist\\DirectX\\Jun2010] 1' \
     '"DirectX"=dword:00000001' > "$pfx/system.reg"
 fi
 printf '%s\n' "$verb $*" >> "$here/verbs.txt"
-unix() { printf '%s' "$1" | sed -e 's/^Z://' -e 's|\\|/|g'; }
+unix() { printf '%s' "$1" | sed -e "s|^S:|$lib|" -e 's/^Z://' -e 's|\\|/|g'; }
 if [ "$1" = regedit ]; then
   n=$(ls "$STEAM_COMPAT_DATA_PATH" | grep -c '^import-')
   cp "$(unix "$3")" "$STEAM_COMPAT_DATA_PATH/import-$n.reg"
   exit 0
 fi
 case "$1" in
-  Z:*) prog=$(unix "$1"); shift; exec sh "$prog" "$@" ;;
+  [SZ]:*) prog=$(unix "$1"); shift; exec sh "$prog" "$@" ;;
   *) exec "$@" ;;
 esac
 "#;
@@ -646,7 +651,16 @@ fn install_scripts_apply_to_the_prefix_before_the_game_starts() {
     );
     assert!(verbs[4].starts_with("waitforexitandrun "), "{verbs:#?}");
 
-    let windows_dir = format!("Z:{}", game.to_str().unwrap().replace('/', "\\"));
+    // The game's library folder is S: (`compat-tools.md` §7).
+    let library = data.parent().unwrap().parent().unwrap();
+    let windows_dir = format!(
+        "S:\\{}",
+        game.strip_prefix(library)
+            .unwrap()
+            .to_str()
+            .unwrap()
+            .replace('/', "\\")
+    );
     assert_eq!(
         import_text(&data.join("import-0.reg")),
         "Windows Registry Editor Version 5.00\r\n\r\n"
@@ -686,5 +700,24 @@ fn install_scripts_apply_to_the_prefix_before_the_game_starts() {
     // Its output comes first in the game's log.
     let log = std::fs::read_to_string(&running.log).expect("the log");
     assert!(log.contains("setup output"), "{log}");
+
+    // A verify applies them again and removes nothing. This Proton's
+    // regedit keeps its files without changing the registry, so the
+    // values and the entry are planned again.
+    std::fs::remove_file(game.join("setup-args.txt")).unwrap();
+    done(&c, c.verify(WINDOWS).expect("verify"));
+    assert_eq!(import_text(&data.join("import-3.reg")), values);
+    assert!(game.join("setup-args.txt").is_file());
+    assert_eq!(lines(&proton.join("verbs.txt")).len(), 8);
+
+    // Uninstalling deletes the prefix after the files (§6.1).
+    done(&c, c.uninstall(WINDOWS).expect("uninstall"));
+    assert!(!data.exists() && !game.exists());
+
+    // With the tools installed, an install applies them once its files
+    // are in place, before any launch.
+    let game = install(&c, WINDOWS);
+    assert_eq!(import_text(&data.join("import-1.reg")), values);
+    assert!(game.join("setup-args.txt").is_file());
     d.stop();
 }

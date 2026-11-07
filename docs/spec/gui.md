@@ -237,8 +237,10 @@ game from the store:
   from, and its chain with each tool's install state. A chooser of
   `compat.choices` and "Default" sets `compat.tool.<app id>` with
   `SetSetting`, or resets it.
-- **Manage:** Verify; Uninstall, which asks for confirmation, with "Also
-  delete the Proton prefix" on Linux (`remove_compat_data`).
+- **Manage:** Verify; Uninstall, which asks for confirmation. On Linux,
+  for an app with a compatibility tool, the confirmation says that its
+  Proton prefix, with any saves kept there, is deleted too
+  (`compat-tools.md` §6.1).
 - **Last run:** how the game last ended, if the GUI saw its `GameExited`
   (exit code or signal, and how long it ran, as `ossteam events` says),
   and the app's last `ShimReport` (§5): interfaces used, versions not

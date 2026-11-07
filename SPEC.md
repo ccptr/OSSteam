@@ -457,7 +457,7 @@ Adding an async runtime (tokio, async-std, smol) to the daemon requires an ADR
 | Session | `LoginWithCredentials{username, password, remember}`, `LoginWithQr`, `SubmitGuardCode{code}`, `CancelLogin`, `Logout`, `ListAccounts`, `SwitchAccount{steam_id}`, `SetPersonaState{online\|invisible\|offline}` |
 | Library | `ListApps{filter, installed_only}`, `GetApp{app_id}`, `GetAsset{app_id, kind}` → path of a cached file |
 | Folders | `ListLibraryFolders`, `AddLibraryFolder{path}`, `RemoveLibraryFolder{path}` |
-| Jobs | `Install{app_id, folder, branch}`, `Update{app_ids \| all}`, `Verify{app_id}`, `Uninstall{app_id, remove_compat_data}`, `ListJobs`, `PauseJob`, `ResumeJob`, `CancelJob`, `SetJobPriority` |
+| Jobs | `Install{app_id, folder, branch}`, `Update{app_ids \| all}`, `Verify{app_id}`, `Uninstall{app_id}`, `ListJobs`, `PauseJob`, `ResumeJob`, `CancelJob`, `SetJobPriority` |
 | Launch | `GetLaunchOptions{app_id}`, `Launch{app_id, option, extra_args}`, `ListRunning`, `StopGame{app_id}` |
 | Settings | `GetSettings`, `SetSetting{key, value, reset}` |
 | Events | `Subscribe{topics}`, `Unsubscribe{topics}` |
@@ -835,7 +835,7 @@ ossteam info <APP>                              # app info, depots, branches, in
 ossteam install <APP> [--folder <PATH>] [--branch <NAME>] [--wait]
 ossteam update [<APP>... | --all] [--wait]
 ossteam verify <APP> [--wait]
-ossteam uninstall <APP> [--yes] [--remove-compat-data] [--wait]
+ossteam uninstall <APP> [--yes] [--wait]
 ossteam jobs [list | pause <ID> | resume <ID> | cancel <ID> | priority <ID> <N> | watch]
 
 ossteam folders [list | add <PATH> | remove <PATH>]

@@ -545,13 +545,10 @@ impl Client {
         }
     }
 
-    /// Uninstalls an app; `remove_compat_data` deletes its prefix too
-    /// (Linux).
-    pub fn uninstall(&self, app_id: u32, remove_compat_data: bool) -> Result<v1::Job, ClientError> {
-        let req = v1::UninstallRequest {
-            app_id,
-            remove_compat_data,
-        };
+    /// Uninstalls an app, and on Linux its prefix (`compat-tools.md`
+    /// §6.1).
+    pub fn uninstall(&self, app_id: u32) -> Result<v1::Job, ClientError> {
+        let req = v1::UninstallRequest { app_id };
         match self.call(request::Method::Uninstall(req), DEFAULT_TIMEOUT)? {
             response::Result::Uninstall(r) => job(r),
             other => Err(unexpected(other)),

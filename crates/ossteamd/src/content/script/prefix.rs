@@ -19,7 +19,8 @@ use super::{Data, Outcome, Step, System, ValueRef};
 /// compatibility data directory.
 pub const IMPORT_FILE: &str = "ossteam-script.reg";
 
-/// How setup commands of one launch run (`compat-tools.md` §7).
+/// How an app's setup commands run (`compat-tools.md` §7).
+#[derive(Clone)]
 pub struct Setup {
     pub app: AppId,
     /// The chain's command line up to the command, with `%verb%` `run`.
@@ -70,8 +71,6 @@ fn regedit(path: &str) -> String {
 pub struct Prefix {
     compat_data: PathBuf,
     registry: Registry,
-    /// The drive that links to `/`.
-    drive: String,
     /// The user directory under `C:\users`.
     user: String,
     setup: Setup,
@@ -88,23 +87,24 @@ impl Prefix {
         let pfx = registry::prefix_dir(compat_data);
         if !pfx.join("system.reg").exists() {
             report("Making the Proton prefix".into());
-            // Before the prefix exists there are no drives to look at;
-            // Proton's link Z: to / (`compat-tools.md` §7).
-            let drive = registry::root_drive(&pfx).unwrap_or_else(|| "Z:".into());
-            let code = import(compat_data, &drive, &setup, &[])?;
+            let code = import(compat_data, &setup, &[])?;
             if code != 0 {
                 tracing::warn!(app = %setup.app, "making the prefix: regedit exited with {code}");
             }
         }
         let registry =
             Registry::read(&pfx).map_err(|e| format!("reading {}: {e}", pfx.display()))?;
-        let drive = registry::root_drive(&pfx)
-            .ok_or_else(|| format!("{} has no drive for /", pfx.display()))?;
+        if registry::wine_path(&pfx, compat_data).is_none() {
+            return Err(format!(
+                "no drive of {} holds {}",
+                pfx.display(),
+                compat_data.display()
+            ));
+        }
         let user = registry::user(&pfx).unwrap_or_else(|| "steamuser".into());
         Ok(Self {
             compat_data: compat_data.to_owned(),
             registry,
-            drive,
             user,
             setup,
         })
@@ -134,7 +134,7 @@ impl Prefix {
 
     /// Imports `changes`; `Done` for each when `regedit` exits with 0.
     fn import(&self, changes: &[Change]) -> Outcome {
-        match import(&self.compat_data, &self.drive, &self.setup, changes) {
+        match import(&self.compat_data, &self.setup, changes) {
             Ok(0) => Outcome::Done,
             Ok(code) => Outcome::Failed(format!("regedit exited with {code}")),
             Err(e) => Outcome::Failed(format!("regedit: {e}")),
@@ -171,18 +171,21 @@ impl Prefix {
     }
 }
 
+/// A host path as programs in the prefix name it (`compat-tools.md` §7).
+/// Before the prefix is made it has no drives yet; Proton then links Z:
+/// to `/`.
+fn wine_path(compat_data: &Path, host: &Path) -> String {
+    registry::wine_path(&registry::prefix_dir(compat_data), host)
+        .unwrap_or_else(|| registry::dos_path("Z:", host))
+}
+
 /// Writes `changes` to the import file and runs `regedit` on it.
-fn import(
-    compat_data: &Path,
-    drive: &str,
-    setup: &Setup,
-    changes: &[Change],
-) -> Result<i64, String> {
+fn import(compat_data: &Path, setup: &Setup, changes: &[Change]) -> Result<i64, String> {
     let file = compat_data.join(IMPORT_FILE);
     std::fs::create_dir_all(compat_data)
         .and_then(|()| std::fs::write(&file, registry::import_file(changes)))
         .map_err(|e| format!("writing {}: {e}", file.display()))?;
-    let code = setup.run(&regedit(&registry::dos_path(drive, &file)));
+    let code = setup.run(&regedit(&wine_path(compat_data, &file)));
     let _ = std::fs::remove_file(&file);
     code
 }
@@ -210,7 +213,7 @@ impl System for Prefix {
     }
 
     fn path(&self, dir: &Path) -> String {
-        registry::dos_path(&self.drive, dir)
+        wine_path(&self.compat_data, dir)
     }
 
     fn apply(&self, step: &Step, cancel: &CancelToken) -> Outcome {

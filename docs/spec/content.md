@@ -510,9 +510,10 @@ alone. The job reports how many files it repaired.
 Uninstall deletes `apps/<installdir>`, the app's stored manifests and
 staging, and its rows in the state database. Shared-install depots are
 kept while another installed app uses them (§8). On Linux the app's
-`compatdata/<appid>` holds the user's saves and settings under Proton and
-is left in place unless the uninstall asks for its removal
-(`compat-tools.md` §6.1).
+`compatdata/<appid>`, which holds the user's saves and settings under
+Proton, is deleted after the files, as the official client does
+(`compat-tools.md` §6.1); install scripts in it are handled as
+`compat-tools.md` §7 says.
 
 ## 13. Settings (CONT-7)
 

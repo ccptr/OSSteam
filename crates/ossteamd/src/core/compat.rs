@@ -142,16 +142,14 @@ pub(super) enum Prepared {
 }
 
 impl Core {
-    /// The chain that starts at `first`, or the job that must run before
-    /// it is complete (§4). A missing tool is installed into
-    /// `folder_id`, the game's folder.
-    pub(super) fn prepare_chain(
-        &mut self,
-        steam_id: SteamId,
+    /// The tools of the chain that starts at `first` that are installed
+    /// and usable, and the first one that is not (§4). A tool whose
+    /// manifest cannot be read is an error.
+    fn walk_chain(
+        &self,
         list: &ToolList,
         first: AppId,
-        folder_id: &str,
-    ) -> Result<Prepared, RemoteError> {
+    ) -> Result<(Ready, Option<AppId>), RemoteError> {
         let mut found: Vec<(ChainTool, PathBuf)> = Vec::new();
         let mut broken = None;
         let walk = chain::walk(first, |a| {
@@ -191,13 +189,44 @@ impl Core {
                 tool_name(list, a)
             )));
         }
-        let Some(missing) = walk.missing else {
-            let (mut tools, tool_folders): (Vec<_>, Vec<_>) = found.into_iter().unzip();
-            tools.reverse();
-            return Ok(Prepared::Ready(Ready {
+        let (mut tools, tool_folders): (Vec<_>, Vec<_>) = found.into_iter().unzip();
+        tools.reverse();
+        Ok((
+            Ready {
                 tools,
                 tool_folders,
-            }));
+            },
+            walk.missing,
+        ))
+    }
+
+    /// The chain that starts at `first` when every tool is installed and
+    /// none has a job or an update; otherwise `None`, and no job is made
+    /// (`compat-tools.md` §7: install scripts outside a launch).
+    pub(super) fn installed_chain(&self, list: &ToolList, first: AppId) -> Option<Ready> {
+        match self.walk_chain(list, first) {
+            Ok((ready, None)) => Some(ready),
+            Ok((_, Some(_))) => None,
+            Err(e) => {
+                tracing::warn!("the chain of tool {first}: {}", e.message);
+                None
+            }
+        }
+    }
+
+    /// The chain that starts at `first`, or the job that must run before
+    /// it is complete (§4). A missing tool is installed into
+    /// `folder_id`, the game's folder.
+    pub(super) fn prepare_chain(
+        &mut self,
+        steam_id: SteamId,
+        list: &ToolList,
+        first: AppId,
+        folder_id: &str,
+    ) -> Result<Prepared, RemoteError> {
+        let (ready, missing) = self.walk_chain(list, first)?;
+        let Some(missing) = missing else {
+            return Ok(Prepared::Ready(ready));
         };
         if let Some(j) = self.unfinished_job(missing) {
             return Ok(Prepared::Waiting(vec![j]));

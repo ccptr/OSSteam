@@ -382,7 +382,6 @@ impl Core {
             branch,
             created: now(),
             error: None,
-            remove_compat_data: false,
         })
     }
 
@@ -544,7 +543,6 @@ impl Core {
             branch,
             created: now(),
             error: None,
-            remove_compat_data: req.remove_compat_data && super::compat::ENABLED,
         })?;
         Ok(response::Result::Uninstall(v1::JobResponse {
             job: Some(job),
@@ -752,7 +750,10 @@ impl Core {
             let Some(job_id) = next else {
                 return;
             };
-            let started = self.job_spec(job_id).and_then(|spec| {
+            let started = self.job_spec(job_id).and_then(|mut spec| {
+                // Install scripts in the prefix, with the tools installed
+                // now (`compat-tools.md` §7).
+                spec.prefix = self.job_prefix(&spec);
                 self.content_jobs
                     .start(spec, requester.clone())
                     .map_err(|e| {
@@ -847,7 +848,7 @@ impl Core {
                 .cloned()
                 .collect(),
             journal,
-            remove_compat_data: row.remove_compat_data,
+            prefix: None,
             threads: self.config.download_threads(),
             cell_id: self.db.cell_id().unwrap_or(0),
         })

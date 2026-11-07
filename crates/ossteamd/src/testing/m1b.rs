@@ -221,7 +221,7 @@ fn install_update_verify_and_uninstall_with_dlc() {
     assert_eq!(cdn.chunk_requests() - before, 1, "only the damaged chunk");
 
     // Uninstall removes the files and the record.
-    done(&c, c.uninstall(ALPHA, false).expect("uninstall queued"));
+    done(&c, c.uninstall(ALPHA).expect("uninstall queued"));
     assert!(!dir.exists());
     assert!(installed(&c, ALPHA).is_none());
     assert!(!dlc_installed(&c));
@@ -596,7 +596,7 @@ fn install_scripts_at_verify_and_uninstall() {
 
     // Uninstall runs the uninstall entries, the elevated one behind one
     // prompt, before the files go.
-    done(&c, c.uninstall(ALPHA, false).expect("uninstall queued"));
+    done(&c, c.uninstall(ALPHA).expect("uninstall queued"));
     assert!(!dir.exists());
     let s = sys.state.lock().unwrap();
     let ran: Vec<(String, &str, bool)> = s
@@ -670,7 +670,7 @@ fn library_folders_and_job_controls() {
     );
 
     // Uninstalled, the folder can go; its files stay.
-    done(&c, c.uninstall(ALPHA, false).expect("uninstall"));
+    done(&c, c.uninstall(ALPHA).expect("uninstall"));
     c.remove_library_folder(&extra.to_string_lossy())
         .expect("remove");
     assert!(extra.join(".ossteam/library.toml").is_file());

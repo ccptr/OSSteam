@@ -358,10 +358,10 @@ before the first launch through a tool; Proton fills it (`pfx/`,
 `version`, `tracked_files`, ...). Every chain gets one, SLR-only chains
 included, as the official client gives CS2 a `compatdata/730`.
 
-The prefix holds a Windows game's saves and settings. Uninstall leaves it
-in place unless asked to remove it (`Uninstall{app_id,
-remove_compat_data}`, CLI `ossteam uninstall <APP> --remove-compat-data`).
-*Unverified:* what the official client does with it on uninstall.
+The prefix holds a Windows game's saves and settings. Uninstall deletes
+it, after the app's files, as the official client does (§7.1): saves
+kept only in the prefix go with it. Older uninstalls left it unless asked
+(`remove_compat_data`, removed on 2026-11-07).
 
 ### 6.2 The client-install directory
 
@@ -457,9 +457,22 @@ directory set to the generated client-install directory (Valve's
 interface document: not the game's directory). ossteam waits for it to
 end before the next step.
 
-Install scripts (`install-scripts.md`) of an app launched through Proton
-apply to the prefix, not to the host. They are planned as on Windows
-(`install-scripts.md` §3.1), against the prefix's registry:
+Install scripts (`install-scripts.md`) of an app run through Proton
+apply to the prefix, not to the host. They are applied when the official
+client applies them (§7.1), which is not when they are on Windows
+(`install-scripts.md` §3):
+
+| Event | What happens in the prefix |
+|---|---|
+| Install or update finishes | The scripts are applied, once the files are in place, if every tool of the app's chain is installed; otherwise the next launch applies them. *Unverified:* that the official client does so after an update, as after an install |
+| The game starts | The scripts are applied, before the game (`install-scripts.md` §3.1) |
+| Verify | After the files are repaired, the scripts are applied again. Nothing is removed |
+| Uninstall | The Run Process On Uninstall entries that are due run, if every tool is installed; then the files and the prefix are deleted (§6.1). No value is removed: the prefix goes |
+
+Applying them is the plan of `install-scripts.md` §3.1, against the
+prefix's registry. A step that fails at the end of an install, a verify
+or an uninstall is logged and does not fail the job. The rest of this
+section says how the steps reach the prefix:
 
 - **Reading.** The daemon reads the prefix's registry from Wine's files:
   `pfx/system.reg` for `HKEY_LOCAL_MACHINE` (keys relative to
@@ -471,23 +484,33 @@ apply to the prefix, not to the host. They are planned as on Windows
   (`install-scripts.md` §2.1). Proton's own records of redistributables
   are there (§2.2 of that page). `HKEY_CURRENT_USER` is not redirected.
 - **Paths.** Variables (`install-scripts.md` §2.5) give the paths as
-  programs in the prefix see them. A host path is written on the drive
-  whose `pfx/dosdevices/<letter>:` links to `/` (`Z:` in Proton's
-  prefixes), with `\` between components: `%INSTALLDIR%` and
-  `%ROOTDRIVE%` so. `%WinDir%` is `C:\windows`; `%APPDATA%`,
+  programs in the prefix see them. A host path is named as Wine names
+  it (Wine's `ntdll`, `find_drive_nt_root`, read for facts): going up
+  from the path itself, the first directory that is the root of a drive
+  (a `pfx/dosdevices/<letter>:` link, compared by device and inode)
+  gives the drive, the lowest letter when several share it, and the rest
+  follows with `\` between components. Proton links `S:` to the app's
+  library folder when its compatibility config has `gamedrive`, and
+  `Z:` to `/`, so an install directory is on `S:` when there is one,
+  as the official client wrote `Exe_Path` (§7.1), and on `Z:`
+  otherwise. `%INSTALLDIR%` and `%ROOTDRIVE%` are so. Before the prefix
+  exists its first import names its file on `Z:`. `%WinDir%` is `C:\windows`; `%APPDATA%`,
   `%LOCALAPPDATA%` and `%USER_MYDOCS%` are under
   `C:\users\<user>`, the one directory under `pfx/drive_c/users` that is
   not `Public` (`steamuser`); `%COMMON_MYDOCS%` is
   `C:\users\Public\Documents`; `%STEAMPATH%` is `InstallPath` under
   `Software\Wow6432Node\Valve\Steam` in the prefix, which Proton sets
-  (`C:\Program Files (x86)\Steam`). The official client's evaluator
-  names the install directory on `S:`, the drive Proton maps to the
-  library folder (§7.1); ossteam's `Z:` path differs, an open question
-  for the maintainer.
+  (`C:\Program Files (x86)\Steam`).
 - **A new prefix.** Proton makes the prefix at the first verb it runs.
   When `pfx/system.reg` does not exist yet, the first setup command
   imports an empty registry file, so the prefix, with Proton's records,
   is there before anything is planned.
+- **The chain.** Outside a launch (an install, a verify, an uninstall)
+  the steps run through the chain the launch would use, with the same
+  variables and the same private `~/.steam` (DISC-4), and add to the
+  game's log. Without every tool installed, or without a private
+  `~/.steam` where the launch would have one, nothing runs and the log
+  says why.
 - **Registry.** The values a start writes go into one file,
   `<compatdata>/ossteam-script.reg`, in the form Windows' `regedit`
   exports (`Windows Registry Editor Version 5.00`, UTF-16LE with a byte
@@ -520,9 +543,8 @@ on native Windows (`install-scripts.md` §2.6). The official client runs
 its own Windows interpreter (`iscriptevaluator.exe`) through the tool
 instead; that program is Valve's.
 
-Verify and uninstall take the same removal in the prefix (one `regedit`
-import of deletions), once the app's tool is installed; uninstall with
-`--remove-compat-data` deletes the prefix instead.
+The values written are recorded with the install (`install-scripts.md`
+§5), as on Windows, though nothing in a prefix removes them.
 
 SLR-only chains run Linux games, whose install scripts are not applied
 (`install-scripts.md` §3).
@@ -573,11 +595,12 @@ the facts below are what that run showed, not every case.
   the values first cannot be seen. 228980's depot 229006 was removed
   with it, as no other app needed it.
 
-ossteam's design above differs on four points: it plans the scripts only
-at a launch, removes the values at verify, would remove them at
-uninstall and keeps the prefix unless `--remove-compat-data`, and names
-the install directory on `Z:`. Whether to follow the official client is
-for the maintainer (`docs/status/install-scripts-in-prefix.md`).
+Until 2026-11-07 ossteam differed on four points: it applied the scripts
+only at a launch, removed the values at verify, removed them at
+uninstall and kept the prefix unless `--remove-compat-data`, and named
+the install directory on `Z:`. The maintainer chose to follow the
+client; §7 says how. ossteam applies the scripts after a verify's
+repair rather than before, since a damaged script is repaired first.
 
 ## 8. Settings and IPC
 
@@ -673,8 +696,10 @@ timeout.
 | Working directory (§5.1) | from Valve's interface document |
 | Environment values (§5.2) | names from the official client's library and Valve's document; values unverified until a capture |
 | `app_compat_configs` handling (§5.3) | `config` from Proton's script; `environment` unverified |
-| Install scripts in the prefix (§7) | ossteam's design; the official client's run with Spacewar on 2026-11-07 in §7.1, which differs |
-| The drive of `%INSTALLDIR%` in a prefix | `S:` in the official client (§7.1); ossteam uses `Z:` |
-| Uninstall and the prefix | the official client deletes `compatdata/<app>` (§7.1); ossteam keeps it without `--remove-compat-data` |
+| When install scripts run in the prefix (§7) | from the official client's run with Spacewar on 2026-11-07 (§7.1); after an update unverified |
+| How the steps reach the prefix (§7) | ossteam's design: Wine's `regedit`, not Valve's evaluator |
+| The drive of `%INSTALLDIR%` in a prefix | `S:` in the official client (§7.1); Wine's rule from its source |
+| Uninstall and the prefix | deleted, as by the official client (§7.1) |
+| Run Process On Uninstall in a prefix | unverified; Spacewar has none |
 | `steamclient.dll` in the prefix (§6.3) | Proton's loader read for facts; ossteam's files run live 2026-11-05 with Spacewar (32-bit) under Proton Experimental 11.0-100; 64-bit games and other Proton versions unverified |
 | The shim inside a container (§9) | from the `pressure-vessel-wrap` manual; to be run in acceptance |

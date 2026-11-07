@@ -1,6 +1,6 @@
 ---
 name: m1d-compat-tools
-description: M1d status - compat tool list, mappings, chain launch and install scripts in the prefix committed (scripts run live 2026-11-05); their removal at verify/uninstall on hold for the maintainer (the official client differs, 2026-11-07); the remaining live rows left
+description: M1d status - compat tool list, mappings, chain launch and install scripts in the prefix committed (scripts run live 2026-11-05); since 2026-11-07 they follow the official client (applied at install and verify, the prefix deleted at uninstall); the remaining live rows left
 metadata:
   type: project
 ---
@@ -18,12 +18,12 @@ Left:
 - Install scripts in the prefix (compat-tools §7): built 2026-11-05
   (f8543d4) and run live with Spacewar the same day
   ([m1d](../acceptance/m1d.md)): its two registry values landed under
-  `Wow6432Node`, and a second start planned nothing. Not built: removing
-  their values at verify and uninstall, which §7 describes (on Linux
-  verify and uninstall still leave the prefix alone). On hold since
-  2026-11-07: the official client removes nothing at verify and deletes
-  the prefix at uninstall (§7.1); whether to follow it is for the
-  maintainer ([install-scripts-in-prefix](install-scripts-in-prefix.md)). Unverified: how
+  `Wow6432Node`, and a second start planned nothing. Since 2026-11-07
+  they follow the official client (§7.1): applied at the end of an
+  install or update and again at verify, nothing removed, the prefix
+  deleted at uninstall, paths on Wine's drive (`S:`); run live with
+  Spacewar the same day
+  ([install-scripts-in-prefix](install-scripts-in-prefix.md)). Unverified: how
   Proton's `steam.exe` runs a `.cmd` entry and whether `run` returns its
   exit code; Spacewar had no entry due.
 - `steamclient.dll` in the prefix (compat-tools §6.3): ossteam's own

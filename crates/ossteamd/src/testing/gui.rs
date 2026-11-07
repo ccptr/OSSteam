@@ -273,7 +273,7 @@ fn connection_and_store_follow_the_daemon() {
     }
 
     // Uninstall from the App page.
-    let job = gui.call("uninstall", |c| c.uninstall(ALPHA, false));
+    let job = gui.call("uninstall", |c| c.uninstall(ALPHA));
     gui.model.store.add_job(job.clone());
     gui.settle("the uninstalled app", |s| {
         let info = cli.get_app(ALPHA).expect("get app");

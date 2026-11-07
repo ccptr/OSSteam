@@ -25,10 +25,15 @@ use ossteam_types::{AppId, CancelToken, DepotId, ManifestId};
 use ossteam_vdf::{Object, Value};
 
 use super::folders::Layout;
+use super::script::prefix::{Prefix, Setup};
 use super::script::{self, System};
 use super::{Kind, Report};
 use crate::core::Command;
 use crate::db::{InstalledApp, InstalledDepot};
+
+/// Whether apps can have Proton prefixes: compatibility tools are
+/// Linux's (PLAT-2).
+const PREFIXES: bool = cfg!(target_os = "linux");
 
 /// The server list is fetched again after this long (`content.md` §1).
 const SERVER_LIST_TTL: Duration = Duration::from_secs(3600);
@@ -59,10 +64,18 @@ pub struct Spec {
     /// Every other installed app, for uninstalling shared depots.
     pub other_installs: Vec<InstalledApp>,
     pub journal: Option<Vec<u8>>,
-    /// An uninstall deletes `compatdata/<app id>` too.
-    pub remove_compat_data: bool,
+    /// Where the app's install scripts apply: its Proton prefix
+    /// (`compat-tools.md` §7). The core sets it as the job starts.
+    pub prefix: Option<PrefixWork>,
     pub threads: usize,
     pub cell_id: u32,
+}
+
+/// An app's Proton prefix, and how commands reach it (`compat-tools.md`
+/// §7).
+pub struct PrefixWork {
+    pub compat_data: PathBuf,
+    pub setup: Setup,
 }
 
 /// Shared by every job.
@@ -598,7 +611,7 @@ impl Runner<'_> {
                 let _ = std::fs::remove_file(spec.folder.manifest(depot, id));
             }
         }
-        Ok(Some(InstalledApp {
+        let mut done = InstalledApp {
             app_id: spec.app,
             folder_id: spec.folder_id.clone(),
             install_dir: install_dir(&spec.info).map_err(|e| fail(ErrorCode::Unsupported, e))?,
@@ -608,7 +621,8 @@ impl Runner<'_> {
             update_available: false,
             platform: spec.host.os.to_owned(),
             depots: recorded,
-            // Nothing runs yet (`install-scripts.md` §3).
+            // On Windows nothing runs yet (`install-scripts.md` §3); in a
+            // prefix the scripts apply now (`compat-tools.md` §7).
             scripts: job
                 .depots
                 .iter()
@@ -619,7 +633,45 @@ impl Runner<'_> {
                 .as_ref()
                 .map(|a| a.script_values.clone())
                 .unwrap_or_default(),
-        }))
+        };
+        self.apply_in_prefix(&mut done);
+        Ok(Some(done))
+    }
+
+    /// Opens the app's Proton prefix for its install scripts
+    /// (`compat-tools.md` §7). `None`, logged, when there is none for this
+    /// job or it cannot be opened.
+    fn prefix(&self, installed: &InstalledApp) -> Option<Prefix> {
+        let work = self.spec.prefix.as_ref()?;
+        if installed.scripts.is_empty() {
+            return None;
+        }
+        let app = self.spec.app;
+        let mut report = |text: String| tracing::info!(app = %app, "install scripts: {text}");
+        match Prefix::open(&work.compat_data, work.setup.clone(), &mut report) {
+            Ok(p) => Some(p),
+            Err(e) => {
+                tracing::warn!(app = %app, "install scripts not applied in the prefix: {e}");
+                None
+            }
+        }
+    }
+
+    /// Applies the app's install scripts in its Proton prefix, as a start
+    /// does, and records the values written (`compat-tools.md` §7). The
+    /// steps run to their end, as at a start; one that fails is logged and
+    /// the job goes on.
+    fn apply_in_prefix(&self, installed: &mut InstalledApp) {
+        let Some(prefix) = self.prefix(installed) else {
+            return;
+        };
+        let app = self.spec.app;
+        let loaded = self.scripts(&prefix, installed);
+        let plan = script::start(&loaded, &prefix);
+        let mut report = |text: String| tracing::info!(app = %app, "install scripts: {text}");
+        let out = script::execute(&prefix, &plan, &CancelToken::new(), &mut report)
+            .expect("never cancelled");
+        script::record(&mut installed.script_values, script::written(&plan, &out));
     }
 
     /// `content.md` §11.
@@ -662,7 +714,11 @@ impl Runner<'_> {
         let out = self.engine(&job, &dl)?;
         tracing::info!(app = %spec.app, repaired = out.files_written, "verify finished");
         let mut installed = installed;
-        if let Some(sys) = &self.env.scripts {
+        if self.spec.prefix.is_some() {
+            // In a prefix the scripts apply again; nothing is removed
+            // (`compat-tools.md` §7).
+            self.apply_in_prefix(&mut installed);
+        } else if let Some(sys) = &self.env.scripts {
             let loaded = self.scripts(sys.as_ref(), &installed);
             let plan = script::removal(&loaded, &installed.script_values, sys.as_ref());
             let out = script::execute(sys.as_ref(), &plan, self.cancel(), &mut |_| {})
@@ -675,16 +731,26 @@ impl Runner<'_> {
     /// `content.md` §12.
     fn uninstall(&self) -> Result<Done, Failure> {
         let spec = self.spec;
-        if spec.remove_compat_data {
-            remove_dir(&spec.folder.compat_data(spec.app))?;
-        }
+        // On Linux the prefix goes after the files (`compat-tools.md` §6.1).
+        let compat_data = PREFIXES.then(|| spec.folder.compat_data(spec.app));
         let Some(installed) = &spec.installed else {
             // Only an unfinished install was there; its staging goes.
             remove_dir(&spec.folder.staging(spec.app))?;
+            if let Some(dir) = &compat_data {
+                remove_dir(dir)?;
+            }
             return Ok(None);
         };
         self.preparing();
-        if let Some(sys) = &self.env.scripts {
+        if let Some(prefix) = self.prefix(installed) {
+            // The entries only: the prefix goes (`compat-tools.md` §7).
+            let loaded = self.scripts(&prefix, installed);
+            let plan = script::uninstall_entries(&loaded, &prefix);
+            let app = spec.app;
+            let mut report = |text: String| tracing::info!(app = %app, "install scripts: {text}");
+            script::execute(&prefix, &plan, self.cancel(), &mut report)
+                .map_err(|script::Stopped| Failure::Cancelled)?;
+        } else if let Some(sys) = &self.env.scripts {
             let loaded = self.scripts(sys.as_ref(), installed);
             let plan = script::uninstall(&loaded, &installed.script_values, sys.as_ref());
             script::execute(sys.as_ref(), &plan, self.cancel(), &mut |_| {})
@@ -727,6 +793,9 @@ impl Runner<'_> {
             if !self.used_elsewhere(d.depot, Some(d.manifest)) {
                 let _ = std::fs::remove_file(spec.folder.manifest(d.depot, d.manifest));
             }
+        }
+        if let Some(dir) = &compat_data {
+            remove_dir(dir)?;
         }
         Ok(None)
     }

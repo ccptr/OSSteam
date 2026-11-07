@@ -480,9 +480,10 @@ apply to the prefix, not to the host. They are planned as on Windows
   not `Public` (`steamuser`); `%COMMON_MYDOCS%` is
   `C:\users\Public\Documents`; `%STEAMPATH%` is `InstallPath` under
   `Software\Wow6432Node\Valve\Steam` in the prefix, which Proton sets
-  (`C:\Program Files (x86)\Steam`). *Unverified:* which drive the
-  official client's evaluator names the install directory with; Proton
-  also maps the library folder as `S:`.
+  (`C:\Program Files (x86)\Steam`). The official client's evaluator
+  names the install directory on `S:`, the drive Proton maps to the
+  library folder (§7.1); ossteam's `Z:` path differs, an open question
+  for the maintainer.
 - **A new prefix.** Proton makes the prefix at the first verb it runs.
   When `pfx/system.reg` does not exist yet, the first setup command
   imports an empty registry file, so the prefix, with Proton's records,
@@ -525,6 +526,58 @@ import of deletions), once the app's tool is installed; uninstall with
 
 SLR-only chains run Linux games, whose install scripts are not applied
 (`install-scripts.md` §3).
+
+### 7.1 What the official client does
+
+Seen on Linux on 2026-11-07 with Spacewar (480), set to Proton
+Experimental (build 26306234) in the official client, which had the
+test account signed in. Spacewar's script writes two values under
+`HKEY_LOCAL_MACHINE\SOFTWARE\Valve\Spacewar`; the app also takes depot
+229006 from the Steamworks Common Redistributables (228980), whose
+script has the .NET 4.7.2 `Run Process` entries. One run of each step;
+the facts below are what that run showed, not every case.
+
+- **The evaluator.** For each run the client writes
+  `<client>/legacycompat/evaluatorscript_<app>.vdf` and runs
+  `legacycompat/iscriptevaluator.exe` (Valve's) on it through the
+  reaper (`SteamLaunch AppId=<app> Install=1`) and the app's chain with
+  the `run` verb; the file is deleted after the run. Its root
+  `evaluatorscript` holds one numbered entry per script: the app's own
+  first, then 228980's. Each entry has `appid` (the app the script's
+  depot belongs to), `mode`, `language`, `install_path` (the host path
+  of that app's install directory), `SteamID`, and
+  `compat_installscript`, the script's body as it ships (without
+  `kvsignatures`). The log line is "Running install script evaluator
+  for AppID 480, 2 step(s)", one step per entry.
+- **When it runs.** When the install finishes (the update's state
+  shows "Running Script"), before the game at every launch (the launch
+  task `ProcessingInstallScript`), and at every verify, before the files
+  are checked. Uninstall runs it too ("Running uninstall script
+  evaluator").
+- **`mode`.** `4` at verify, `3` at uninstall (with `language`
+  `english`; empty at verify). The files of the install-time and launch
+  runs were not caught.
+- **What landed.** The run at the end of the install wrote neither of
+  Spacewar's values; it left only an empty
+  `Software\Valve\Steam\Apps\480` key in both views. The update was
+  logged as cancelled ("Priority (Suspended)") the second the script
+  began, which may have cut it short; not explained. The run at the
+  first launch wrote both, under `Software\Wow6432Node\Valve\Spacewar`,
+  with `Exe_Path` as `S:\steamapps\common\Spacewar\SteamworksExample.exe`.
+- **Verify.** Two verifies left both values in place, the key's write
+  time unchanged: a verify applies the scripts again and removes
+  nothing.
+- **Uninstall.** After the evaluator (`mode` 3) the client deleted the
+  whole prefix: "AppID 480 uninstalled, deleting compatibility data
+  library folder …/compatdata/480". Whether the `mode` 3 run removed
+  the values first cannot be seen. 228980's depot 229006 was removed
+  with it, as no other app needed it.
+
+ossteam's design above differs on four points: it plans the scripts only
+at a launch, removes the values at verify, would remove them at
+uninstall and keeps the prefix unless `--remove-compat-data`, and names
+the install directory on `Z:`. Whether to follow the official client is
+for the maintainer (`docs/status/install-scripts-in-prefix.md`).
 
 ## 8. Settings and IPC
 
@@ -620,6 +673,8 @@ timeout.
 | Working directory (§5.1) | from Valve's interface document |
 | Environment values (§5.2) | names from the official client's library and Valve's document; values unverified until a capture |
 | `app_compat_configs` handling (§5.3) | `config` from Proton's script; `environment` unverified |
-| Install scripts in the prefix (§7) | ossteam's design |
+| Install scripts in the prefix (§7) | ossteam's design; the official client's run with Spacewar on 2026-11-07 in §7.1, which differs |
+| The drive of `%INSTALLDIR%` in a prefix | `S:` in the official client (§7.1); ossteam uses `Z:` |
+| Uninstall and the prefix | the official client deletes `compatdata/<app>` (§7.1); ossteam keeps it without `--remove-compat-data` |
 | `steamclient.dll` in the prefix (§6.3) | Proton's loader read for facts; ossteam's files run live 2026-11-05 with Spacewar (32-bit) under Proton Experimental 11.0-100; 64-bit games and other Proton versions unverified |
 | The shim inside a container (§9) | from the `pressure-vessel-wrap` manual; to be run in acceptance |

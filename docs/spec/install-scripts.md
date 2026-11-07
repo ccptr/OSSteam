@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| Status | Draft; verify and uninstall built in M1b, the start in M1c; nothing yet tried against the official client |
+| Status | Draft; verify and uninstall built in M1b, the start in M1c; the official client seen in a Proton prefix on 2026-11-07 (`compat-tools.md` §7.1), native Windows not yet |
 | Requirements | SPEC §10 (CONT-8), SEC-3, §19.3 |
 | Code | parsing in `crates/ossteam-content/src/script.rs`; planning and running them in `crates/ossteamd/src/content/script/` (Windows in `windows.rs`, a Proton prefix in `prefix.rs`), at the start in `crates/ossteamd/src/core/scripts.rs` |
 
@@ -308,8 +308,9 @@ redistributable it already installed is not installed again.
 | `process N` beyond 1 | unverified |
 | `OSType` names | `Windows XP` seen in depot 229006; the rest unverified |
 | Variables beyond those listed | unverified |
-| Registry and Firewall at every start | unverified |
-| Order of scripts | unverified |
+| Registry and Firewall at every start | in a Proton prefix the official client applies the scripts at every launch, at the end of the install and at every verify (`compat-tools.md` §7.1); native Windows unverified |
+| Order of scripts | in a Proton prefix the app's own first, then the Steamworks Common Redistributables' (one run, `compat-tools.md` §7.1) |
+| Removal at verify | in a Proton prefix the official client removes nothing at verify (`compat-tools.md` §7.1); native Windows unverified |
 | Firewall rule shape | unverified; ossteam's in §2.3 |
 | Signature algorithm | unknown; not checked (§2.6) |
 | The value name under `HasRunKey` | the entry's name in Proton's prefixes (§2.2); the official client's own writes unverified |

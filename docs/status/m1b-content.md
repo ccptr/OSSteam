@@ -42,7 +42,7 @@ Left:
   `priority_class` of servers at a time (§1, written up; ossteam still
   rotates through all). Open for the maintainer: whether a failed
   automatic update should be retried later on its own; job 17 stood
-  failed for two days.
+  failed for two days ([retry-failed-auto-update](retry-failed-auto-update.md)).
 - Open for the maintainer: cancelling a first install leaves the files
   already renamed into place in `apps/<installdir>` with no record
   (`ipc.md` §5.6), and `uninstall` refuses an app that is not installed,

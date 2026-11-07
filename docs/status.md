@@ -17,6 +17,8 @@ Almost all remaining work needs one of these.
 - [Steam Input spec](status/later-steam-input.md) — `docs/spec/input.md` drafted 2026-11-05; SDL 3 and our own Steam Controller driver chosen 2026-11-06, the Deck's controls in it; open: the Windows virtual gamepad, focus, own templates and glyphs, budgets
 - [Big Picture and Game Mode](status/later-game-mode.md) — goals since 2026-11-06; open: the compositor Game Mode runs under (SPEC §24 Q5); `docs/spec/game-mode.md` not written yet
 - [A Mac and real Windows](status/hardware-mac-windows.md) — for macOS acceptance and what Wine can't show; waits until closer to release (2026-11-03)
+- [SPEC changes for CLI-6](status/spec-changes-cli-6.md) — local times in the CLI and the GUI (CLI-6) and the §5.1 line for `ossteam-ipc`; the wording and details need sign-off
+- [Retrying a failed automatic update](status/retry-failed-auto-update.md) — a failed automatic update stays failed until resumed by hand (job 17, two days); whether the daemon should retry it on its own
 
 ## Decisions the maintainer hasn't confirmed
 

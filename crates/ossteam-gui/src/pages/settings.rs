@@ -41,6 +41,8 @@ pub struct SettingsPage {
     /// Text fields of integer and string settings.
     inputs: HashMap<String, TextField>,
     errors: HashMap<String, String>,
+    /// Changes on their way (`gui.md` §4.5).
+    pending: Pending,
     folder_error: Option<String>,
     /// The folder picker is open.
     picking: bool,
@@ -52,6 +54,57 @@ pub struct SettingsPage {
     /// Turning on `discovery.take_over_official` waits for a confirmation
     /// of its risks (`gui.md` §4.5).
     confirm_take_over: bool,
+}
+
+/// Changes of settings that the daemon has not answered yet, by key:
+/// what the user chose last (a value, or `None` for a reset), and whether
+/// a `SetSetting` is in flight. One request per setting is in flight; a
+/// change made meanwhile is sent when the answer comes, so the daemon
+/// ends at the value the user saw last (`gui.md` §4.5).
+#[derive(Default)]
+struct Pending(HashMap<String, (Option<String>, bool)>);
+
+impl Pending {
+    /// The user chose `want`: what to send now, unless one is in flight.
+    fn change(&mut self, key: &str, want: Option<String>) -> Option<Option<String>> {
+        let e = self.0.entry(key.to_owned()).or_insert((None, false));
+        e.0 = want;
+        (!e.1).then(|| {
+            e.1 = true;
+            e.0.clone()
+        })
+    }
+
+    /// The daemon answered with `s`: what to send next, if the user chose
+    /// something else meanwhile.
+    fn answered(&mut self, s: &v1::Setting) -> Option<Option<String>> {
+        let e = self.0.get_mut(&s.key)?;
+        let done = match &e.0 {
+            Some(v) => s.value == *v,
+            None => s.source() != SettingSource::Override,
+        };
+        if done {
+            self.0.remove(&s.key);
+            None
+        } else {
+            Some(e.0.clone())
+        }
+    }
+
+    /// The change failed: the daemon's value shows again.
+    fn failed(&mut self, key: &str) {
+        self.0.remove(key);
+    }
+
+    /// The value a control shows while a change is on its way.
+    fn shown(&self, key: &str) -> Option<&str> {
+        self.0.get(key)?.0.as_deref()
+    }
+}
+
+/// The value a setting's control shows: the one on its way, if any.
+fn shown<'a>(g: &'a Gui, s: &'a v1::Setting) -> &'a str {
+    g.settings.pending.shown(&s.key).unwrap_or(&s.value)
 }
 
 pub fn page_focus() -> FocusHandle {
@@ -79,7 +132,7 @@ pub fn before_view(g: &mut Gui, cx: &mut Cx<Gui>) {
         .settings
         .values()
         .filter(|s| s.kind() != SettingKind::Bool)
-        .map(|s| (s.key.clone(), s.value.clone()))
+        .map(|s| (s.key.clone(), shown(g, s).to_owned()))
         .collect();
     for (key, value) in settings {
         let focused = cx.is_focused(FocusHandle::named(control_id(&key)));
@@ -95,8 +148,17 @@ pub fn before_view(g: &mut Gui, cx: &mut Cx<Gui>) {
 }
 
 /// `SetSetting`, or with `None` a reset; the error shows by the setting.
+/// The control shows the new value at once. One request per setting is
+/// in flight: a change made meanwhile is sent when the answer comes, so
+/// the daemon ends at the value the user saw last (`gui.md` §4.5).
 fn set(g: &mut Gui, key: String, value: Option<String>) {
     g.settings.errors.remove(&key);
+    if let Some(now) = g.settings.pending.change(&key, value) {
+        send(g, key, now);
+    }
+}
+
+fn send(g: &mut Gui, key: String, value: Option<String>) {
     let reset = value.is_none();
     let k = key.clone();
     g.call(
@@ -109,11 +171,16 @@ fn set(g: &mut Gui, key: String, value: Option<String>) {
                 if reset && let Some(f) = g.settings.inputs.get_mut(&s.key) {
                     f.set_text(&s.value);
                 }
+                let next = g.settings.pending.answered(&s);
                 if let Some(m) = g.model_mut() {
                     m.store.set_setting(s);
                 }
+                if let Some(next) = next {
+                    send(g, key, next);
+                }
             }
             Err(e) => {
+                g.settings.pending.failed(&key);
                 g.settings.errors.insert(key, e.message);
             }
         },
@@ -128,7 +195,7 @@ fn commit(g: &mut Gui, key: &str) {
     let current = g
         .model()
         .and_then(|m| m.store.setting(key))
-        .map(|s| s.value.as_str());
+        .map(|s| shown(g, s));
     if current != Some(text.as_str()) {
         set(g, key.to_owned(), Some(text));
     }
@@ -158,7 +225,8 @@ fn setting(g: &Gui, s: &v1::Setting, label: Option<String>, p: Palette, cx: &Vie
     let name = label.clone().unwrap_or_else(|| key.clone());
     let control: El = match s.kind() {
         SettingKind::Bool => {
-            let on = s.value == "true";
+            // The value on its way, so that a second press turns it back.
+            let on = shown(g, s) == "true";
             let k = key.clone();
             switch(p, id, name, on)
                 .on_toggle(move |g, _| {
@@ -622,4 +690,60 @@ pub fn view(g: &Gui, m: &Model, p: Palette, cx: &ViewCx) -> El {
         .focus(page_focus())
         .fill()
         .child(body)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn setting(key: &str, value: &str, source: SettingSource) -> v1::Setting {
+        v1::Setting {
+            key: key.into(),
+            value: value.into(),
+            source: source as i32,
+            ..Default::default()
+        }
+    }
+
+    /// Two quick presses of a switch: the second waits, starts from the
+    /// value shown, and is sent when the first is answered.
+    #[test]
+    fn a_switch_pressed_twice_turns_back() {
+        let key = "content.auto_update";
+        let mut p = Pending::default();
+        assert_eq!(
+            p.change(key, Some("false".into())),
+            Some(Some("false".into()))
+        );
+        assert_eq!(p.shown(key), Some("false"));
+        assert_eq!(p.change(key, Some("true".into())), None, "one in flight");
+        assert_eq!(p.shown(key), Some("true"));
+        let first = setting(key, "false", SettingSource::Override);
+        assert_eq!(p.answered(&first), Some(Some("true".into())));
+        assert_eq!(p.shown(key), Some("true"));
+        let second = setting(key, "true", SettingSource::Override);
+        assert_eq!(p.answered(&second), None);
+        assert_eq!(p.shown(key), None, "the daemon's value shows");
+    }
+
+    /// A change back to what the daemon already has sends nothing more;
+    /// a reset is answered once the override is gone; a failure drops it.
+    #[test]
+    fn answers_end_the_change() {
+        let key = "content.concurrent_jobs";
+        let mut p = Pending::default();
+        p.change(key, Some("2".into()));
+        p.change(key, Some("3".into()));
+        p.change(key, Some("2".into()));
+        assert_eq!(
+            p.answered(&setting(key, "2", SettingSource::Override)),
+            None
+        );
+        assert_eq!(p.change(key, None), Some(None));
+        assert_eq!(p.answered(&setting(key, "1", SettingSource::Default)), None);
+        p.change(key, Some("0".into()));
+        p.failed(key);
+        assert_eq!(p.shown(key), None);
+        assert_eq!(p.change(key, Some("4".into())), Some(Some("4".into())));
+    }
 }

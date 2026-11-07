@@ -297,6 +297,12 @@ Every setting shows its value, where it comes from (default, file or
 override) and, for an override, a reset. Booleans are switches; integers
 and strings are text fields that send `SetSetting` on Enter or when focus
 leaves, and show the daemon's `INVALID_ARGUMENT` message on failure.
+While a change is on its way, its control shows the value the user
+chose, and the next change starts from it: a switch pressed twice turns
+back. One `SetSetting` per setting is in flight at a time; a change made
+meanwhile waits for the answer and is sent then, unless it is what the
+daemon already has, so the daemon ends at the value the user saw last.
+A failed change shows the daemon's value again, with the message.
 
 ### 4.6 Account menu
 

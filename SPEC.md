@@ -275,7 +275,7 @@ crates/
   ossteam-stats/           user stats/achievements schema + storage protocol
   ossteam-gameipc/         game IPC protocol (daemon ↔ steamclient shim)
   ossteam-steamclient/     cdylib: steamclient ABI (CreateInterface, vtables, callbacks)
-  ossteam-ipc/             client IPC protocol + blocking client library
+  ossteam-ipc/             client IPC protocol + blocking client library; the leaf clients' local time (CLI-6)
   ossteamd/                daemon binary
   ossteam-cli/             binary `ossteam` (clap)
   ossteam-input/           Steam Input: devices, configurations, action sets, remapping; embeddable (§1.1, LGPL, LIC-9)
@@ -809,6 +809,17 @@ VAC code lands.
   `--color <auto|always|never>`, `-v/--verbose`.
 - **[CLI-5]** Shell completions come from `ossteam completions <shell>`, and
   man pages are generated at build time with `clap_mangen`.
+- **[CLI-6]** The CLI and the GUI show times in the system's local time
+  zone, as the operating system reports it for that moment (Linux and
+  macOS: the C library's `localtime_r`, which reads `TZ` and then
+  `/etc/localtime`; Windows: the system time zone). A clock time carries
+  the zone: `UTC` at offset zero, otherwise its abbreviation when that is
+  letters only (`CET`, `MST`), and `UTC±HH:MM` when not (always on
+  Windows, whose zone names are not abbreviations). A time that is not
+  today also carries its local date. When the zone cannot be read, times
+  are shown in UTC and say `UTC`; a `TZ` that names no zone the C library
+  knows gives offset zero, so it says `UTC` too. `--json` keeps Unix
+  times.
 
 ### 15.2 Commands (M1)
 
